@@ -1,0 +1,48 @@
+{
+  "repo": {
+    "owner": "Vigil-SOC",
+    "name": "vigil",
+    "url": "https://github.com/Vigil-SOC/vigil"
+  },
+  "worker": {
+    "model": {
+      "id": "grok-4.6",
+      "params": {
+        "effort": "high",
+        "fast": "false"
+      }
+    },
+    "pollIntervalSeconds": 30,
+    "maxRunMinutes": 90
+  },
+  "labels": {
+    "factoryPr": "factory",
+    "issueInProgress": "factory:wip",
+    "groomed": "factory:groomed",
+    "needsWork": "factory:needs-work",
+    "environmentPr": "factory:env",
+    "simplifyPr": "factory:simplify",
+    "epic": "type:epic"
+  },
+  "groom": {
+    "maxPerTick": 5,
+    "principlesFile": "principles.md"
+  },
+  "selector": {
+    "maxCandidates": 100
+  },
+  "environment": {
+    "enabled": true,
+    "maxPrsPerPass": 3
+  },
+  "simplify": {
+    "enabled": true
+  },
+  "assignedIssues": {
+    "groom": true,
+    "implement": false
+  },
+  "telemetryDir": "telemetry",
+  "staleRunHours": 24,
+  "maxConcurrentJobs": 2
+}
