@@ -118,7 +118,7 @@ ${principles}`;
 const WORKING_RULES = `- Keep code concise, with brief inline comments only where useful.
 - Verify with the project's own checks (tests, typecheck, lint), then live: start the app and exercise the changed behavior through its real entry point. \`agent-browser\` is on this machine for anything with a UI (\`agent-browser skills get core\` explains it; take a screenshot); an API or CLI change gets a real request or invocation. Skip the live test only when there is nothing to exercise — docs, a pure refactor — and say so. Add tests only for critical behavior; skip low-value assertions.
 - Before opening the PR, have an independent subagent review your full diff with fresh eyes. Reviewers are often nitpicky and sometimes wrong, so you decide each finding, one of two ways. A real defect in what you changed — wrong behavior, a case the code mishandles, a test that does not test what it claims — gets fixed now; writing it down as a follow-up ships a bug you know about. Anything else — style, a preference, a suggestion outside the issue's scope, a change not worth its risk — gets dismissed with a sentence saying why. Do not restyle working code to satisfy a reviewer's taste. The PR lists each finding and its disposition in a line apiece.
-- End the PR description with a **Verification** section: every check you ran and what it showed, and every check you did not run with the reason — not applicable, out of time, or the machine could not do it (a tool missing, a service unreachable). The factory reads that section to fix its own environment; a gap you leave unmentioned stays.`;
+- End the PR description with a **Verification** section in three parts. **Ran**: every check you ran and what it showed. **Did not run**: every check you skipped as not applicable or out of time, with the reason. **Blocked by the machine**: every check you could not run because this environment lacked something — a tool not installed, a service not up, a dependency you had to install by hand before anything worked — even if you then worked around it. Keep that last part separate and write "none" when it is empty: the factory reads it to fix its own environment, and a gap you leave unmentioned or file under the wrong heading stays.`;
 
 export function implementPrompt(task: Task): string {
   return `Implement the GitHub issue below and open a PR that resolves it (reference "Closes #${task.issueNumber}").
@@ -171,23 +171,40 @@ ${opts.recentPrs.join('\n') || '(none yet)'}${declined}`;
  * The environment agent. It is handed PR *links*, not a report extracted from
  * the implementer's reply: an agent that could not verify its work says so in
  * its PR, and reading that is a judgment call, so it belongs in an agent rather
- * than in a parser. The Docker specifics are here because they are the one
- * thing a model reliably gets wrong — cloud agents can run Docker, but not on
- * the default image and not without the overlay/iptables workarounds.
+ * than in a parser. It is also handed its own recent verdicts, because the gap
+ * that matters most rarely reads as "blocked" in any one PR — every implementer
+ * installs the project's dependencies itself, some skip a suite over it, and a
+ * reader handed one PR at a time called that inconvenience for a week. The
+ * Docker specifics are here because they are the one thing a model reliably
+ * gets wrong — cloud agents can run Docker, but not on the default image and
+ * not without the overlay/iptables workarounds.
  */
-export function environmentPrompt(prUrls: string[]): string {
+export function environmentPrompt(prUrls: string[], verdicts: string[] = []): string {
+  const priors = verdicts.length > 0
+    ? `
+
+## Your recent verdicts
+
+What you concluded on the PRs before these, newest first. Read them before the PRs below: a setup step every implementer repeats, or a suite more than one of them skipped, is one gap showing up in pieces, and this is where you see it whole.
+
+${verdicts.join('\n')}`
+    : '';
+
   return `You own the environment the factory's coding agents run in. They are Cursor cloud agents working on this repo, and their machine is whatever \`.cursor/environment.json\` at the repo root configures — an install command, a dashboard snapshot, or a Dockerfile build. There may not be one yet, in which case they get Cursor's automatic setup. Whatever it is, it is expected to carry \`agent-browser\` — a headless-Chrome CLI installed from its GitHub release binary, needing no Node — because implementers are asked to live-test what they build with it.
 
-Below are pull requests the factory's implementers opened. Read each one — the description, and the diff where you need it. You are looking for one thing: **a check the author would have run and could not, because the machine lacked something.** They say so plainly, in the PR's Verification section: a live test skipped because the browser was missing or broken is exactly that.
+**The reference machine is the repo's own CI.** Its workflows under \`.github/workflows\` say exactly what has to be installed and running before this repo's checks can pass — the language toolchains at their pinned versions, the dependency install steps, the databases and queues declared as services. An implementer's machine should start where a CI job starts. If a check runs in CI and an implementer here had to install something, start something, or skip the check to get to it, that is the gap you close.
 
-If you find a gap the environment can close, close it. Commit \`.cursor/environment.json\` and any Dockerfile it needs, change nothing else, and open a PR. Two things worth knowing:
+Below are pull requests the factory's implementers opened. Read each one — the description, and the diff where you need it. You are looking for **a check the author would have run and could not, or ran only after setting the machine up themselves, because it lacked something CI has.** They say so in the PR's Verification section: a suite skipped because its runner was not installed or its database was not up, a live test skipped because the browser was missing or broken, a "pip install" or "npm ci" the author had to run before anything else. The first two are blocked checks. The last is a tax every future implementer pays and some will skip under — treat it as the same gap.
+
+If you find a gap the environment can close, close it. Commit \`.cursor/environment.json\` and any Dockerfile it needs, change nothing else, and open a PR. Three things worth knowing:
 
 - Docker is available to cloud agents but not on the default image. Installing \`docker-ce\` is not enough on its own: the daemon needs the \`fuse-overlayfs\` storage driver and \`iptables-legacy\`, and the \`ubuntu\` user needs to be in the \`docker\` group. Cursor documents the working Dockerfile at https://cursor.com/docs/cloud-agent/setup — follow it rather than improvising.
-- Build the smallest environment that unblocks the checks you actually saw blocked. A general-purpose developer image costs every future agent its startup time, and you can add to this file again next week.
+- Services CI declares — Postgres, Redis, whatever the workflow's \`services:\` block names — belong in the environment's \`start\` command, brought up the way the repo's own compose file or test scripts bring them up, so they are ready when the agent's first command runs.
+- Build to what CI needs, not beyond it. Every layer costs every future agent its startup time, so a tool no workflow installs is not yours to add; but anything a workflow installs before running tests is already paid for in CI and cheap here by comparison. You can add to this file again next week.
 
-**Not every gap is yours to close.** A check that needs an artifact which does not exist yet at review time, or a credential the factory does not hold, is not an environment problem — the implementer verified the wrong thing, and the honest fix is a different check. When that is what you find, say what should have been verified instead and open no PR. Do not install your way around it.
+**Not every gap is yours to close.** A check that needs an artifact which does not exist yet at review time, a credential the factory does not hold, or a display or cluster no CI job has either, is not an environment problem — the implementer verified the wrong thing, and the honest fix is a different check. When that is what you find, say what should have been verified instead and open no PR. Do not install your way around it.
 
-Open no PR when nothing was blocked; that is the expected outcome most of the time, and a needless PR costs a human review. Whatever you write is posted back onto the PRs you read, so write it to the humans reviewing them.
+Open no PR when nothing was blocked and nothing had to be set up; a needless PR costs a human review. Whatever you write is posted back onto the PRs you read, so write it to the humans reviewing them.${priors}
 
 ## Pull requests
 

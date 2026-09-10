@@ -63,17 +63,18 @@ export interface PrData {
   title: string;
   state: 'OPEN' | 'CLOSED' | 'MERGED';
   isDraft: boolean;
+  createdAt: string;
   mergedAt: string | null;
   closedAt: string | null;
   body: string;
   reviews: { state: string }[];
-  comments: { author: { login: string } }[];
+  comments: { author: { login: string }; body: string; url: string }[];
   headRefName: string;
   additions: number;
   deletions: number;
 }
 
-const PR_FIELDS = 'number,url,title,state,isDraft,mergedAt,closedAt,body,reviews,comments,headRefName,additions,deletions';
+const PR_FIELDS = 'number,url,title,state,isDraft,createdAt,mergedAt,closedAt,body,reviews,comments,headRefName,additions,deletions';
 
 export async function listPrsByLabel(repo: string, label: string, state: 'open' | 'closed' | 'merged' | 'all'): Promise<PrData[]> {
   return ghJson<PrData[]>([

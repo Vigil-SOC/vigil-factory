@@ -32,7 +32,7 @@ import { filterAssigned, filterClaimed, filterEpics, parseSelection, type Select
 import { environmentPrompt, groomEpicPrompt, groomPrompt, implementPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
 import { factoryComment, groomState, isEpic, isGroomed, needsGroom, openIssues, parseGroomReply, stampExtrasFor, verdict, type OpenIssues } from './groom.ts';
 import { addPrLabels, closePr, commentOnIssue, commentOnPr, defaultBranchHead, ensureLabel, findPrByBranch, listPrsByLabel, viewPr } from './github.ts';
-import { environmentChangedAt, skipReason, unreadFactoryPrs } from './environment.ts';
+import { ENV_AGENT_MARK, environmentChangedAt, recentVerdicts, skipReason, unreadFactoryPrs, type UnreadPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
 
 export function log(msg: string): void {
@@ -223,6 +223,39 @@ export async function runSelector(
   };
 }
 
+/** How many of its own past verdicts the environment agent is shown. */
+const ENV_VERDICTS_SHOWN = 5;
+
+/**
+ * Everything the environment phase decides on, read from GitHub in one place so
+ * the tick, the dry run, and `factory status` cannot disagree. See the header
+ * of environment.ts for why none of it comes from telemetry.
+ */
+export async function environmentInputs(config: FactoryConfig): Promise<{
+  skip: string | null;
+  unread: UnreadPrs;
+  changedAt: string | null;
+  verdicts: string[];
+}> {
+  if (!config.environment.enabled) {
+    return { skip: skipReason(false, [], { fresh: [], stale: [] }), unread: { fresh: [], stale: [] }, changedAt: null, verdicts: [] };
+  }
+  const repo = repoSlug(config);
+  const [envPrs, factoryPrs] = await Promise.all([
+    listPrsByLabel(repo, config.labels.environmentPr, 'all'),
+    listPrsByLabel(repo, config.labels.factoryPr, 'all'),
+  ]);
+  const openEnvPrs = envPrs.filter((p) => p.state === 'OPEN');
+  const changedAt = environmentChangedAt(envPrs);
+  const unread = unreadFactoryPrs(factoryPrs, changedAt);
+  return {
+    skip: skipReason(true, openEnvPrs, unread, changedAt),
+    unread,
+    changedAt,
+    verdicts: recentVerdicts(factoryPrs, ENV_VERDICTS_SHOWN),
+  };
+}
+
 /**
  * The environment phase: hand an agent the factory's own recent PRs and let it
  * decide whether any of them reports a check that could not run, then fix the
@@ -239,12 +272,7 @@ export async function runEnvironmentPhase(
   worker: CodingWorker,
 ): Promise<EnvRecord | null> {
   const { config } = ctx;
-  const openEnvPrs = config.environment.enabled
-    ? await listPrsByLabel(repoSlug(config), config.labels.environmentPr, 'open')
-    : [];
-  const changedAt = environmentChangedAt(ctx.telemetry.outcomes());
-  const unread = unreadFactoryPrs(ctx.telemetry.runs(), ctx.telemetry.envPasses(), changedAt);
-  const skip = skipReason(config.environment.enabled, openEnvPrs, unread, changedAt);
+  const { skip, unread, verdicts } = await environmentInputs(config);
   if (skip) {
     log(`environment: skipped — ${skip}.`);
     return null;
@@ -254,7 +282,7 @@ export async function runEnvironmentPhase(
   log(`environment: reading ${prUrls.length} factory PR(s) for verification the agents could not run: ${prUrls.join(' ')}`);
 
   const startedAt = new Date().toISOString();
-  const handle = await worker.start(environmentPrompt(prUrls), {
+  const handle = await worker.start(environmentPrompt(prUrls, verdicts), {
     autoCreatePR: true,
     name: 'factory-env',
   });
@@ -297,9 +325,10 @@ export async function runEnvironmentPhase(
   // Either way the finding belongs on the PRs that produced it — that is where
   // the human who hit the blocked check is looking.
   const alongside = prUrls.length > 1 ? ` (alongside ${prUrls.length - 1} other recent factory PR${prUrls.length > 2 ? 's' : ''})` : '';
+  // The comment is also the "read" mark the next pass looks for.
   const note = envPrUrl
-    ? `🏭 **Factory environment agent.** Reading this PR${alongside} it found a gap in the cloud-agent environment and opened ${envPrUrl} to close it.`
-    : `🏭 **Factory environment agent.** It read this PR${alongside} looking for a check that could not run in the cloud-agent environment, and opened none. Its report:\n\n${result.resultText.trim() || '_(no report)_'}`;
+    ? `🏭 ${ENV_AGENT_MARK} Reading this PR${alongside} it found a gap in the cloud-agent environment and opened ${envPrUrl} to close it.`
+    : `🏭 ${ENV_AGENT_MARK} It read this PR${alongside} looking for a check that could not run in the cloud-agent environment, and opened none. Its report:\n\n${result.resultText.trim() || '_(no report)_'}`;
   for (const prUrl of prUrls) {
     await commentOnPr(repoSlug(config), prUrl, factoryComment(note)).catch((err: Error) => {
       log(`environment: could not comment on ${prUrl}: ${err.message}`);
@@ -560,18 +589,13 @@ async function dryRun(ctx: FactoryContext, allCandidates: Task[]): Promise<void>
   }
 
   const { config } = ctx;
-  const openEnvPrs = config.environment.enabled
-    ? await listPrsByLabel(repoSlug(config), config.labels.environmentPr, 'open')
-    : [];
-  const changedAt = environmentChangedAt(ctx.telemetry.outcomes());
-  const unread = unreadFactoryPrs(ctx.telemetry.runs(), ctx.telemetry.envPasses(), changedAt);
-  const skip = skipReason(config.environment.enabled, openEnvPrs, unread, changedAt);
+  const { skip, unread, verdicts } = await environmentInputs(config);
   if (skip) {
     log(`environment: would skip — ${skip}.`);
   } else {
     const prUrls = unread.fresh.slice(0, config.environment.maxPrsPerPass);
     log(`environment: would read ${prUrls.length} of ${unread.fresh.length} unread factory PR(s)${unread.stale.length ? `, ignoring ${unread.stale.length} written before the environment changed` : ''}. Its prompt would be:`);
-    console.log(`\n${environmentPrompt(prUrls)}\n`);
+    console.log(`\n${environmentPrompt(prUrls, verdicts)}\n`);
   }
 
   const { sha } = await defaultBranchHead(repoSlug(config));
