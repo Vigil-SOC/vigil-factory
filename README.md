@@ -292,6 +292,25 @@ an issue link. And the pass's own verdict is the branch it pushed: a PR means it
 fixable gap, no PR means it did not. That is the same handoff the controller already reads
 from an implementer, so the phase adds no new grammar to the factory.
 
+The implementer's Verification section does keep **Blocked by the machine** as its own
+heading, apart from checks that were not applicable or ran out of time. That is not a
+format the factory parses; it is so the reviewer and the environment agent both find the
+one line that matters without sorting it out of the others.
+
+**The reference machine is the repo's own CI.** The workflows under `.github/workflows`
+already say what has to be installed and running before the repo's checks can pass, so the
+agent is told to hold the environment to that: a suite an implementer skipped because its
+runner was not installed, or a database that was not up, is a gap, and so is a
+`pip install` every implementer has to run before anything works. Our first version asked
+only for *blocked* checks and warned against a general-purpose image, and the agent applied
+that faithfully — it called "installed the deps myself" an inconvenience, PR after PR, while
+an implementer down the line skipped the Python integration suite over exactly that. Beyond
+what CI needs the warning still holds: a tool no workflow installs is not the agent's to add.
+
+The agent is also shown its own recent verdicts, one per PR it has read. A gap that shows
+up as a shrug in every PR is invisible to a reader handed one PR at a time; this is where
+it is seen whole.
+
 **Not every gap is the environment's to close**, and the prompt is specific about it. A
 check that needs an artifact which does not exist yet at review time, or a credential the
 factory does not hold, is not an environment problem — the implementer verified the wrong
@@ -308,13 +327,23 @@ the other only product code — so a full review queue never leaves the agents' 
 broken. The cost is honest: it is a second thing that can be awaiting your review. Set
 `environment.enabled` to `false` to turn the phase off entirely.
 
+**Every input comes from GitHub, none from telemetry.** The factory PRs are the ones
+carrying the factory label; a PR has been read when the environment agent's comment is on
+it, which the pass posts on every PR it reads anyway; and the environment last changed when
+the newest environment-labelled PR merged. Telemetry records each pass and decides nothing.
+The first version read run records instead, and a tick whose telemetry failed to persist —
+the GitHub Actions runner, for a week — re-read the same two PRs every day while never
+learning the newer ones existed. GitHub is where the PRs are; asking it is correct from any
+machine, and a pass that fails before commenting leaves its PRs unread, so they come back
+around without any bookkeeping.
+
 **A merged environment PR voids every report written before it.** A report is a claim
 about the machine the agent ran on, so once that machine changes the claim is about
 something that no longer exists — the same move the groom fingerprint makes when a human
 replies to an issue. Without this the phase re-fixes what it just fixed: our first
 environment PR merged, and the next pass was handed seven reports of "no Docker" all
-written on the pre-Docker machine, and dutifully added Docker again. A run that *started*
-before the change necessarily ran on the old machine, so `startedAt` is the cutoff.
+written on the pre-Docker machine, and dutifully added Docker again. A PR *opened* before
+the change was written on the old machine, so its creation time is the cutoff.
 
 Voided reports are dropped, not deferred. If the gap one describes still exists, the next
 implementer hits it and says so in a PR opened after the change, and that one is read.

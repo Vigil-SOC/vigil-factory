@@ -2,11 +2,10 @@
 // factory CLI — the daily trigger runs `factory run`; everything else is
 // for humans operating the factory.
 
-import { admissible, buildContext, buildWorker, candidateTasks, log, runEnvironmentPhase, runGroomPhase, runSelector, runSimplifyPhase, simplifySkip, tick } from './controller.ts';
+import { admissible, buildContext, buildWorker, candidateTasks, environmentInputs, log, runEnvironmentPhase, runGroomPhase, runSelector, runSimplifyPhase, simplifySkip, tick } from './controller.ts';
 import { repoSlug, requireCursorApiKey } from './config.ts';
 import { isEpic, isGroomed, needsGroom, openIssues, verdict } from './groom.ts';
-import { environmentChangedAt, skipReason, unreadFactoryPrs } from './environment.ts';
-import { defaultBranchHead, listPrsByLabel } from './github.ts';
+import { defaultBranchHead } from './github.ts';
 import type { CurrentRun } from './types.ts';
 
 const USAGE = `deeptempo-factory — thin software-factory control plane around Cursor
@@ -100,10 +99,7 @@ async function status(): Promise<void> {
   if (!environment.enabled) {
     log('environment: disabled.');
   } else {
-    const openEnvPrs = await listPrsByLabel(repoSlug(ctx.config), labels.environmentPr, 'open');
-    const changedAt = environmentChangedAt(ctx.telemetry.outcomes());
-    const unread = unreadFactoryPrs(ctx.telemetry.runs(), ctx.telemetry.envPasses(), changedAt);
-    const skip = skipReason(true, openEnvPrs, unread, changedAt);
+    const { skip, unread, changedAt } = await environmentInputs(ctx.config);
     log(`environment: ${skip ?? `${unread.fresh.length} factory PR(s) unread; next pass reads ${Math.min(unread.fresh.length, environment.maxPrsPerPass)}`}.`);
     if (changedAt) log(`  environment last changed ${changedAt}${unread.stale.length ? `; ${unread.stale.length} older report(s) void` : ''}`);
     const last = ctx.telemetry.envPasses().at(-1);
