@@ -261,11 +261,14 @@ what keeps a document that is rewritten weekly from becoming weekly whiplash for
 every reversal is a deliberate, attributed act on the issue the work hangs from, and its cost
 is written down where the person making it can see it.
 
-The whole flow, for the next design document (`.claude/skills/doc-to-epics` walks it): write
-it somewhere linkable, file one issue per direction it proposes with the epic label — a document that is a plan, a schedule, an
-org chart and a product proposal at once yields several epics, and the plan and the schedule
-are not among them — and run the tick. The design review is the groom. When the document is
-revised, reply on the epics it changes; do not file a new one.
+The whole flow, for the next design document (`.claude/skills/doc-to-epics` walks it): file
+one issue per direction it proposes with the epic label, written so the issue is the record —
+what should become true, how the author means it to work, the decisions and their proposed
+defaults, all in the issue's own words, since the document is usually internal and the
+agents never see it. A document that is a plan, a schedule, an org chart and a product
+proposal at once yields several epics, and the plan and the schedule are not among them.
+Run the tick; the design review is the groom. When the document is revised, reply on the
+epics it changes with the change stated in full; do not file a new one.
 
 ## The environment
 
