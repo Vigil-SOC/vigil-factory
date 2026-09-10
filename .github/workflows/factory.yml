@@ -36,13 +36,38 @@ jobs:
           GH_TOKEN: ${{ secrets.FACTORY_GH_TOKEN }}
       # Telemetry lives in the runner unless persisted; commit it back so
       # outcome reconciliation works across ticks.
+      #
+      # The tick runs for hours on a checkout taken at the start, so main has
+      # usually moved by the time we get here and a plain push is rejected as
+      # non-fast-forward. runs.jsonl is append-only, so instead of merging we
+      # take the rows this tick added and replay them onto whatever main is
+      # now. Each attempt starts from a fresh origin/main, so a lost race just
+      # retries.
       - name: Persist telemetry
         if: hashFiles('factory.config.json') != ''
         run: |
-          if [[ -n "$(git status --porcelain telemetry/ 2>/dev/null)" ]]; then
-            git config user.name "deeptempo-factory"
-            git config user.email "deeptempo-factory@users.noreply.github.com"
-            git add -f telemetry/runs.jsonl
-            git commit -m "telemetry: factory tick $(date -u +%Y-%m-%dT%H:%M)"
-            git push
+          if [[ -z "$(git status --porcelain telemetry/ 2>/dev/null)" ]]; then
+            exit 0
           fi
+          git config user.name "deeptempo-factory"
+          git config user.email "deeptempo-factory@users.noreply.github.com"
+
+          base_rows=$(git show HEAD:telemetry/runs.jsonl 2>/dev/null | wc -l)
+          tail -n +"$((base_rows + 1))" telemetry/runs.jsonl > "$RUNNER_TEMP/new-rows.jsonl"
+          echo "persisting $(wc -l < "$RUNNER_TEMP/new-rows.jsonl") telemetry row(s)"
+
+          for attempt in 1 2 3 4 5; do
+            git fetch -q origin main
+            git reset -q --hard origin/main
+            mkdir -p telemetry
+            cat "$RUNNER_TEMP/new-rows.jsonl" >> telemetry/runs.jsonl
+            git add -f telemetry/runs.jsonl
+            git commit -q -m "telemetry: factory tick $(date -u +%Y-%m-%dT%H:%M)"
+            if git push origin HEAD:main; then
+              exit 0
+            fi
+            echo "push rejected (attempt $attempt); main moved again, retrying"
+            sleep $((attempt * 5))
+          done
+          echo "::error::could not persist telemetry after 5 attempts"
+          exit 1
