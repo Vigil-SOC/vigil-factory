@@ -348,11 +348,15 @@ export async function simplifySkip(ctx: FactoryContext, baseSha: string | null):
   return simplifySkipReason(config.simplify.enabled, openPrs, ctx.telemetry.simplifyPasses(), baseSha);
 }
 
-function simplifyPromptFor(ctx: FactoryContext): string {
-  const outcomes = ctx.telemetry.outcomes();
+async function simplifyPromptFor(ctx: FactoryContext): Promise<string> {
+  const repo = repoSlug(ctx.config);
+  const [merged, closed] = await Promise.all([
+    listPrsByLabel(repo, ctx.config.labels.factoryPr, 'merged'),
+    listPrsByLabel(repo, ctx.config.labels.simplifyPr, 'closed'),
+  ]);
   return simplifyPrompt({
-    recentPrs: recentlyMergedFactoryPrs(outcomes, 5),
-    declinedPrs: declinedSimplifications(outcomes),
+    recentPrs: recentlyMergedFactoryPrs(merged, 5),
+    declinedPrs: declinedSimplifications(closed),
     budget: ctx.config.worker,
   });
 }
@@ -379,7 +383,7 @@ export async function runSimplifyPhase(ctx: FactoryContext, worker: CursorWorker
 
   log(`simplify: looking for one simplification PR at ${baseSha?.slice(0, 8) ?? 'the default branch'}`);
   const startedAt = new Date().toISOString();
-  const handle = await worker.start(simplifyPromptFor(ctx), { autoCreatePR: true, name: 'factory-simplify' });
+  const handle = await worker.start(await simplifyPromptFor(ctx), { autoCreatePR: true, name: 'factory-simplify' });
 
   const record = async (over: Partial<SimplifyRecord>): Promise<SimplifyRecord> => {
     const full: SimplifyRecord = {
@@ -605,7 +609,7 @@ async function dryRun(ctx: FactoryContext, allCandidates: Task[]): Promise<void>
     return;
   }
   log(`simplify: would look for one simplification at ${sha.slice(0, 8)}. Its prompt would be:`);
-  console.log(`\n${simplifyPromptFor(ctx)}\n`);
+  console.log(`\n${await simplifyPromptFor(ctx)}\n`);
 }
 
 async function runPipeline(

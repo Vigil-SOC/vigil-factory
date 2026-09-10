@@ -57,6 +57,14 @@ export async function listOpenIssues(repo: string, limit: number): Promise<Issue
   ]);
 }
 
+/** Open issues carrying a label — the in-progress label, for reconciliation. */
+export async function listIssuesByLabel(repo: string, label: string, limit = 100): Promise<IssueData[]> {
+  return ghJson<IssueData[]>([
+    'issue', 'list', '-R', repo, '--state', 'open', '--label', label,
+    '--limit', String(limit), '--json', 'number,title,body,url,labels,comments,assignees',
+  ]);
+}
+
 export interface PrData {
   number: number;
   url: string;

@@ -51,7 +51,8 @@ Plenty of tools point an agent at a backlog. This one takes positions:
 ## What one tick does
 
 ```
-reconcile outcomes of previously opened PRs (merged/rejected → telemetry, release issue)
+reconcile with GitHub: record the verdict on every factory PR that has closed, release the
+   in-progress label on every issue nothing is working on any more
 → GROOM agents (up to groom.maxPerTick, in parallel, newest first): vet issues against
    principles.md — "groomed" or "needs-work", recorded as a label, alongside a comment
    giving the conclusion, why, and any coding-level notes (the issue is never closed).
@@ -406,9 +407,8 @@ gh auth status             # gh must be authenticated with repo scope on the tar
 ```
 
 `factory.config.example.json` and `principles.example.md` are the blank
-versions a second deployment would start from. `telemetry/` is gitignored
-except for the append-only `runs.jsonl`, which the tick commits back so
-outcome reconciliation works across ticks.
+versions a second deployment would start from. `telemetry/` is gitignored; the
+record lives on the `telemetry` branch (see [Telemetry](#telemetry)).
 
 ## Commands
 
@@ -479,7 +479,30 @@ when no `factory.config.json` is committed.
 
 ## Telemetry
 
-Append-only JSONL at `telemetry/runs.jsonl`:
+**GitHub is the source of record; telemetry is the record of what the factory spent.**
+Nothing the tick decides is read from telemetry. Which issues are claimed, which PRs
+closed, what the environment agent has read, what the simplifier was declined — all of it
+is on GitHub, as labels, PR state, and the factory's own comments, and every phase asks
+GitHub. The first version decided from telemetry, and a runner whose telemetry did not
+persist — the Actions runner, for a week — re-read the same PRs every day and never
+learned the new ones existed. A record can be lost without the factory doing anything
+wrong; a decision cannot.
+
+The one exception is deliberate: the simplification pass skips a commit the last pass
+already judged, read from telemetry. Stale telemetry names an old commit and the pass
+runs, so the worst a lost record can do there is cost one redundant pass.
+
+The record itself is append-only JSONL at `telemetry/runs.jsonl`, kept on the `telemetry`
+branch: only the tick writes it, nothing reviews it, and the org ruleset that requires a
+PR for `main` has no business with it. The Actions tick fetches the branch before it
+starts and appends its rows after. To read it locally:
+
+```bash
+git fetch origin telemetry && git show origin/telemetry:telemetry/runs.jsonl > telemetry/runs.jsonl
+npm run factory -- status
+```
+
+Its rows:
 
 - `groom` records: issue, verdict, whether notes were written, whether it was a
   re-groom after the issue changed, agent id, token usage, duration. For an epic, that
