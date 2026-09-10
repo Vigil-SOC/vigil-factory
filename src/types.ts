@@ -85,7 +85,14 @@ export interface WorkSource {
   markFinished(task: Task): Promise<void>;
   /** Publish a groom verdict on the issue: a stamped comment saying what the
    *  factory concluded and why, plus a label mirroring it. */
-  recordGroom(task: Task, reply: { verdict: GroomVerdict; notes: string | undefined; reasoning: string; blocked?: number }): Promise<void>;
+  recordGroom(
+    task: Task,
+    reply: { verdict: GroomVerdict; notes: string | undefined; reasoning: string; blocked?: number },
+    /** What the stamp carries beyond the fingerprint: for a child, the epic
+     *  record it was judged against; for an epic, its open children. Both are
+     *  what lets the verdict be revisited when the world moves. */
+    extras?: { premise?: { epic: number; sha: string } | null; children?: number[] },
+  ): Promise<void>;
   /** File the children a groomed epic's groomer wrote, each linked back to the
    *  epic, and note them on the epic. Returns what was filed. */
   fileChildren(epic: Task, children: { title: string; body: string }[]): Promise<{ number: number; url: string }[]>;

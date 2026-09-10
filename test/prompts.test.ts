@@ -90,10 +90,17 @@ describe('epics', () => {
     expect(p).toContain('Write no children for a needs-work epic');
   });
 
+  it('ratchets on a re-review: settled decisions stand unless the reply names them', () => {
+    expect(p).toContain('re-review');
+    expect(p).toContain('ratchets');
+    expect(p).toMatch(/which decisions changed and which stand/);
+  });
+
   it('the ordinary groom prompt knows about epics and blockers', () => {
     const g = groomPrompt(task, 'principles', { maxRunMinutes: 90 });
     expect(g).toContain('part of an epic');
     expect(g).toContain('BLOCKED: #<issue number>');
+    expect(g).toContain('the record this issue was judged against has changed');
   });
 });
 

@@ -231,10 +231,41 @@ since an epic never closes while its children are being built. So a first-slice 
 blocked on its sibling is groomed again, unprompted, once the sibling merges. The only
 state is in the issue, as always. Epics are groomed ahead of everything else in a tick,
 because their children are newer than they are by construction and grooming a child
-before its epic only produces a verdict blocked on it.
+before its epic only produces a verdict blocked on it — and since a tick's grooms run in
+parallel, a child whose epic is itself waiting for a groom is left out of that tick
+entirely rather than groomed beside it.
 
-The whole flow, for the next design document: write it somewhere linkable, file one issue
-pointing at it with the epic label, and run the tick. The design review is the groom.
+**Children follow the epic's record.** A child's verdict is judged against the decisions in
+its epic's groom comment, so the stamp names that record — `<!-- factory-groom sha=…
+premise=#N@<hash of the epic's groom comment> -->`. When the epic is groomed again, the
+hash no longer matches and every child judged against the old record is stale: each is
+re-groomed against the record as it stands, told that the epic is what brought it back, and
+asked what changed for it, which may be nothing. A child already claimed by an implementer
+is not interrupted; its PR is reviewed like any other.
+
+**An epic reviews itself when its slice lands.** The epic's stamp names the children its
+verdict knew about — `children=#a,#b`, plus the ones the factory filed for it — and the
+verdict goes stale once none of them is open. That re-groom is where the next slice of
+children gets written, so a capability keeps moving without anyone remembering to ask. A
+child a human closes as rejected counts as landed for this purpose, which is what you want:
+the groomer sees the closure and writes around it.
+
+**Direction changes in one place, and it ratchets.** A revised design document is not a
+change of direction. A reply on the epic is — one that links the revision and names the
+decisions it disagrees with. The epic is then groomed again with that reply in view, and the
+groomer is told the record ratchets: a settled decision stands unless the reply names it,
+the code has moved from under it, or it now pulls against the principles, and a decision a
+merged or in-flight child relies on is reversed only when the reply asks for that in so many
+words, with the cost in existing code stated. The children then follow, as above. This is
+what keeps a document that is rewritten weekly from becoming weekly whiplash for the work:
+every reversal is a deliberate, attributed act on the issue the work hangs from, and its cost
+is written down where the person making it can see it.
+
+The whole flow, for the next design document (`.claude/skills/doc-to-epics` walks it): write
+it somewhere linkable, file one issue per direction it proposes with the epic label — a document that is a plan, a schedule, an
+org chart and a product proposal at once yields several epics, and the plan and the schedule
+are not among them — and run the tick. The design review is the groom. When the document is
+revised, reply on the epics it changes; do not file a new one.
 
 ## The environment
 

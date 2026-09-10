@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   fingerprint, groomComment, groomNotes, groomState, hasLegacyBlock, isEpic, isGroomed, needsGroom, openIssues,
-  parseGroomReply, readBlocker, readFingerprint, stripLegacyBlock, verdict,
+  childrenFiledComment, openChildren, parentEpic, parseGroomReply, premiseOf, readBlocker, readChildren,
+  readFingerprint, readPremise, recordFingerprint, stampExtrasFor, stripLegacyBlock, verdict,
 } from '../src/groom.ts';
 import type { GroomVerdict, IssueComment, Task } from '../src/types.ts';
 
@@ -304,6 +305,113 @@ describe('epics', () => {
 
   it('an ordinary reply has no children', () => {
     expect(parseGroomReply('Clear.\n\nVERDICT: groomed')!.children).toEqual([]);
+  });
+});
+
+// A child's verdict is judged against its epic's record, and follows it: the
+// stamp names the record, and a re-groomed epic makes every child stale.
+describe('children of an epic', () => {
+  const EPIC_LABELS = { ...LABELS, epic: 'type:epic' };
+  const epicGroom = (t: Task, reasoning: string): Task => ({
+    ...t,
+    comments: [...t.comments, { body: groomComment(t, { verdict: 'groomed', notes: undefined, reasoning, children: [] }, true) }],
+    labels: [...t.labels, LABELS.groomed],
+  });
+  const ungroomedEpic = task(40, 'Direction: a closed loop', [], ['type:epic']);
+  const epic = epicGroom(ungroomedEpic, 'Settled: Atomic Red Team first.');
+  const child = task(41, 'Part of #40\n\nfeat: the vendor slice');
+  const orphan = task(42, 'fix: a typo');
+
+  it('reads the epic a child says it is part of', () => {
+    expect(parentEpic(child)).toBe(40);
+    expect(parentEpic(orphan)).toBeNull();
+    expect(parentEpic(task(43, 'Not really Part of #40 here'))).toBeNull();
+  });
+
+  it('names the epic record only when the epic is open and groomed', () => {
+    expect(premiseOf(child, EPIC_LABELS, openIssues([epic, child]))).toEqual({ epic: 40, sha: recordFingerprint(epic) });
+    expect(premiseOf(child, EPIC_LABELS, openIssues([ungroomedEpic, child]))).toBeNull();
+    expect(premiseOf(child, EPIC_LABELS, openIssues([child]))).toBeNull();
+    expect(premiseOf(orphan, EPIC_LABELS, openIssues([epic, orphan]))).toBeNull();
+    expect(premiseOf(epic, EPIC_LABELS, openIssues([epic]))).toBeNull();
+    expect(premiseOf(child, EPIC_LABELS)).toBeNull();
+  });
+
+  it('stamps the record into the child verdict and reads it back', () => {
+    const premise = premiseOf(child, EPIC_LABELS, openIssues([epic, child]))!;
+    const c = groomComment(child, { verdict: 'groomed', notes: undefined, reasoning: 'One PR.', children: [] }, false, { premise });
+    expect(c).toContain(`<!-- factory-groom sha=${fingerprint(child)} premise=#40@${premise.sha} -->`);
+    const stamped: Task = { ...child, comments: [{ body: c }], labels: [LABELS.groomed] };
+    expect(readPremise(stamped)).toEqual(premise);
+    expect(readFingerprint(stamped)).toBe(fingerprint(child));
+    expect(readBlocker(stamped)).toBeNull();
+  });
+
+  it('reads stamp attributes in any order', () => {
+    const t: Task = { ...child, comments: [{ body: '<!-- factory-groom premise=#40@abcdef012345 blocked=#39 sha=0123456789ab -->\nverdict' }], labels: [LABELS.needsWork] };
+    expect(readFingerprint(t)).toBe('0123456789ab');
+    expect(readBlocker(t)).toBe(39);
+    expect(readPremise(t)).toEqual({ epic: 40, sha: 'abcdef012345' });
+  });
+
+  it('stays current while the epic record stands, and goes stale when the epic is groomed again', () => {
+    const premise = premiseOf(child, EPIC_LABELS, openIssues([epic, child]))!;
+    const c = groomComment(child, { verdict: 'groomed', notes: undefined, reasoning: 'One PR.', children: [] }, false, { premise });
+    const groomedChild: Task = { ...child, comments: [{ body: c }], labels: [LABELS.groomed] };
+    expect(groomState(groomedChild, EPIC_LABELS, openIssues([epic, groomedChild]))).toBe('current');
+
+    const regroomed = epicGroom(epic, 'Reply weighed: Caldera first after all.');
+    expect(recordFingerprint(regroomed)).not.toBe(premise.sha);
+    expect(groomState(groomedChild, EPIC_LABELS, openIssues([regroomed, groomedChild]))).toBe('stale');
+    expect(needsGroom([regroomed, groomedChild], EPIC_LABELS, false, openIssues([regroomed, groomedChild])).map((t) => t.issueNumber)).toEqual([41]);
+  });
+
+  it('keeps the verdict when the epic has closed, and when the open set is unknown', () => {
+    const premise = premiseOf(child, EPIC_LABELS, openIssues([epic, child]))!;
+    const c = groomComment(child, { verdict: 'groomed', notes: undefined, reasoning: 'One PR.', children: [] }, false, { premise });
+    const groomedChild: Task = { ...child, comments: [{ body: c }], labels: [LABELS.groomed] };
+    expect(groomState(groomedChild, EPIC_LABELS, openIssues([groomedChild]))).toBe('current');
+    expect(groomState(groomedChild, EPIC_LABELS)).toBe('current');
+  });
+
+  it('an epic stamp names its open children, plus the ones the factory files right after', () => {
+    const open = openIssues([ungroomedEpic, child, orphan]);
+    expect(openChildren(ungroomedEpic, open)).toEqual([41]);
+    expect(stampExtrasFor(ungroomedEpic, EPIC_LABELS, open)).toEqual({ children: [41] });
+    expect(stampExtrasFor(child, EPIC_LABELS, openIssues([epic, child]))).toEqual({ premise: { epic: 40, sha: recordFingerprint(epic) } });
+    expect(stampExtrasFor(child, EPIC_LABELS)).toEqual({});
+
+    const c = groomComment(ungroomedEpic, { verdict: 'groomed', notes: undefined, reasoning: 'Settled.', children: [] }, true, { children: [41] });
+    expect(c).toContain('children=#41 -->');
+    const filed = childrenFiledComment([{ number: 45, url: 'https://github.com/o/r/issues/45' }]);
+    const stamped: Task = { ...ungroomedEpic, comments: [{ body: c }, { body: filed }], labels: ['type:epic', LABELS.groomed] };
+    expect(readChildren(stamped)).toEqual([41, 45]);
+    // A children-filed comment before the latest stamp belongs to an older verdict.
+    const older: Task = { ...stamped, comments: [{ body: filed }, { body: c }] };
+    expect(readChildren(older)).toEqual([41]);
+  });
+
+  it('an epic goes stale when every child its record knew about has closed — the slice landed', () => {
+    const c = groomComment(ungroomedEpic, { verdict: 'groomed', notes: undefined, reasoning: 'Settled.', children: [] }, true, { children: [41] });
+    const filed = childrenFiledComment([{ number: 45, url: 'https://github.com/o/r/issues/45' }]);
+    const stamped: Task = { ...ungroomedEpic, comments: [{ body: c }, { body: filed }], labels: ['type:epic', LABELS.groomed] };
+    const late = task(45, 'Part of #40\n\nfeat: filed by the factory');
+    expect(groomState(stamped, EPIC_LABELS, openIssues([stamped, child, late]))).toBe('current');
+    expect(groomState(stamped, EPIC_LABELS, openIssues([stamped, late]))).toBe('current');
+    expect(groomState(stamped, EPIC_LABELS, openIssues([stamped]))).toBe('stale');
+    expect(groomState(stamped, EPIC_LABELS)).toBe('current');
+    // An epic that never had children is not waiting on any.
+    const childless = groomComment(ungroomedEpic, { verdict: 'groomed', notes: undefined, reasoning: 'Settled.', children: [] }, true, { children: [] });
+    const lone: Task = { ...ungroomedEpic, comments: [{ body: childless }], labels: ['type:epic', LABELS.groomed] };
+    expect(groomState(lone, EPIC_LABELS, openIssues([lone]))).toBe('current');
+  });
+
+  it('waits for the epic: a child is not groomed in a tick where its epic still needs one', () => {
+    const sibling = task(44, 'Part of #40\n\nfeat: reconstruction');
+    expect(needsGroom([ungroomedEpic, child, sibling, orphan], EPIC_LABELS).map((t) => t.issueNumber)).toEqual([40, 42]);
+    expect(needsGroom([epic, child, sibling, orphan], EPIC_LABELS).map((t) => t.issueNumber)).toEqual([44, 42, 41]);
+    // Under force the epic is pending again, so its children wait for the next tick.
+    expect(needsGroom([epic, child, orphan], EPIC_LABELS, true).map((t) => t.issueNumber)).toEqual([40, 42]);
   });
 });
 

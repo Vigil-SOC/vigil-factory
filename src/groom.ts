@@ -40,6 +40,19 @@
 // "groomed" means: not "one PR can land this" but "this direction is settled,
 // and its children inherit that". The groomer writes the children, and the
 // factory files them under the epic. An epic is never handed to the selector.
+//
+// A child's verdict is about its epic's record as much as about the child, so
+// the stamp names that too: `premise=#N@<hash of the epic's groom comment>`.
+// When the epic is groomed again — a human replied, a design was revised — the
+// record changes, the hash no longer matches, and every child judged against
+// the old record is stale and looked at again. Direction changes in exactly
+// one place, on the epic, and the children follow it without anyone having to
+// remember which ones were built against what.
+//
+// The epic's own stamp names its children (`children=#a,#b`, plus whatever the
+// factory files right after). When none of them is open any more the slice has
+// landed, the verdict is stale, and the epic is groomed again — which is when
+// the next slice gets written.
 
 import { createHash } from 'node:crypto';
 import type { GroomVerdict, IssueComment, Task } from './types.ts';
@@ -54,7 +67,49 @@ const FACTORY_COMMENT_RE = /<!--\s*factory-/;
 const LEGACY_BLOCK_RE =
   /[ \t]*<!--\s*factory-groom:start\b[^>]*-->[\s\S]*?<!--\s*factory-groom:end\s*-->[ \t]*\n?/g;
 
-const STAMP_RE = /<!--\s*factory-groom\s+sha=([0-9a-f]+)(?:\s+blocked=#(\d+))?\s*-->/;
+const STAMP_RE = /<!--\s*factory-groom\s+([^>]*?)\s*-->/;
+
+/** The line the factory writes at the top of every child it files, and the
+ *  convention it reads: `Part of #N` at the start of a line names the epic. */
+const PART_OF_RE = /^Part of #(\d+)\b/m;
+
+/** The epic record a verdict was judged against: the epic, and a hash of its
+ *  groom comment as it stood. */
+export interface Premise {
+  epic: number;
+  sha: string;
+}
+
+interface Stamp {
+  sha: string;
+  blocked?: number;
+  premise?: Premise;
+  children?: number[];
+}
+
+/** What a stamp carries beyond the fingerprint: a child's premise, an epic's children. */
+export interface StampExtras {
+  premise?: Premise | null;
+  children?: number[];
+}
+
+/** The stamp's attributes, in any order. A stamp without `sha` is not one. */
+function parseStamp(body: string): Stamp | null {
+  const m = body.match(STAMP_RE);
+  if (!m) return null;
+  const attrs = new Map([...m[1]!.matchAll(/(\w+)=(\S+)/g)].map((a) => [a[1]!, a[2]!]));
+  const sha = attrs.get('sha');
+  if (!sha) return null;
+  const blocked = attrs.get('blocked')?.match(/^#?(\d+)$/)?.[1];
+  const premise = attrs.get('premise')?.match(/^#?(\d+)@([0-9a-f]+)$/);
+  const children = attrs.get('children')?.split(',').map((c) => Number(c.replace('#', ''))).filter((n) => n > 0);
+  return {
+    sha,
+    ...(blocked ? { blocked: Number(blocked) } : {}),
+    ...(premise ? { premise: { epic: Number(premise[1]), sha: premise[2]! } } : {}),
+    ...(children?.length ? { children } : {}),
+  };
+}
 
 /** The verdict labels, as named in config. */
 export interface GroomLabels {
@@ -113,15 +168,61 @@ function latestGroomComment(task: Task): IssueComment | undefined {
   return [...task.comments].reverse().find((c) => STAMP_RE.test(c.body));
 }
 
+function latestStamp(task: Task): Stamp | null {
+  const c = latestGroomComment(task);
+  return c ? parseStamp(c.body) : null;
+}
+
 /** What the issue looked like when the factory last groomed it. */
 export function readFingerprint(task: Task): string | null {
-  return latestGroomComment(task)?.body.match(STAMP_RE)?.[1] ?? null;
+  return latestStamp(task)?.sha ?? null;
 }
 
 /** The issue the current verdict said had to land first, if it named one. */
 export function readBlocker(task: Task): number | null {
-  const n = latestGroomComment(task)?.body.match(STAMP_RE)?.[2];
-  return n ? Number(n) : null;
+  return latestStamp(task)?.blocked ?? null;
+}
+
+/** The epic record the current verdict was judged against, if it named one. */
+export function readPremise(task: Task): Premise | null {
+  return latestStamp(task)?.premise ?? null;
+}
+
+/** The epic an issue says it is part of, by the `Part of #N` convention. */
+export function parentEpic(task: Task): number | null {
+  const m = task.body.match(PART_OF_RE);
+  return m ? Number(m[1]) : null;
+}
+
+/** The open issues that say they are part of this epic. */
+export function openChildren(epic: Task, open: OpenIssues): number[] {
+  return [...open.values()].filter((t) => parentEpic(t) === epic.issueNumber).map((t) => t.issueNumber).sort((a, b) => a - b);
+}
+
+/**
+ * The children an epic's current verdict knows about: those open when it was
+ * groomed, named in the stamp, plus those the factory filed for that verdict,
+ * listed in its own "children filed" comment after the stamp. Children filed
+ * later by a human are not the record's; a re-groom picks them up.
+ */
+export function readChildren(epic: Task): number[] {
+  const i = [...epic.comments].map((c) => STAMP_RE.test(c.body)).lastIndexOf(true);
+  if (i === -1) return [];
+  const stamped = parseStamp(epic.comments[i]!.body)?.children ?? [];
+  const filed = epic.comments
+    .slice(i + 1)
+    .filter((c) => isFactoryComment(c.body) && c.body.includes(CHILDREN_FILED))
+    .flatMap((c) => [...c.body.matchAll(/\/issues\/(\d+)/g)].map((m) => Number(m[1])));
+  return [...new Set([...stamped, ...filed])].sort((a, b) => a - b);
+}
+
+/**
+ * A fingerprint of an epic's record: its latest groom comment, decisions and
+ * all. Changes exactly when the epic is groomed again.
+ */
+export function recordFingerprint(epic: Task): string | null {
+  const c = latestGroomComment(epic);
+  return c ? createHash('sha256').update(c.body.trim()).digest('hex').slice(0, 12) : null;
 }
 
 /** The verdict of record. */
@@ -151,15 +252,56 @@ function blockerCleared(blocker: number, open: OpenIssues, labels: GroomLabels):
 }
 
 /**
+ * The record a child's verdict is judged against: its epic's groom comment,
+ * when the epic is open and groomed. Nothing, for an epic, for an issue with
+ * no epic, or for a child whose epic has no record yet — that child's verdict
+ * is blocked on the epic instead, and clears when the epic is groomed.
+ */
+export function premiseOf(task: Task, labels: GroomLabels, open?: OpenIssues): Premise | null {
+  if (!open || isEpic(task, labels)) return null;
+  const parent = parentEpic(task);
+  const epic = parent === null ? undefined : open.get(parent);
+  if (!epic || !isEpic(epic, labels) || verdict(epic, labels) !== 'groomed') return null;
+  const sha = recordFingerprint(epic);
+  return sha ? { epic: epic.issueNumber, sha } : null;
+}
+
+/** Whether the epic record a verdict named has been rewritten since. */
+function premiseChanged(premise: Premise, open: OpenIssues): boolean {
+  const epic = open.get(premise.epic);
+  const now = epic ? recordFingerprint(epic) : null;
+  return now !== null && now !== premise.sha;
+}
+
+/** What goes into this issue's stamp besides the fingerprint. */
+export function stampExtrasFor(task: Task, labels: GroomLabels, open?: OpenIssues): StampExtras {
+  if (!open) return {};
+  return isEpic(task, labels) ? { children: openChildren(task, open) } : { premise: premiseOf(task, labels, open) };
+}
+
+/**
+ * A groomed epic's slice has landed when every child its record knew about is
+ * closed. That is the moment to groom it again and write the next slice.
+ */
+function sliceLanded(epic: Task, open: OpenIssues): boolean {
+  const children = readChildren(epic);
+  return children.length > 0 && children.every((n) => !open.has(n));
+}
+
+/**
  * `open` is every open issue in the repo. When given, a verdict blocked on an
  * issue whose blocker has since cleared is stale: what it was waiting for has
- * happened. Left out, blockers are not consulted.
+ * happened. So is a verdict judged against an epic record that has since been
+ * rewritten. Left out, neither is consulted.
  */
 export function groomState(task: Task, labels: GroomLabels, open?: OpenIssues): GroomState {
   if (!verdict(task, labels)) return 'ungroomed';
   if (readFingerprint(task) !== fingerprint(task)) return 'stale';
   const blocker = readBlocker(task);
   if (open && blocker !== null && blockerCleared(blocker, open, labels)) return 'stale';
+  const premise = readPremise(task);
+  if (open && premise && premiseChanged(premise, open)) return 'stale';
+  if (open && isEpic(task, labels) && verdict(task, labels) === 'groomed' && sliceLanded(task, open)) return 'stale';
   return 'current';
 }
 
@@ -176,7 +318,7 @@ export function groomNotes(task: Task): string | undefined {
  * open where the author can argue with it, over a fingerprint of what it read.
  * Additive by construction — a comment cannot overwrite anything a human wrote.
  */
-export function groomComment(task: Task, reply: GroomReply, epic = false): string {
+export function groomComment(task: Task, reply: GroomReply, epic = false, extras: StampExtras = {}): string {
   const headline = epic
     ? reply.verdict === 'groomed'
       ? '🏭 **Factory groom — epic groomed.** The direction is settled, with the decisions below as its record; the factory files the first slice of children under it and builds toward it one PR at a time.'
@@ -186,9 +328,11 @@ export function groomComment(task: Task, reply: GroomReply, epic = false): strin
       : reply.blocked !== undefined
         ? `🏭 **Factory groom — needs work, blocked on #${reply.blocked}.** The factory reviews this again once that issue closes.`
         : '🏭 **Factory groom — needs work.** The factory is not picking this up as written.';
-  const stamp = reply.blocked !== undefined && reply.verdict === 'needs-work'
-    ? `<!-- factory-groom sha=${fingerprint(task)} blocked=#${reply.blocked} -->`
-    : `<!-- factory-groom sha=${fingerprint(task)} -->`;
+  const attrs = [`sha=${fingerprint(task)}`];
+  if (reply.blocked !== undefined && reply.verdict === 'needs-work') attrs.push(`blocked=#${reply.blocked}`);
+  if (extras.premise) attrs.push(`premise=#${extras.premise.epic}@${extras.premise.sha}`);
+  if (extras.children?.length) attrs.push(`children=${extras.children.map((n) => `#${n}`).join(',')}`);
+  const stamp = `<!-- factory-groom ${attrs.join(' ')} -->`;
   const parts = [
     stamp,
     `${headline} Edit the description or reply here and it gets reviewed again on a later tick.`,
@@ -198,11 +342,14 @@ export function groomComment(task: Task, reply: GroomReply, epic = false): strin
   return parts.filter(Boolean).join('\n\n');
 }
 
-/** The factory's note on an epic naming the children it just filed. */
+const CHILDREN_FILED = '🏭 **Factory epic —';
+
+/** The factory's note on an epic naming the children it just filed. Read back
+ *  by `readChildren`, so the URLs are the record. */
 export function childrenFiledComment(children: { number: number; url: string }[]): string {
   const list = children.map((c) => `- ${c.url}`).join('\n');
   return factoryComment(
-    `🏭 **Factory epic — ${children.length} child issue${children.length === 1 ? '' : 's'} filed.** Each is groomed on its own on a later tick, with this epic's decisions as its premise.\n\n${list}`,
+    `${CHILDREN_FILED} ${children.length} child issue${children.length === 1 ? '' : 's'} filed.** Each is groomed on its own on a later tick, with this epic's decisions as its premise.\n\n${list}`,
   );
 }
 
@@ -228,16 +375,24 @@ export function failedAttemptComment(report: string): string {
  *
  * Epics go ahead of everything, because an epic's verdict is the premise for the
  * issues around it: its children are newer than it by construction, and grooming
- * them first only produces verdicts blocked on it.
+ * them first only produces verdicts blocked on it. Going first is not enough
+ * when the batch runs in parallel, so a child whose epic is itself waiting for a
+ * groom is left out altogether until the epic has one: its verdict would be
+ * about a record that is about to change.
  *
  * `force` re-grooms issues whose verdict is still current. The fingerprint covers
  * the issue, not the principles, so editing principles.md or the groom prompt
  * leaves every existing verdict looking valid — this is the way to revisit them.
  */
 export function needsGroom(tasks: Task[], labels: GroomLabels, force = false, open?: OpenIssues): Task[] {
-  return tasks
+  const pending = tasks
     .filter((t) => force || groomState(t, labels, open) !== 'current')
     .sort((a, b) => Number(isEpic(b, labels)) - Number(isEpic(a, labels)) || b.issueNumber - a.issueNumber);
+  const pendingEpics = new Set(pending.filter((t) => isEpic(t, labels)).map((t) => t.issueNumber));
+  return pending.filter((t) => {
+    const parent = parentEpic(t);
+    return parent === null || !pendingEpics.has(parent);
+  });
 }
 
 /**

@@ -30,7 +30,7 @@ import { FactoryState } from './state.ts';
 import { Telemetry } from './telemetry.ts';
 import { filterAssigned, filterClaimed, filterEpics, parseSelection, type Selection } from './selector.ts';
 import { environmentPrompt, groomEpicPrompt, groomPrompt, implementPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
-import { factoryComment, groomState, isEpic, isGroomed, needsGroom, openIssues, parseGroomReply, verdict, type OpenIssues } from './groom.ts';
+import { factoryComment, groomState, isEpic, isGroomed, needsGroom, openIssues, parseGroomReply, stampExtrasFor, verdict, type OpenIssues } from './groom.ts';
 import { addPrLabels, closePr, commentOnIssue, commentOnPr, defaultBranchHead, ensureLabel, findPrByBranch, listPrsByLabel, viewPr } from './github.ts';
 import { environmentChangedAt, skipReason, unreadFactoryPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
@@ -113,7 +113,7 @@ export async function runGroomPhase(
 
   const records = await Promise.all(
     pending.map((task) =>
-      groomOne(ctx, worker, task, principles).catch((err) => {
+      groomOne(ctx, worker, task, principles, opts.open).catch((err) => {
         log(`groom #${task.issueNumber} failed: ${(err as Error).message}`);
         return null;
       }),
@@ -134,6 +134,7 @@ async function groomOne(
   worker: CodingWorker,
   task: Task,
   principles: string,
+  open?: OpenIssues,
 ): Promise<GroomRecord> {
   const epic = isEpic(task, ctx.config.labels);
   const startedAt = new Date().toISOString();
@@ -150,7 +151,9 @@ async function groomOne(
     throw new Error(`groom reply had no VERDICT line:\n${result.resultText.slice(0, 500)}`);
   }
 
-  await ctx.source.recordGroom(task, reply);
+  // A child's verdict names the epic record it was judged against; an epic's
+  // names its children. Either way the verdict says what would make it stale.
+  await ctx.source.recordGroom(task, reply, stampExtrasFor(task, ctx.config.labels, open));
   log(`groomed #${task.issueNumber}${epic ? ' (epic)' : ''} → ${reply.verdict}${reply.notes ? ' (+notes)' : ''}${reply.blocked !== undefined ? ` (blocked on #${reply.blocked})` : ''}`);
 
   // A groomed epic's children are the work; the verdict alone builds nothing.

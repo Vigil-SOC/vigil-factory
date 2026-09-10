@@ -6,7 +6,7 @@ import {
 } from './github.ts';
 import {
   childrenFiledComment, failedAttemptComment, groomComment, hasLegacyBlock, isEpic, stripLegacyBlock,
-  type ChildDraft, type GroomReply,
+  type ChildDraft, type GroomReply, type StampExtras,
 } from './groom.ts';
 
 export class GitHubIssueSource implements WorkSource {
@@ -72,8 +72,8 @@ export class GitHubIssueSource implements WorkSource {
    * against. Either half failing therefore leaves the issue looking ungroomed or
    * stale — it gets groomed again next tick, which is the safe way to fail.
    */
-  async recordGroom(task: Task, reply: GroomReply): Promise<void> {
-    await commentOnIssue(this.repo, task.issueNumber, groomComment(task, reply, isEpic(task, this.config.labels)));
+  async recordGroom(task: Task, reply: GroomReply, extras: StampExtras = {}): Promise<void> {
+    await commentOnIssue(this.repo, task.issueNumber, groomComment(task, reply, isEpic(task, this.config.labels), extras));
 
     const { groomed, needsWork } = this.config.labels;
     const [add, remove] = reply.verdict === 'groomed' ? [groomed, needsWork] : [needsWork, groomed];
