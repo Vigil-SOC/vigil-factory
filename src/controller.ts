@@ -1,21 +1,23 @@
 // The factory controller: one idempotent tick.
 //
-//   reconcile outcomes → groom ungroomed issues → fix the agents' environment →
+//   reconcile with GitHub → groom ungroomed issues → simplify, alongside:
 //   measure free capacity → for each free slot, a selector agent picks the
 //   best-defined GROOMED issue → hand each to a FRESH implementer agent → label
 //   the resulting PRs (or, if the attempt refuted the groom, retract the
-//   verdict) → record telemetry → yield to a human.
+//   verdict) → record telemetry → fix the agents' environment from what those
+//   PRs said about it → yield to a human.
 //
 // `maxConcurrentJobs` is the whole throttle: a job is an open factory PR
 // awaiting a human or a pipeline still running, at most that many exist at
 // once, and so one tick starts at most that many pipelines. Default 1 keeps the
 // strict one-at-a-time factory.
 //
-// Grooming, the environment phase, and the simplification phase all run before
-// the capacity gate on purpose: a PR sitting in review is no reason to stop
-// vetting the backlog, to leave the agents' machine broken, or to let the code
-// keep accreting. Environment and simplification PRs are each their own
-// one-deep queue and never spend an implementer's slot.
+// Grooming, the environment phase, and the simplification phase all run
+// outside the capacity gate on purpose: a PR sitting in review is no reason to
+// stop vetting the backlog, to leave the agents' machine broken, or to let the
+// code keep accreting. Environment and simplification PRs are each their own
+// one-deep queue and never spend an implementer's slot. The environment phase
+// runs last, after the implementers, so the PRs it reads include this tick's.
 //
 // Every judgment call (is this worth building, which issue, how to
 // implement/verify/review it) lives in an agent; the controller only sequences
@@ -348,11 +350,15 @@ export async function simplifySkip(ctx: FactoryContext, baseSha: string | null):
   return simplifySkipReason(config.simplify.enabled, openPrs, ctx.telemetry.simplifyPasses(), baseSha);
 }
 
-function simplifyPromptFor(ctx: FactoryContext): string {
-  const outcomes = ctx.telemetry.outcomes();
+async function simplifyPromptFor(ctx: FactoryContext): Promise<string> {
+  const repo = repoSlug(ctx.config);
+  const [merged, closed] = await Promise.all([
+    listPrsByLabel(repo, ctx.config.labels.factoryPr, 'merged'),
+    listPrsByLabel(repo, ctx.config.labels.simplifyPr, 'closed'),
+  ]);
   return simplifyPrompt({
-    recentPrs: recentlyMergedFactoryPrs(outcomes, 5),
-    declinedPrs: declinedSimplifications(outcomes),
+    recentPrs: recentlyMergedFactoryPrs(merged, 5),
+    declinedPrs: declinedSimplifications(closed),
     budget: ctx.config.worker,
   });
 }
@@ -379,7 +385,7 @@ export async function runSimplifyPhase(ctx: FactoryContext, worker: CursorWorker
 
   log(`simplify: looking for one simplification PR at ${baseSha?.slice(0, 8) ?? 'the default branch'}`);
   const startedAt = new Date().toISOString();
-  const handle = await worker.start(simplifyPromptFor(ctx), { autoCreatePR: true, name: 'factory-simplify' });
+  const handle = await worker.start(await simplifyPromptFor(ctx), { autoCreatePR: true, name: 'factory-simplify' });
 
   const record = async (over: Partial<SimplifyRecord>): Promise<SimplifyRecord> => {
     const full: SimplifyRecord = {
@@ -450,30 +456,46 @@ export async function tick(opts: { dryRun: boolean }): Promise<void> {
     await runGroomPhase(ctx, worker, admissible(ctx, candidates, 'groom'), { open: openIssues(candidates) });
   }
 
-  // 3. Environment and simplification, together: fix the machine the
-  //    implementers run on from what they said about it, and take back some of
-  //    the complexity they added. Both ahead of the capacity gate, each its own
-  //    one-deep PR queue, and both deliberately independent of the backlog: a
-  //    broken machine or an accreting codebase is a problem whether or not
-  //    there is anything to build today, and the tick that notices is the idle
-  //    one. Concurrent because each may use the whole run budget.
+  // 3. Simplification alongside implementation: take back some of the
+  //    complexity the implementers added. Ahead of the capacity gate, its own
+  //    one-deep PR queue, and deliberately independent of the backlog: an
+  //    accreting codebase is a problem whether or not there is anything to
+  //    build today, and the tick that notices is the idle one. Concurrent with
+  //    the implementers because it touches no issue and takes no slot.
   await Promise.all([
-    runEnvironmentPhase(ctx, worker).catch((err: Error) => {
-      log(`environment phase error: ${err.message}`);
-      return null;
-    }),
     runSimplifyPhase(ctx, worker).catch((err: Error) => {
       log(`simplify phase error: ${err.message}`);
       return null;
     }),
+    runImplementation(ctx, worker, candidates),
   ]);
 
+  // 4. Environment, last: fix the machine the implementers run on from what
+  //    they said about it. It reads the factory's PRs, and the ones opened this
+  //    tick are the freshest evidence — a pass before the implementers would
+  //    read yesterday's and hand today's to tomorrow. Still independent of the
+  //    backlog: it runs on an idle tick too, on whatever it has not yet read.
+  await runEnvironmentPhase(ctx, worker).catch((err: Error) => {
+    log(`environment phase error: ${err.message}`);
+    return null;
+  });
+}
+
+interface Pick {
+  task: Task;
+  agentId: string;
+  usage: TokenUsage | null;
+}
+
+/** The implementation half of a tick: capacity gate, selectors, implementers. */
+async function runImplementation(ctx: FactoryContext, worker: CodingWorker, candidates: Task[]): Promise<void> {
+  const { config } = ctx;
   if (candidates.length === 0) {
     log('no open issues. Nothing to implement.');
     return;
   }
 
-  // 4. Capacity gate, for the implementation half only.
+  // Capacity gate, for the implementation half only.
   const capacity = await ctx.state.capacity(log);
   log(`capacity: ${capacity.slots} of ${capacity.limit} slot(s) free (${capacity.openPrs.length} PR(s) awaiting a human, ${capacity.inFlight.length} pipeline(s) in flight)`);
   if (capacity.slots === 0) {
@@ -485,8 +507,8 @@ export async function tick(opts: { dryRun: boolean }): Promise<void> {
     return;
   }
 
-  // 5. Selector agents fill the free slots. Re-fetch, since the groom phase
-  //    just rewrote some of the bodies we hold.
+  // Selector agents fill the free slots. Re-fetch, since the groom phase just
+  // rewrote some of the bodies we hold.
   const tasks = admissible(ctx, await candidateTasks(ctx), 'implement').filter((t) => isGroomed(t, ctx.config.labels));
   if (tasks.length === 0) {
     log('no groomed issues available to implement. Nothing to do.');
@@ -497,9 +519,9 @@ export async function tick(opts: { dryRun: boolean }): Promise<void> {
   const picks = await pickTasks(ctx, worker, tasks, capacity.slots);
   if (picks.length === 0) return;
 
-  // 6. Handoff: one fresh implementer session per pick, run concurrently. They
-  //    work on separate branches, so the only collisions are ones a human
-  //    resolves at review time — the same as two people picking up two issues.
+  // Handoff: one fresh implementer session per pick, run concurrently. They
+  // work on separate branches, so the only collisions are ones a human
+  // resolves at review time — the same as two people picking up two issues.
   await Promise.all(
     picks.map((pick) =>
       runPipeline(ctx, worker, pick.task, pick.agentId, pick.usage).catch(async (err) => {
@@ -508,12 +530,6 @@ export async function tick(opts: { dryRun: boolean }): Promise<void> {
       }),
     ),
   );
-}
-
-interface Pick {
-  task: Task;
-  agentId: string;
-  usage: TokenUsage | null;
 }
 
 /**
@@ -605,7 +621,7 @@ async function dryRun(ctx: FactoryContext, allCandidates: Task[]): Promise<void>
     return;
   }
   log(`simplify: would look for one simplification at ${sha.slice(0, 8)}. Its prompt would be:`);
-  console.log(`\n${simplifyPromptFor(ctx)}\n`);
+  console.log(`\n${await simplifyPromptFor(ctx)}\n`);
 }
 
 async function runPipeline(

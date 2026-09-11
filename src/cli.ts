@@ -90,9 +90,6 @@ async function status(): Promise<void> {
       log(`  ${r.startedAt} #${r.issueNumber} → ${r.outcome}${r.prUrl ? ` ${r.prUrl}` : ''}${r.failureReason ? ` (${r.failureReason})` : ''}`);
     }
   }
-  const awaiting = ctx.telemetry.prsAwaitingOutcome();
-  for (const r of awaiting) log(`awaiting human outcome: ${r.prUrl}${r.source === 'environment' ? ' (environment)' : ''}`);
-
   // The environment queue is separate from `maxConcurrentJobs` on purpose, so
   // it needs saying separately.
   const { environment } = ctx.config;

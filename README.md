@@ -51,7 +51,8 @@ Plenty of tools point an agent at a backlog. This one takes positions:
 ## What one tick does
 
 ```
-reconcile outcomes of previously opened PRs (merged/rejected → telemetry, release issue)
+reconcile with GitHub: record the verdict on every factory PR that has closed, release the
+   in-progress label on every issue nothing is working on any more
 → GROOM agents (up to groom.maxPerTick, in parallel, newest first): vet issues against
    principles.md — "groomed" or "needs-work", recorded as a label, alongside a comment
    giving the conclusion, why, and any coding-level notes (the issue is never closed).
@@ -59,14 +60,11 @@ reconcile outcomes of previously opened PRs (merged/rejected → telemetry, rele
    settles its open decisions in the comment and writes its first children, which the
    factory files under it. A verdict blocked on another issue names it, and is revisited
    the tick after that issue closes
-→ ENVIRONMENT agent: reads the factory PRs it has not read yet, looking for a check the
-   implementer could not run, and fixes .cursor/environment.json in the target repo so the
-   next one can. Opens a PR only when it finds a gap it can close; one open at a time
-→ SIMPLIFY agent, alongside it: reads the codebase, starting from the factory's own merged
-   PRs, and opens one PR that removes more code than it adds — abstractions with one
-   caller, fallback paths nothing reaches, hand-rolled copies of what the SDK ships. A PR
-   that grows the code is closed by the factory, unseen. One open at a time; a commit the
-   last pass already judged is not looked at again
+→ SIMPLIFY agent, alongside the implementation below: reads the codebase, starting from
+   the factory's own merged PRs, and opens one PR that removes more code than it adds —
+   abstractions with one caller, fallback paths nothing reaches, hand-rolled copies of
+   what the SDK ships. A PR that grows the code is closed by the factory, unseen. One
+   open at a time; a commit the last pass already judged is not looked at again
 count the jobs already in flight (open factory PRs + running pipelines)
    → no free slot under maxConcurrentJobs? stop here
 for each free slot:
@@ -80,6 +78,10 @@ for each free slot:
 label the resulting PRs `factory`, comment on the issues, record telemetry
    → a run that ends with NO PR, or runs out of worker.maxRunMinutes, retracts the
       groom verdict: the issue is relabelled needs-work with the agent's report
+→ ENVIRONMENT agent, last, so the PRs just opened are in front of it: reads the factory
+   PRs it has not read yet, looking for a check the implementer could not run, and fixes
+   .cursor/environment.json in the target repo so the next one can. Opens a PR only when
+   it finds a gap it can close; one open at a time
 stop — a human merging or closing a PR is what frees the next slot
 ```
 
@@ -406,9 +408,8 @@ gh auth status             # gh must be authenticated with repo scope on the tar
 ```
 
 `factory.config.example.json` and `principles.example.md` are the blank
-versions a second deployment would start from. `telemetry/` is gitignored
-except for the append-only `runs.jsonl`, which the tick commits back so
-outcome reconciliation works across ticks.
+versions a second deployment would start from. `telemetry/` is gitignored; the
+record lives on the `telemetry` branch (see [Telemetry](#telemetry)).
 
 ## Commands
 
@@ -479,7 +480,30 @@ when no `factory.config.json` is committed.
 
 ## Telemetry
 
-Append-only JSONL at `telemetry/runs.jsonl`:
+**GitHub is the source of record; telemetry is the record of what the factory spent.**
+Nothing the tick decides is read from telemetry. Which issues are claimed, which PRs
+closed, what the environment agent has read, what the simplifier was declined — all of it
+is on GitHub, as labels, PR state, and the factory's own comments, and every phase asks
+GitHub. The first version decided from telemetry, and a runner whose telemetry did not
+persist — the Actions runner, for a week — re-read the same PRs every day and never
+learned the new ones existed. A record can be lost without the factory doing anything
+wrong; a decision cannot.
+
+The one exception is deliberate: the simplification pass skips a commit the last pass
+already judged, read from telemetry. Stale telemetry names an old commit and the pass
+runs, so the worst a lost record can do there is cost one redundant pass.
+
+The record itself is append-only JSONL at `telemetry/runs.jsonl`, kept on the `telemetry`
+branch: only the tick writes it, nothing reviews it, and the org ruleset that requires a
+PR for `main` has no business with it. The Actions tick fetches the branch before it
+starts and appends its rows after. To read it locally:
+
+```bash
+git fetch origin telemetry && git show origin/telemetry:telemetry/runs.jsonl > telemetry/runs.jsonl
+npm run factory -- status
+```
+
+Its rows:
 
 - `groom` records: issue, verdict, whether notes were written, whether it was a
   re-groom after the issue changed, agent id, token usage, duration. For an epic, that
