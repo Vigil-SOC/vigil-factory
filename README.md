@@ -60,14 +60,11 @@ reconcile with GitHub: record the verdict on every factory PR that has closed, r
    settles its open decisions in the comment and writes its first children, which the
    factory files under it. A verdict blocked on another issue names it, and is revisited
    the tick after that issue closes
-→ ENVIRONMENT agent: reads the factory PRs it has not read yet, looking for a check the
-   implementer could not run, and fixes .cursor/environment.json in the target repo so the
-   next one can. Opens a PR only when it finds a gap it can close; one open at a time
-→ SIMPLIFY agent, alongside it: reads the codebase, starting from the factory's own merged
-   PRs, and opens one PR that removes more code than it adds — abstractions with one
-   caller, fallback paths nothing reaches, hand-rolled copies of what the SDK ships. A PR
-   that grows the code is closed by the factory, unseen. One open at a time; a commit the
-   last pass already judged is not looked at again
+→ SIMPLIFY agent, alongside the implementation below: reads the codebase, starting from
+   the factory's own merged PRs, and opens one PR that removes more code than it adds —
+   abstractions with one caller, fallback paths nothing reaches, hand-rolled copies of
+   what the SDK ships. A PR that grows the code is closed by the factory, unseen. One
+   open at a time; a commit the last pass already judged is not looked at again
 count the jobs already in flight (open factory PRs + running pipelines)
    → no free slot under maxConcurrentJobs? stop here
 for each free slot:
@@ -81,6 +78,10 @@ for each free slot:
 label the resulting PRs `factory`, comment on the issues, record telemetry
    → a run that ends with NO PR, or runs out of worker.maxRunMinutes, retracts the
       groom verdict: the issue is relabelled needs-work with the agent's report
+→ ENVIRONMENT agent, last, so the PRs just opened are in front of it: reads the factory
+   PRs it has not read yet, looking for a check the implementer could not run, and fixes
+   .cursor/environment.json in the target repo so the next one can. Opens a PR only when
+   it finds a gap it can close; one open at a time
 stop — a human merging or closing a PR is what frees the next slot
 ```
 
