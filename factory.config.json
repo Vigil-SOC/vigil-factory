@@ -6,10 +6,9 @@
   },
   "worker": {
     "model": {
-      "id": "grok-4.6",
+      "id": "claude-fable-5-1",
       "params": {
-        "effort": "high",
-        "fast": "false"
+        "effort": "low"
       }
     },
     "pollIntervalSeconds": 30,
