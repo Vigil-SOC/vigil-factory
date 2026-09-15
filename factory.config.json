@@ -8,6 +8,8 @@
     "model": {
       "id": "claude-fable-5-1",
       "params": {
+        "thinking": "true",
+        "context": "1m",
         "effort": "low"
       }
     },
