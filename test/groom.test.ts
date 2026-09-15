@@ -144,8 +144,8 @@ describe('backlog filters', () => {
   const fresh = task(12, 'c');
   const stale = { ...verdictOn(task(9, 'd'), 'groomed'), body: 'd rewritten' };
 
-  it('grooms the ungroomed and the stale, newest first', () => {
-    expect(needsGroom([groomed, rejected, fresh, stale], LABELS).map((t) => t.issueNumber)).toEqual([12, 9]);
+  it('grooms the ungroomed and the stale, oldest first', () => {
+    expect(needsGroom([groomed, rejected, fresh, stale], LABELS).map((t) => t.issueNumber)).toEqual([9, 12]);
   });
 
   it('offers every issue carrying the groomed label for implementation', () => {
@@ -247,11 +247,11 @@ describe('epics', () => {
   const EPIC_LABELS = { ...LABELS, epic: 'type:epic' };
   const epic = task(30, 'Direction: a closed loop', [], ['type:epic']);
 
-  it('grooms ahead of everything else, then newest first', () => {
+  it('grooms ahead of everything else, then oldest first', () => {
     const older = task(28, 'a'), newer = task(29, 'b');
-    expect(needsGroom([older, newer, epic], EPIC_LABELS).map((t) => t.issueNumber)).toEqual([30, 29, 28]);
+    expect(needsGroom([older, newer, epic], EPIC_LABELS).map((t) => t.issueNumber)).toEqual([30, 28, 29]);
     const olderEpic = task(5, 'e', [], ['type:epic']);
-    expect(needsGroom([older, newer, olderEpic], EPIC_LABELS).map((t) => t.issueNumber)).toEqual([5, 29, 28]);
+    expect(needsGroom([older, newer, olderEpic], EPIC_LABELS).map((t) => t.issueNumber)).toEqual([5, 28, 29]);
   });
 
   it('is an epic only by the configured label', () => {
@@ -409,7 +409,7 @@ describe('children of an epic', () => {
   it('waits for the epic: a child is not groomed in a tick where its epic still needs one', () => {
     const sibling = task(44, 'Part of #40\n\nfeat: reconstruction');
     expect(needsGroom([ungroomedEpic, child, sibling, orphan], EPIC_LABELS).map((t) => t.issueNumber)).toEqual([40, 42]);
-    expect(needsGroom([epic, child, sibling, orphan], EPIC_LABELS).map((t) => t.issueNumber)).toEqual([44, 42, 41]);
+    expect(needsGroom([epic, child, sibling, orphan], EPIC_LABELS).map((t) => t.issueNumber)).toEqual([41, 42, 44]);
     // Under force the epic is pending again, so its children wait for the next tick.
     expect(needsGroom([epic, child, orphan], EPIC_LABELS, true).map((t) => t.issueNumber)).toEqual([40, 42]);
   });
@@ -425,6 +425,6 @@ describe('force re-grooming', () => {
   });
 
   it('revisits current verdicts under force — the fingerprint does not track the principles', () => {
-    expect(needsGroom([groomed, rejected, fresh], LABELS, true).map((t) => t.issueNumber)).toEqual([12, 11, 10]);
+    expect(needsGroom([groomed, rejected, fresh], LABELS, true).map((t) => t.issueNumber)).toEqual([10, 11, 12]);
   });
 });

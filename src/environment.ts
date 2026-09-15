@@ -67,8 +67,8 @@ function newestFirst(prs: FactoryPr[]): FactoryPr[] {
 }
 
 /**
- * Factory PRs no environment pass has read yet, newest first — the same
- * ordering grooming uses, for the same reason.
+ * Factory PRs no environment pass has read yet, newest first: the newest
+ * report is the one most likely to describe the machine as it is now.
  *
  * `changedAt` splits them. A PR opened before the environment changed was
  * written on the old machine, whatever it says. (The run that opened it started

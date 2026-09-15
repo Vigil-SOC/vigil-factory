@@ -368,10 +368,11 @@ export function failedAttemptComment(report: string): string {
 /**
  * Never groomed, or groomed against an issue that has since changed.
  *
- * Newest first. A stale issue's premises are false by construction — the code
- * moved underneath it — so oldest-first spends the grooming budget on the part
- * of the backlog least likely to yield anything buildable, and the factory
- * opens no PRs meanwhile because selection only draws from groomed issues.
+ * Oldest first. Issues are filed in roughly dependency order — the thing an
+ * issue builds on was usually filed before it — so grooming the oldest pending
+ * issue first settles the premises the newer ones rest on. A stale old issue
+ * still costs a groom, but its `needs-work` verdict is a real answer about the
+ * backlog, and the newer issues that assumed it get judged against that answer.
  *
  * Epics go ahead of everything, because an epic's verdict is the premise for the
  * issues around it: its children are newer than it by construction, and grooming
@@ -387,7 +388,7 @@ export function failedAttemptComment(report: string): string {
 export function needsGroom(tasks: Task[], labels: GroomLabels, force = false, open?: OpenIssues): Task[] {
   const pending = tasks
     .filter((t) => force || groomState(t, labels, open) !== 'current')
-    .sort((a, b) => Number(isEpic(b, labels)) - Number(isEpic(a, labels)) || b.issueNumber - a.issueNumber);
+    .sort((a, b) => Number(isEpic(b, labels)) - Number(isEpic(a, labels)) || a.issueNumber - b.issueNumber);
   const pendingEpics = new Set(pending.filter((t) => isEpic(t, labels)).map((t) => t.issueNumber));
   return pending.filter((t) => {
     const parent = parentEpic(t);

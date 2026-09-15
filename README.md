@@ -53,7 +53,7 @@ Plenty of tools point an agent at a backlog. This one takes positions:
 ```
 reconcile with GitHub: record the verdict on every factory PR that has closed, release the
    in-progress label on every issue nothing is working on any more
-→ GROOM agents (up to groom.maxPerTick, in parallel, newest first): vet issues against
+→ GROOM agents (up to groom.maxPerTick, in parallel, oldest first): vet issues against
    principles.md — "groomed" or "needs-work", recorded as a label, alongside a comment
    giving the conclusion, why, and any coding-level notes (the issue is never closed).
    An issue carrying the repo's epic label is groomed as a DIRECTION instead: the agent
@@ -123,12 +123,12 @@ bad issue produces a confident bad PR, and no amount of agent autonomy fixes an 
 that should not be built. A groomed issue's implementer is in fact *less* boxed in,
 because the scoping argument already happened upstream.
 
-Grooming works **newest issue first**. A stale issue's premises are false by
-construction — the code moved underneath it — so oldest-first spends the grooming
-budget on the part of the backlog least likely to yield anything buildable, while the
-factory opens no PRs meanwhile (selection draws only from groomed issues). The first
-seven grooms in our first deployment, run against a months-old backlog, were 7/7
-`needs-work` — none a false rejection — which is what motivated this ordering.
+Grooming works **oldest issue first**, with epics ahead of everything. Issues are filed
+in roughly dependency order — what an issue builds on was usually filed before it — so
+the oldest pending issue is the one whose verdict the most other issues rest on. A stale
+old issue still costs a groom, but its `needs-work` is a real answer about the backlog,
+and the newer issues that assumed it are then judged against that answer rather than
+ahead of it.
 
 `principles.md` holds the product-direction principles grooming judges against. They
 are deliberately factory-local: they never reach the implementer, which sees only
@@ -353,9 +353,8 @@ Only evidence about the current machine counts.
 
 The phase runs at most once per tick, only when there are unread factory PRs with reports
 about the current machine and no environment PR already open, and reads at most
-`environment.maxPrsPerPass` of them — newest first, the same ordering grooming uses and
-for the same reason. The old tail is starved on a busy factory, deliberately: an unread
-old PR costs nothing, a stale environment costs every run.
+`environment.maxPrsPerPass` of them, newest first. The old tail is starved on a busy
+factory, deliberately: an unread old PR costs nothing, a stale environment costs every run.
 
 ## Simplification
 
