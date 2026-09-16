@@ -45,5 +45,5 @@
   },
   "telemetryDir": "telemetry",
   "staleRunHours": 24,
-  "maxConcurrentJobs": 2
+  "maxConcurrentJobs": 3
 }
