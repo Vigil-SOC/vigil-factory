@@ -146,7 +146,7 @@ async function groomOne(
   });
   const result = await worker.awaitResult(handle);
   if (result.status !== 'FINISHED') {
-    throw new Error(`groom run ended with status ${result.status}: ${result.resultText.slice(0, 300)}`);
+    throw new Error(`groom run ended with status ${result.status}: ${result.resultText.slice(0, 300) || opaqueRunNote(handle)}`);
   }
   const reply = parseGroomReply(result.resultText);
   if (!reply) {
@@ -196,7 +196,17 @@ async function groomOne(
   return record;
 }
 
-/** The PR an agent's run produced, if any: Cursor reports it, or the branch it pushed has one. */
+/**
+ * What the log says when Cursor ends a run without a word. The API carries no
+ * reason for an ERROR, and the cause is usually outside the run: on
+ * 2026-09-16 three implementers died in the same minute because the team's
+ * included usage hit 100% with on-demand spend off. The agent page is where
+ * that shows, so the log points there.
+ */
+function opaqueRunNote(handle: RunHandle): string {
+  return `Cursor gave no reason; see https://cursor.com/agents/${handle.agentId} (an account-wide cause, such as the usage limit, shows there and hits every run at once)`;
+}
+
 /**
  * The PR a finished run opened, if any — and no longer a draft. Every PR the
  * factory opens awaits a human, so a draft would sit unnoticed; see `markPrReady`.
@@ -224,7 +234,7 @@ export async function runSelector(
   });
   const result = await worker.awaitResult(handle);
   if (result.status !== 'FINISHED') {
-    throw new Error(`selector run ended with status ${result.status}: ${result.resultText.slice(0, 300)}`);
+    throw new Error(`selector run ended with status ${result.status}: ${result.resultText.slice(0, 300) || opaqueRunNote(handle)}`);
   }
   const usage = (await worker.usage(handle.agentId)) ?? null;
   return {
@@ -660,7 +670,7 @@ async function runPipeline(
 
   const result = await worker.awaitResult(handle);
   if (result.status !== 'FINISHED') {
-    throw new Error(`run ended with status ${result.status}: ${result.resultText.slice(0, 300)}`);
+    throw new Error(`run ended with status ${result.status}: ${result.resultText.slice(0, 300) || opaqueRunNote(handle)}`);
   }
 
   const prUrl = await openedPr(config, result);
