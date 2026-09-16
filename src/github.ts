@@ -167,6 +167,17 @@ export async function commentOnPr(repo: string, prUrl: string, body: string): Pr
   await ghStdin(['pr', 'comment', prUrl, '-R', repo, '--body-file', '-'], body);
 }
 
+/**
+ * Take a PR out of draft. Cursor opens the implementer's PR itself, and whether
+ * it comes out as a draft varies run to run with nothing in the factory's
+ * control (#948, #949, #952, #953 stayed drafts; the runs before them did not).
+ * A draft waits on nobody, so the factory clears it the moment it labels the PR.
+ */
+export async function markPrReady(repo: string, prUrl: string): Promise<void> {
+  const { isDraft } = await viewPr(repo, prUrl);
+  if (isDraft) await gh(['pr', 'ready', prUrl, '-R', repo]);
+}
+
 export async function closePr(repo: string, prUrl: string, comment: string): Promise<void> {
   await gh(['pr', 'close', prUrl, '-R', repo, '--comment', comment]);
 }

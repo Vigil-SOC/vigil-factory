@@ -33,7 +33,7 @@ import { Telemetry } from './telemetry.ts';
 import { filterAssigned, filterClaimed, filterEpics, parseSelection, type Selection } from './selector.ts';
 import { environmentPrompt, groomEpicPrompt, groomPrompt, implementPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
 import { factoryComment, groomState, isEpic, isGroomed, needsGroom, openIssues, parseGroomReply, stampExtrasFor, verdict, type OpenIssues } from './groom.ts';
-import { addPrLabels, closePr, commentOnIssue, commentOnPr, defaultBranchHead, ensureLabel, findPrByBranch, listPrsByLabel, viewPr } from './github.ts';
+import { addPrLabels, closePr, commentOnIssue, commentOnPr, defaultBranchHead, ensureLabel, findPrByBranch, listPrsByLabel, markPrReady, viewPr } from './github.ts';
 import { ENV_AGENT_MARK, environmentChangedAt, recentVerdicts, skipReason, unreadFactoryPrs, type UnreadPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
 
@@ -197,10 +197,20 @@ async function groomOne(
 }
 
 /** The PR an agent's run produced, if any: Cursor reports it, or the branch it pushed has one. */
+/**
+ * The PR a finished run opened, if any — and no longer a draft. Every PR the
+ * factory opens awaits a human, so a draft would sit unnoticed; see `markPrReady`.
+ */
 async function openedPr(config: FactoryConfig, result: RunResult): Promise<string | null> {
-  return result.prUrl
+  const prUrl = result.prUrl
     ?? (result.branch ? (await findPrByBranch(repoSlug(config), result.branch))?.url : undefined)
     ?? null;
+  if (prUrl) {
+    await markPrReady(repoSlug(config), prUrl).catch((err: Error) => {
+      log(`could not mark ${prUrl} ready for review: ${err.message}`);
+    });
+  }
+  return prUrl;
 }
 
 /** First agent flow: the selector reads the open issues and picks one. */
