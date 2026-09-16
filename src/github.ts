@@ -178,6 +178,44 @@ export async function markPrReady(repo: string, prUrl: string): Promise<void> {
   if (isDraft) await gh(['pr', 'ready', prUrl, '-R', repo]);
 }
 
+export interface PrCheck {
+  name: string;
+  /** gh's rollup of a check's state; `cancel` is what gh calls a cancelled run. */
+  bucket: 'pass' | 'fail' | 'pending' | 'skipping' | 'cancel';
+  link: string;
+}
+
+/**
+ * The PR's checks as they stand right now. Exit code is 0 even when checks
+ * are red because of `--json`; without it gh signals red with a nonzero exit
+ * and the wrapper would throw.
+ */
+export async function prChecks(repo: string, prUrl: string): Promise<PrCheck[]> {
+  return ghJson<PrCheck[]>(['pr', 'checks', prUrl, '-R', repo, '--json', 'name,bucket,link']);
+}
+
+/**
+ * Wait for a PR's checks to settle, and return the failing ones. A repo with no
+ * checks settles at once. Gives up after `maxWaitMs` and treats whatever is
+ * still pending as not failing: a slow CI is not the implementer's fault, and
+ * the human sees the real state on the PR either way.
+ */
+export async function awaitPrChecks(
+  repo: string,
+  prUrl: string,
+  opts: { maxWaitMs: number; pollMs: number; log?: (msg: string) => void },
+): Promise<{ failed: PrCheck[]; settled: boolean }> {
+  const deadline = Date.now() + opts.maxWaitMs;
+  for (;;) {
+    const checks = await prChecks(repo, prUrl);
+    const pending = checks.filter((c) => c.bucket === 'pending');
+    if (pending.length === 0) return { failed: checks.filter((c) => c.bucket === 'fail'), settled: true };
+    if (Date.now() > deadline) return { failed: checks.filter((c) => c.bucket === 'fail'), settled: false };
+    opts.log?.(`${prUrl}: ${pending.length} check(s) still running`);
+    await new Promise((r) => setTimeout(r, opts.pollMs));
+  }
+}
+
 export async function closePr(repo: string, prUrl: string, comment: string): Promise<void> {
   await gh(['pr', 'close', prUrl, '-R', repo, '--comment', comment]);
 }

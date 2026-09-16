@@ -24,16 +24,16 @@
 // the handoffs and keeps the capacity gate.
 
 import { resolve } from 'node:path';
-import type { CodingWorker, CurrentRun, EnvRecord, GroomRecord, RunResult, SimplifyRecord, Task, TokenUsage } from './types.ts';
+import type { CodingWorker, CurrentRun, EnvRecord, GroomRecord, RunHandle, RunRecord, RunResult, SimplifyRecord, Task, TokenUsage } from './types.ts';
 import { loadConfig, loadDotEnv, loadPrinciples, projectRoot, repoSlug, requireCursorApiKey, type FactoryConfig } from './config.ts';
 import { CursorWorker, RunBudgetExceeded } from './worker.ts';
 import { GitHubIssueSource } from './workSource.ts';
 import { FactoryState } from './state.ts';
 import { Telemetry } from './telemetry.ts';
 import { filterAssigned, filterClaimed, filterEpics, parseSelection, type Selection } from './selector.ts';
-import { environmentPrompt, groomEpicPrompt, groomPrompt, implementPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
+import { environmentPrompt, fixChecksPrompt, groomEpicPrompt, groomPrompt, implementPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
 import { factoryComment, groomState, isEpic, isGroomed, needsGroom, openIssues, parseGroomReply, stampExtrasFor, verdict, type OpenIssues } from './groom.ts';
-import { addPrLabels, closePr, commentOnIssue, commentOnPr, defaultBranchHead, ensureLabel, findPrByBranch, listPrsByLabel, markPrReady, viewPr } from './github.ts';
+import { addPrLabels, awaitPrChecks, closePr, commentOnIssue, commentOnPr, defaultBranchHead, ensureLabel, findPrByBranch, listPrsByLabel, markPrReady, prChecks, viewPr } from './github.ts';
 import { ENV_AGENT_MARK, environmentChangedAt, recentVerdicts, skipReason, unreadFactoryPrs, type UnreadPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
 
@@ -663,8 +663,9 @@ async function runPipeline(
     throw new Error(`run ended with status ${result.status}: ${result.resultText.slice(0, 300)}`);
   }
 
-  const usage = (await worker.usage(handle.agentId)) ?? null;
   const prUrl = await openedPr(config, result);
+  const ci = prUrl ? await greenChecks(config, worker, handle, prUrl) : null;
+  const usage = (await worker.usage(handle.agentId)) ?? null;
 
   if (!prUrl) {
     // The agent finished without a PR: it judged the issue not buildable as
@@ -680,9 +681,10 @@ async function runPipeline(
     state.writeRun(current);
     await addPrLabels(repoSlug(config), prUrl, [config.labels.factoryPr]);
     const pause = pauseNote(config);
+    const red = ci?.checks === 'red' ? ' CI is still failing on it; the implementer could not or would not make it green, and says why on the PR.' : '';
     await commentOnIssue(repoSlug(config), task.issueNumber, factoryComment(
-      `🏭 The factory opened ${prUrl} for this issue. It is awaiting human review; ${pause}.`));
-    log(`done: ${prUrl} awaits human review; ${pause}.`);
+      `🏭 The factory opened ${prUrl} for this issue. It is awaiting human review; ${pause}.${red}`));
+    log(`done: ${prUrl} awaits human review (checks ${ci?.checks}); ${pause}.`);
   }
 
   ctx.telemetry.append({
@@ -701,8 +703,57 @@ async function runPipeline(
     usage,
     selectorUsage,
     durationMs: Date.now() - Date.parse(startedAt),
+    ...(ci ?? {}),
   });
   state.clearRun(task.id);
+}
+
+/** How long the pipeline waits for a PR's CI before treating it as unsettled. */
+const CHECKS_WAIT_MS = 30 * 60_000;
+/**
+ * Follow-up rounds an implementer gets to turn red CI green. One: the first
+ * failure is usually a suite the agent did not run, and a second round on the
+ * same failure is the agent guessing. After that the human sees the red X.
+ */
+const FIX_ROUNDS = 1;
+
+/**
+ * A PR with a failing check should not reach a human as the factory's finished
+ * work — CI is the repo's own verdict, and relaying it to the agent that just
+ * wrote the code is cheaper than a reviewer reading a red X. Waits for the
+ * checks, hands the failing ones back to the same agent, and waits again. The
+ * follow-up run has its own `maxRunMinutes`; a blown budget or a run error
+ * here leaves the PR as it stands rather than failing the pipeline, since a PR
+ * exists and the groom verdict held.
+ */
+async function greenChecks(
+  config: FactoryConfig,
+  worker: CodingWorker,
+  handle: RunHandle,
+  prUrl: string,
+): Promise<{ fixRounds: number; checks: NonNullable<RunRecord['checks']> }> {
+  const repo = repoSlug(config);
+  const poll = { maxWaitMs: CHECKS_WAIT_MS, pollMs: config.worker.pollIntervalSeconds * 1000, log };
+  let fixRounds = 0;
+  let { failed, settled } = await awaitPrChecks(repo, prUrl, poll);
+  while (failed.length > 0 && fixRounds < FIX_ROUNDS) {
+    fixRounds += 1;
+    log(`${prUrl}: ${failed.length} failing check(s) — ${failed.map((c) => c.name).join(', ')}; handing them back to the implementer (round ${fixRounds})`);
+    try {
+      const followUp = await worker.continueRun(handle, fixChecksPrompt(prUrl, failed));
+      const result = await worker.awaitResult(followUp);
+      if (result.status !== 'FINISHED') {
+        log(`${prUrl}: fix run ended with status ${result.status}; leaving the PR as it stands`);
+        break;
+      }
+    } catch (err) {
+      log(`${prUrl}: fix run failed — ${(err as Error).message}; leaving the PR as it stands`);
+      break;
+    }
+    ({ failed, settled } = await awaitPrChecks(repo, prUrl, poll));
+  }
+  const checks = failed.length > 0 ? 'red' : !settled ? 'unsettled' : (await prChecks(repo, prUrl)).length === 0 ? 'none' : 'green';
+  return { fixRounds, checks };
 }
 
 /** How the factory describes its own throttle, given the job cap. */

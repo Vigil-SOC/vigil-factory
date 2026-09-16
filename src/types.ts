@@ -124,6 +124,12 @@ export interface RunRecord extends AgentPass {
   failureReason?: string;
   prUrl: string | null;
   selectorUsage?: TokenUsage | null;
+  /** Follow-up runs spent turning red CI green on the PR; absent before the
+   *  factory watched checks. */
+  fixRounds?: number;
+  /** How the PR's checks stood when the pipeline let go of it. `unsettled`:
+   *  CI had not finished inside the wait. */
+  checks?: 'green' | 'red' | 'unsettled' | 'none';
 }
 
 export interface GroomRecord extends AgentPass {

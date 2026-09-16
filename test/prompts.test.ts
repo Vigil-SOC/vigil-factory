@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { environmentPrompt, groomEpicPrompt, groomPrompt, implementPrompt, selectPrompt, simplifyPrompt } from '../src/prompts.ts';
+import { environmentPrompt, fixChecksPrompt, groomEpicPrompt, groomPrompt, implementPrompt, selectPrompt, simplifyPrompt } from '../src/prompts.ts';
 import type { Task } from '../src/types.ts';
 
 const task: Task = {
@@ -153,5 +153,23 @@ describe('environment agent judges against CI and sees its own history', () => {
     expect(environmentPrompt(prs, verdicts)).toContain('## Your recent verdicts');
     expect(environmentPrompt(prs, verdicts)).toContain(verdicts[0]);
     expect(environmentPrompt(prs)).not.toContain('recent verdicts');
+  });
+});
+
+// CI is the repo's own verdict. The factory relays a red check to the agent
+// that wrote the code rather than to a human, and the agent judges whose it is.
+describe('red checks go back to the implementer', () => {
+  it('working rules ask for the suites CI runs, not the ones near the change', () => {
+    expect(implementPrompt(task)).toContain('the full suites CI runs');
+  });
+
+  it('fix prompt hands links to the failing jobs and forbids a new PR or a skipped check', () => {
+    const p = fixChecksPrompt('https://github.com/o/r/pull/959', [
+      { name: 'Unit Tests - Backend', link: 'https://github.com/o/r/actions/runs/1/job/2' },
+    ]);
+    expect(p).toContain('https://github.com/o/r/pull/959');
+    expect(p).toContain('- Unit Tests - Backend: https://github.com/o/r/actions/runs/1/job/2');
+    expect(p).toContain('fails the same way on the default branch');
+    expect(p).toContain('Do not open a new PR');
   });
 });
