@@ -37,15 +37,18 @@ ${list}`;
  * reach only this agent — what the implementer needs is whatever this agent
  * writes into the notes.
  */
-export function groomPrompt(task: Task, principles: string, budget: RunBudget): string {
+export function groomPrompt(task: Task, principles: string, budget: RunBudget, epicLabel?: string): string {
+  const epicVerdict = epicLabel === undefined ? '' : `
+- epic — this is not a PR and should not be judged as one. It sets a direction: a capability that takes several PRs to deliver anything, with decisions that bind all of them, or a change to what the product is. The factory labels it \`${epicLabel}\` and grooms it again as a direction, settling its decisions and writing its first children, so do not settle them here — say in a few sentences why it is a direction rather than one change. Size alone does not make an epic: an issue that is merely too large, or a list of unrelated tasks, is needs-work.`;
+  const verdictLines = epicLabel === undefined ? 'VERDICT: groomed\nor\nVERDICT: needs-work' : 'VERDICT: groomed\nor\nVERDICT: needs-work\nor\nVERDICT: epic';
   return `Groom GitHub issue #${task.issueNumber} for an autonomous coding agent.
 ${task.url}
 
 Read the issue there, comments included, then look at the code it concerns — you are reviewing, not implementing, so change nothing. Judge it against the product-direction principles below: they are the standard this codebase is held to, and they outrank how the issue's author framed it.
 
-Two verdicts:
+${epicLabel === undefined ? 'Two' : 'Three'} verdicts:
 - groomed — there is a correct change here that one PR can land. It may be narrower than what the issue asks for; if it is, your notes say what to leave out. The implementer decides how to build it — an issue that leaves implementation open is not thereby unready.
-- needs-work — there is not. Say why, concretely, pointing at files.
+- needs-work — there is not. Say why, concretely, pointing at files.${epicVerdict}
 
 "One PR" has a concrete meaning here. The implementer is a single fresh cloud agent with a budget of about ${budget.maxRunMinutes} minutes to read the issue, build the change, verify it — the project's own checks, then a live test of the changed behavior; the machine has a browser for that — and open the PR. It can spawn subagents and it is capable, so do not scope for a timid agent — but a change that cannot plausibly be built and verified in that one run is not one PR, whatever the issue calls it. If you narrow the issue to a slice, the slice is what has to fit.
 
@@ -66,9 +69,7 @@ If there is something the implementer must know, put it in a fenced \`\`\`notes 
 Everything else you write becomes that comment's rationale, so say what you concluded and why in the open, addressed to the issue's author.
 
 End your reply with exactly one line:
-VERDICT: groomed
-or
-VERDICT: needs-work
+${verdictLines}
 
 ## Principles
 

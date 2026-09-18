@@ -354,6 +354,18 @@ export function childrenFiledComment(children: { number: number; url: string }[]
 }
 
 /**
+ * The groomer, asked whether an unlabelled issue is one PR, answered that it is a
+ * direction instead. A plain factory comment, not a groom stamp: the issue has no
+ * verdict yet, so once it carries the epic label the next groom reads it as an
+ * ungroomed epic and settles it.
+ */
+export function epicRecognizedComment(reasoning: string, epicLabel: string): string {
+  return factoryComment(
+    `🏭 **Factory groom — this is an epic.** Read as one PR it is not one: it sets a direction that several PRs build toward. The factory has labelled it \`${epicLabel}\` and grooms it as a direction — whether it is worth building toward, with its open decisions settled and its first children written.\n\n${reasoning.trim()}`,
+  );
+}
+
+/**
  * The factory retracting its own groomed verdict after an implementation attempt
  * refuted it. A factory comment, not a groom stamp: the fingerprint keeps
  * pointing at what the groom read, so only a human reply or edit queues a
@@ -425,7 +437,7 @@ export interface GroomReply {
   children: ChildDraft[];
 }
 
-const VERDICT_RE = /^\s*VERDICT:\s*(groomed|needs[-_ ]?work)\s*$/gim;
+const VERDICT_RE = /^\s*VERDICT:\s*(groomed|needs[-_ ]?work|epic)\s*$/gim;
 const BLOCKED_RE = /^\s*BLOCKED:\s*#?(\d+)\s*$/gim;
 const NOTES_RE = /```notes[ \t]*\n([\s\S]*?)```/g;
 const CHILD_RE = /```child[ \t]*\n([\s\S]*?)```/g;
@@ -450,7 +462,7 @@ export function parseGroomReply(text: string): GroomReply | null {
   const verdicts = [...text.matchAll(VERDICT_RE)];
   const last = verdicts.at(-1);
   if (!last) return null;
-  const verdict: GroomVerdict = /^groomed$/i.test(last[1]!) ? 'groomed' : 'needs-work';
+  const verdict: GroomVerdict = /^groomed$/i.test(last[1]!) ? 'groomed' : /^epic$/i.test(last[1]!) ? 'epic' : 'needs-work';
 
   const notes = [...text.matchAll(NOTES_RE)].at(-1)?.[1]?.trim() || undefined;
   const blockedLine = [...text.matchAll(BLOCKED_RE)].at(-1)?.[1];

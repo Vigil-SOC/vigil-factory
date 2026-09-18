@@ -150,7 +150,7 @@ export async function runGroomPhase(
 export function groomPromptFor(ctx: FactoryContext, task: Task, principles: string): string {
   return isEpic(task, ctx.config.labels)
     ? groomEpicPrompt(task, principles, ctx.config.worker)
-    : groomPrompt(task, principles, ctx.config.worker);
+    : groomPrompt(task, principles, ctx.config.worker, ctx.config.labels.epic);
 }
 
 async function groomOne(
@@ -173,6 +173,21 @@ async function groomOne(
   const reply = parseGroomReply(result.resultText);
   if (!reply) {
     throw new Error(`groom reply had no VERDICT line:\n${result.resultText.slice(0, 500)}`);
+  }
+
+  // The groomer was asked "is this one PR" and answered "it is a direction".
+  // Nobody has to label epics by hand for direction to get in: the factory
+  // labels it, and grooms it again now — as an epic, with the epic's question —
+  // rather than leaving the author to wait a tick for the verdict that matters.
+  if (reply.verdict === 'epic') {
+    const epicLabel = ctx.config.labels.epic;
+    if (epic || epicLabel === undefined) {
+      throw new Error(`groom of #${task.issueNumber} answered "epic" where that verdict was not offered`);
+    }
+    await ctx.source.markEpic(task, reply.reasoning);
+    log(`#${task.issueNumber} is an epic, not a PR: labelled ${epicLabel}; grooming it as a direction`);
+    const promoted: Task = { ...task, labels: [...task.labels, epicLabel] };
+    return groomOne(ctx, worker, promoted, principles, open);
   }
 
   // A child's verdict names the epic record it was judged against; an epic's

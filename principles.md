@@ -6,6 +6,39 @@ write the code, and not what the implementer needs to know. Coding-level
 direction reaches the implementer through the grooming notes on the issue; these
 principles do not.
 
+## What Vigil is
+
+Direction is judged against this section before anything else in this file. An
+epic that breaks one of these commitments is needs-work however well it argues,
+and no child may break one on its epic's behalf. A direction that is merely new
+is not thereby wrong; the question is whether Vigil does SOC work better with it.
+
+- **An open-source AI SOC.** Agents that triage, investigate, hunt, and respond
+  to security signal, on infrastructure the customer owns, under Apache 2.0.
+  Direction that makes Vigil better at that work is in scope. Direction that
+  makes it a general agent platform, a SIEM, a data lake, or a chat product is
+  not, however adjacent, and an epic that needs Vigil to become one of those
+  first is needs-work.
+- **Any model, no allegiance.** Every model call goes through the Bifrost
+  gateway, and commercial and local models are peers: Anthropic, OpenAI,
+  Google, or an Ollama model on the operator's own hardware. Nothing may depend
+  on one vendor's API, model family, or feature. A capability that works on one
+  provider only is a defect, not a first step, and "the default model does X"
+  is not a reason to build on X.
+- **Complete where the customer runs it.** Vigil works self-hosted, offline,
+  and air-gapped with local inference. A hosted service, a vendor account, or
+  an outbound connection is opt-in, and the product is whole without it. LogLM
+  pairs with Vigil and enriches it; Vigil is complete without LogLM.
+- **Autonomy is the goal.** Vigil is meant to run the SOC, not to assist a
+  person running it. Under the ceiling a human has set it acts without asking,
+  and making an action safe and observable beats putting a person in front of
+  it. Widening that ceiling — what Vigil may do on its own — is the one
+  direction that always goes to a human, so an epic that widens it is
+  needs-work with that decision named.
+- **Extension is the open standard.** Tools reach agents as MCP servers the
+  operator configures. A vendor-specific code path where an MCP server would do
+  is the wrong shape.
+
 ## Bloat is the default failure mode
 
 The most likely thing to go wrong is not a bug. It is another feature nobody
@@ -104,10 +137,13 @@ An issue is not ready when there is no such change — when it pulls against the
 above, when its premise is already false in the code, or when it is too large
 with no smaller correct piece inside it.
 
-Product direction enters through epics, and only through epics. An epic is
-groomed as a direction, not a PR: the question is whether it is worth building
-toward and whether its shape-changing decisions can be settled, and settling
-them is the groomer's job, not a list of questions handed back. Pick the
+Product direction enters through epics, and only through epics. An issue that
+is a direction rather than a PR is an epic whether or not it was filed as one:
+the groomer says so and the factory labels it. An epic is groomed as a
+direction, not a PR: the question is whether it is worth building toward —
+against *What Vigil is* first — and whether its shape-changing decisions can be
+settled, and settling them is the groomer's job, not a list of questions handed
+back. Pick the
 default that proves the seam with the least new machinery, say why, and say
 what it would cost to reverse. Hold an epic back only for a decision that
 genuinely needs a person: one that is irreversible, carries legal or licensing

@@ -66,7 +66,8 @@ reconcile with GitHub: record the verdict on every factory PR that has closed, r
    giving the conclusion, why, and any coding-level notes (the issue is never closed).
    An issue carrying the repo's epic label is groomed as a DIRECTION instead: the agent
    settles its open decisions in the comment and writes its first children, which the
-   factory files under it. A verdict blocked on another issue names it, and is revisited
+   factory files under it. An unlabelled issue the groomer finds to be a direction rather
+   than a PR is given that label and groomed as an epic in the same tick. A verdict blocked on another issue names it, and is revisited
    the tick after that issue closes
 → SIMPLIFY agent, alongside the implementation below: reads the codebase, starting from
    the factory's own merged PRs, and opens one PR that removes more code than it adds —
@@ -141,10 +142,12 @@ old issue still costs a groom, but its `needs-work` is a real answer about the b
 and the newer issues that assumed it are then judged against that answer rather than
 ahead of it.
 
-`principles.md` holds the product-direction principles grooming judges against. They
-are deliberately factory-local: they never reach the implementer, which sees only
-coding-level direction. That separation is the point — product direction is decided at
-grooming time, not at coding time.
+`principles.md` holds the product-direction principles grooming judges against. Its
+first section, *What the product is*, is the short list of settled commitments an epic's
+direction is checked against before anything else; the rest is about the shape of a
+change. They are deliberately factory-local: they never reach the implementer, which sees
+only coding-level direction. That separation is the point — product direction is decided
+at grooming time, not at coding time.
 
 **State lives in the issue, not in a local file.** The verdict is the
 `factory:groomed` / `factory:needs-work` label — the thing you already read when
@@ -207,10 +210,14 @@ fails, and so the capability never starts. A factory with only that filter drift
 maintenance: fixes, deletions, small hardening, and nothing anyone would call a direction.
 
 An **epic** is how direction gets in. It is an ordinary issue carrying the repo's own epic
-label (`labels.epic`, default `type:epic`), usually linking a design document. The factory
-grooms it with the same agent and the same principles, but the question changes: not
-"can one PR land this" but "is this worth building toward, and can its shape-changing
-decisions be settled here". The groomer settles them — which engine first, a plain string
+label (`labels.epic`, default `type:epic`). Nobody has to apply the label: the ordinary
+groom has a third verdict, `epic`, for an issue that turns out to be a direction rather
+than a PR — several PRs before anything is delivered, with decisions that bind them all.
+The factory labels it, says why in a comment, and grooms it again as an epic in the same
+tick. Size alone is not an epic; an issue that is merely too large is `needs-work`. The
+factory grooms an epic with the same agent and the same principles, but the question
+changes: not "can one PR land this" but "is this worth building toward, and can its
+shape-changing decisions be settled here". The groomer settles them — which engine first, a plain string
 or a modelled entity, the existing mechanism or a new one — and records each default, why,
 and what reversing it would cost, in the groom comment. That comment is the record the
 children are built against.

@@ -105,6 +105,17 @@ describe('epics', () => {
     expect(g).toContain('BLOCKED: #<issue number>');
     expect(g).toContain('the record this issue was judged against has changed');
   });
+
+  it('the ordinary groom may answer "epic" only when the repo has an epic label', () => {
+    const with_ = groomPrompt(task, 'principles', { maxRunMinutes: 90 }, 'type:epic');
+    expect(with_).toContain('Three verdicts');
+    expect(with_).toContain('VERDICT: epic');
+    expect(with_).toContain('`type:epic`');
+    expect(with_).toContain('Size alone does not make an epic');
+    const without = groomPrompt(task, 'principles', { maxRunMinutes: 90 });
+    expect(without).toContain('Two verdicts');
+    expect(without).not.toContain('VERDICT: epic');
+  });
 });
 
 // The simplifier is held to the implementer's standard, and told the one rule

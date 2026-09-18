@@ -103,7 +103,7 @@ export interface StartOptions {
  * building (with notes appended when there is something the implementer needs
  * to know) or it is not ready as written.
  */
-export type GroomVerdict = 'groomed' | 'needs-work';
+export type GroomVerdict = 'groomed' | 'needs-work' | 'epic';
 
 /** The work source boundary. V1 implementation: GitHub issues. */
 export interface WorkSource {
@@ -123,6 +123,9 @@ export interface WorkSource {
   /** File the children a groomed epic's groomer wrote, each linked back to the
    *  epic, and note them on the epic. Returns what was filed. */
   fileChildren(epic: Task, children: { title: string; body: string }[]): Promise<{ number: number; url: string }[]>;
+  /** The groomer read an unlabelled issue and found a direction, not a PR: give
+   *  it the repo's epic label and say why, so it is groomed as an epic. */
+  markEpic(task: Task, reasoning: string): Promise<void>;
   /** An implementation attempt refuted the groomed verdict: flip the label to
    *  needs-work and say why, so the issue is not picked again as scoped. */
   recordFailedAttempt(task: Task, report: string): Promise<void>;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  fingerprint, groomComment, groomNotes, groomState, hasLegacyBlock, isEpic, isGroomed, needsGroom, openIssues,
-  childrenFiledComment, openChildren, parentEpic, parseGroomReply, premiseOf, readBlocker, readChildren,
+  fingerprint, groomComment, groomNotes, groomState, hasLegacyBlock, isEpic, isFactoryComment, isGroomed, needsGroom, openIssues,
+  childrenFiledComment, epicRecognizedComment, openChildren, parentEpic, parseGroomReply, premiseOf, readBlocker, readChildren,
   readFingerprint, readPremise, recordFingerprint, stampExtrasFor, stripLegacyBlock, verdict,
 } from '../src/groom.ts';
 import type { GroomVerdict, IssueComment, Task } from '../src/types.ts';
@@ -194,6 +194,22 @@ describe('parseGroomReply', () => {
 
   it('does not mistake prose about a verdict for the verdict line', () => {
     expect(parseGroomReply('I would say VERDICT: groomed is arguable here, but see below.')).toBeNull();
+  });
+
+  it('parses the epic verdict: a direction, not a PR', () => {
+    const parsed = parseGroomReply('Three phases, each several PRs, with decisions that bind them.\n\nVERDICT: epic');
+    expect(parsed).toMatchObject({ verdict: 'epic' });
+    expect(parsed!.reasoning).not.toContain('VERDICT');
+  });
+});
+
+describe('recognising an epic', () => {
+  it('the comment is a factory comment, not a groom stamp, and names the label', () => {
+    const c = epicRecognizedComment('Several PRs, one direction.', 'type:epic');
+    expect(isFactoryComment(c)).toBe(true);
+    expect(c).not.toMatch(/factory-groom sha=/);
+    expect(c).toContain('`type:epic`');
+    expect(c).toContain('Several PRs, one direction.');
   });
 });
 

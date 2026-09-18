@@ -5,7 +5,7 @@ import {
   addIssueLabels, commentOnIssue, createIssue, editIssueBody, ensureLabel, listOpenIssues, removeIssueLabels,
 } from './github.ts';
 import {
-  childrenFiledComment, failedAttemptComment, groomComment, hasLegacyBlock, isEpic, stripLegacyBlock,
+  childrenFiledComment, epicRecognizedComment, failedAttemptComment, groomComment, hasLegacyBlock, isEpic, stripLegacyBlock,
   type ChildDraft, type GroomReply, type StampExtras,
 } from './groom.ts';
 
@@ -99,6 +99,13 @@ export class GitHubIssueSource implements WorkSource {
    * Filed one at a time so a failure leaves a legible partial list, which is
    * then noted on the epic.
    */
+  async markEpic(task: Task, reasoning: string): Promise<void> {
+    const epicLabel = this.config.labels.epic;
+    if (epicLabel === undefined) throw new Error('no epic label configured');
+    await commentOnIssue(this.repo, task.issueNumber, epicRecognizedComment(reasoning, epicLabel));
+    await addIssueLabels(this.repo, task.issueNumber, [epicLabel]);
+  }
+
   async fileChildren(epic: Task, children: ChildDraft[]): Promise<{ number: number; url: string }[]> {
     const factoryOwned = new Set(Object.values(this.config.labels));
     const labels = epic.labels.filter((l) => !factoryOwned.has(l));
