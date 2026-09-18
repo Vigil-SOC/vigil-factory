@@ -77,9 +77,10 @@ reconcile with GitHub: record the verdict on every factory PR that has closed, r
 count the jobs already in flight (open factory PRs + running pipelines)
    → no free slot under maxConcurrentJobs? stop here
 for each free slot:
-   → SELECTOR agent: gets LINKS to the GROOMED issues (minus factory:wip claims,
-      issues assigned to a human, and the picks made earlier this tick), reads them,
-      and picks the best-defined one by judgment — no scores, no weights, no veto
+   → take the OLDEST groomed issue by number (minus factory:wip claims, issues assigned
+      to a human, and the picks made earlier this tick). With selector.enabled, a
+      SELECTOR agent instead gets LINKS to those issues, reads them, and picks the
+      best-defined one by judgment — no scores, no weights, no veto
    label the pick factory:wip
 → handoff to a FRESH implementer agent per pick, running concurrently, each with a
    short workflow prompt and the issue LINK (not its text — the agent reads the
@@ -112,11 +113,18 @@ the issue that the prompt author had to decide how to cut.
 "Is this one PR?" is asked exactly once, by grooming, and it is asked with the real
 constraint in hand: the groom prompt states the implementer's run budget
 (`worker.maxRunMinutes`), that it is a single fresh agent, and that it can use
-subagents. The selector does not ask again. It is told grooming already settled size,
-that it is ranking rather than re-vetting, and that it must always pick one — a
-selector that could decline would be a second gate with no record of its verdict,
-and a factory whose two gates disagree stalls forever on the same issue with the
-same log line.
+subagents. Nothing downstream asks again. By default there is nothing downstream to
+ask: a free slot takes the oldest groomed issue, and the only thing between grooming
+and the implementer is a label. The optional selector agent (`selector.enabled`) ranks
+rather than re-vets, and must always pick one — a selector that could decline would be
+a second gate with no record of its verdict, and a factory whose two gates disagree
+stalls forever on the same issue with the same log line.
+
+The selector is off by default because it costs more as the groomed backlog grows —
+one read of every groomed issue per free slot — without changing what lands. Grooming
+decided each issue is buildable; the order they are tried in is not what the attempt
+tests. Oldest first also means a stale groomed verdict is the next one tested rather
+than the one skipped forever.
 
 What tests the groom's judgment is the attempt. An implementer that finishes without a
 PR, or runs out of its budget, has produced the one piece of evidence that matters, so
@@ -182,8 +190,8 @@ would otherwise offer.
 The two records answer different questions, so they cannot contradict each other:
 the label says whether an issue passed, the fingerprint says whether that answer is
 still about the issue as it stands. **The label alone decides what may be
-implemented; the fingerprint only decides what gets looked at again.** So the
-selector sees every `factory:groomed` issue, and one that has drifted is both
+implemented; the fingerprint only decides what gets looked at again.** So every
+`factory:groomed` issue is implementable, and one that has drifted is both
 implementable now and queued for a re-review — a verdict stands until something
 replaces it.
 
@@ -196,7 +204,7 @@ the record, so it is also the override.
 The tick is idempotent: run it as often as you like; it starts work only in the slots
 `maxConcurrentJobs` leaves free, counting open factory PRs and running pipelines alike.
 `maxConcurrentJobs: 1` is the strict one-at-a-time factory. At 2, a tick with both slots
-free runs two selector picks and two implementers concurrently — they work on separate
+free takes two groomed issues and runs two implementers concurrently — they work on separate
 branches, so the only collisions are ones a human resolves at review time. Crashed
 pipelines are detected via stale records in the local `telemetry/current-runs.json`
 (> `staleRunHours`), recorded as aborted, and cleaned up, so a crash cannot leak a slot.
@@ -237,7 +245,7 @@ difference the groom prompt spells out: the epic's decisions are its premise, so
 groomer judges shape and size and does not re-argue whether the capability should exist.
 Later slices are written when the epic is groomed again after the first has landed.
 
-**A groomed epic is never handed to the selector.** It carries the same `factory:groomed`
+**A groomed epic is never implemented.** It carries the same `factory:groomed`
 label as an implementable issue, because grooming is the one verdict mechanism here, but
 `admissible(..., 'implement')` drops anything with the epic label. What gets built is the
 children.
@@ -479,7 +487,7 @@ the same. That is the move when the Cursor account is out of usage: nothing else
 npm run factory -- run             # one tick (the daily entry point)
 npm run factory -- run --dry-run   # grooming/backlog state + the exact prompts, launch nothing
 npm run factory -- groom           # run just the grooming phase
-npm run factory -- select          # run just the selector agent over the groomed issues
+npm run factory -- select          # run just the selector agent over the groomed issues (even with selector.enabled off)
 npm run factory -- env             # run just the environment phase over the unread factory PRs
 npm run factory -- simplify        # run just the simplification phase: one PR that removes more than it adds
 npm run factory -- status          # grooming progress, capacity, in-flight jobs, recent telemetry
@@ -530,6 +538,10 @@ committed.
   keeps opening PRs whose verification was blocked and never fixes the cause.
 - `factory.config.json` → `simplify` — `enabled` (default true): the phase that removes
   code. Off means the factory only ever adds.
+- `factory.config.json` → `selector` — `enabled` (default false): whether an agent ranks
+  the groomed issues before each implementer run. Off, the oldest groomed issue is
+  implemented next; see [One judge of size](#one-judge-of-size) for why that is the
+  default. `maxCandidates` (default 100) bounds the open-issue fetch either way.
 - `src/prompts.ts` — all five prompts (groom / selector / implementer / environment /
   simplify), each a few lines. The implementer and simplifier share one block of working
   rules so a simplification is held to exactly the standard the code it removes was built to. Add lines only for specific opinions where the model's default behavior isn't
@@ -577,8 +589,8 @@ Its rows:
 - `groom` records: issue, verdict, whether notes were written, whether it was a
   re-groom after the issue changed, agent id, token usage, duration. For an epic, that
   it was one and how many children were filed; for a blocked verdict, the blocker.
-- `run` records: issue, worker/model, selector + implementer agent ids, start/end,
-  outcome (`pr-opened`/`no-pr`/`failed`/`aborted`), token usage for both agents, duration.
+- `run` records: issue, worker/model, implementer agent id (and the selector's, when one
+  ran), start/end, outcome (`pr-opened`/`no-pr`/`failed`/`aborted`), token usage, duration.
 - `env` records: which factory PRs the pass read, whether it opened a PR and which,
   agent id, token usage, duration. A failed pass records no PRs as read, so they are
   offered to the next one.

@@ -11,12 +11,12 @@ import type { CodingWorker, CurrentRun } from './types.ts';
 const USAGE = `deeptempo-factory — thin software-factory control plane around Cursor cloud agents or local Claude Code
 
 Usage:
-  npm run factory -- run [--dry-run]   One idempotent tick: groom part of the backlog, then a selector agent picks a groomed issue and a fresh agent implements it.
+  npm run factory -- run [--dry-run]   One idempotent tick: groom part of the backlog, then hand the oldest groomed issue to a fresh implementer agent (a selector agent picks instead if selector.enabled).
   npm run factory -- groom [--limit N] [--force]
                                        Run just the grooming phase (vets issues against principles.md; no implementation).
                                        --force re-grooms issues that already have a current verdict — use after editing
                                        principles.md or the groom prompt, which do not invalidate verdicts on their own.
-  npm run factory -- select            Run just the selector agent over the groomed issues and show its pick (no implementation, no labels).
+  npm run factory -- select            Run just the selector agent over the groomed issues and show its pick (no implementation, no labels). Works even with selector.enabled off.
   npm run factory -- env               Run just the environment phase: an agent reads the factory PRs it has not read yet,
                                        looking for checks the implementer could not run, and fixes .cursor/environment.json
                                        in the target repo so the next one can. Opens a PR only if it finds a gap it can close.
@@ -76,7 +76,7 @@ async function status(): Promise<void> {
     ];
     log(`assigned to a human: ${assigned.length} issue(s)${held.length ? ` — withheld from ${held.join(' and ')}` : ' — not withheld from anything'}`);
   }
-  log(`implementable now: ${implementable} groomed issue(s) the selector may draw from`);
+  log(`implementable now: ${implementable} groomed issue(s) ready for an implementer`);
 
   const capacity = await ctx.state.capacity(log);
   log(`capacity: ${capacity.slots} of ${capacity.limit} slot(s) free`);

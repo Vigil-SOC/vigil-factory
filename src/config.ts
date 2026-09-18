@@ -50,7 +50,13 @@ export interface FactoryConfig {
     epic: string;
   };
   groom: { maxPerTick: number; principlesFile: string };
-  selector: { maxCandidates: number };
+  /** How a free slot gets its issue. Off (the default), the oldest groomed
+   *  issue by number is handed straight to the implementer: grooming already
+   *  judged each one buildable, and a ranking agent that reads the whole
+   *  groomed backlog per slot costs more as the backlog grows without changing
+   *  what lands. On, a selector agent ranks the groomed issues and picks.
+   *  `maxCandidates` bounds the open-issue fetch either way. */
+  selector: { enabled: boolean; maxCandidates: number };
   /** The environment phase: an agent that reads the factory's own PRs looking
    *  for checks the implementer could not run, and fixes the cloud-agent
    *  environment so the next one can. `maxPrsPerPass` bounds how many PRs one
@@ -123,6 +129,9 @@ export function loadConfig(root: string = projectRoot): FactoryConfig {
   config.labels.simplifyPr ??= 'factory:simplify';
   config.labels.epic ??= 'type:epic';
   config.simplify ??= { enabled: true };
+  config.selector ??= { enabled: false, maxCandidates: 100 };
+  config.selector.enabled ??= false;
+  config.selector.maxCandidates ??= 100;
   // Narrowing what the factory touches is the safe direction for a deployment
   // that pulls this in without asking for it, so this defaults on rather than
   // preserving the old take-anything behavior.

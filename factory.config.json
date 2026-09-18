@@ -37,6 +37,7 @@
     "principlesFile": "principles.md"
   },
   "selector": {
+    "enabled": false,
     "maxCandidates": 100
   },
   "environment": {

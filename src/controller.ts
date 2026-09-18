@@ -1,8 +1,9 @@
 // The factory controller: one idempotent tick.
 //
 //   reconcile with GitHub → groom ungroomed issues → simplify, alongside:
-//   measure free capacity → for each free slot, a selector agent picks the
-//   best-defined GROOMED issue → hand each to a FRESH implementer agent → label
+//   measure free capacity → for each free slot, take the oldest GROOMED issue
+//   (or, with the selector on, have an agent pick the best-defined one) → hand
+//   each to a FRESH implementer agent → label
 //   the resulting PRs (or, if the attempt refuted the groom, retract the
 //   verdict) → record telemetry → fix the agents' environment from what those
 //   PRs said about it → yield to a human.
@@ -531,11 +532,17 @@ export async function tick(opts: { dryRun: boolean }): Promise<void> {
 
 interface Pick {
   task: Task;
-  agentId: string;
+  /** The selector agent that made the pick; undefined when the pick was oldest-first. */
+  agentId?: string;
   usage: TokenUsage | null;
 }
 
-/** The implementation half of a tick: capacity gate, selectors, implementers. */
+/** Oldest first: GitHub lists newest first, and issue numbers are the order issues were filed. */
+export function oldestFirst(tasks: Task[]): Task[] {
+  return [...tasks].sort((a, b) => a.issueNumber - b.issueNumber);
+}
+
+/** The implementation half of a tick: capacity gate, picks, implementers. */
 async function runImplementation(ctx: FactoryContext, worker: CodingWorker, candidates: Task[]): Promise<void> {
   const { config } = ctx;
   if (candidates.length === 0) {
@@ -555,8 +562,8 @@ async function runImplementation(ctx: FactoryContext, worker: CodingWorker, cand
     return;
   }
 
-  // Selector agents fill the free slots. Re-fetch, since the groom phase just
-  // rewrote some of the bodies we hold.
+  // Picks fill the free slots. Re-fetch, since the groom phase just rewrote
+  // some of the bodies we hold.
   const tasks = admissible(ctx, await candidateTasks(ctx), 'implement').filter((t) => isGroomed(t, ctx.config.labels));
   if (tasks.length === 0) {
     log('no groomed issues available to implement. Nothing to do.');
@@ -564,7 +571,7 @@ async function runImplementation(ctx: FactoryContext, worker: CodingWorker, cand
   }
 
   await ensureLabel(repoSlug(config), config.labels.factoryPr, '0E8A16', 'Opened by the software factory');
-  const picks = await pickTasks(ctx, worker, tasks, capacity.slots);
+  const picks = config.selector.enabled ? await pickTasks(ctx, worker, tasks, capacity.slots) : await takeOldest(ctx, tasks, capacity.slots);
   if (picks.length === 0) return;
 
   // Handoff: one fresh implementer session per pick, run concurrently. They
@@ -581,9 +588,27 @@ async function runImplementation(ctx: FactoryContext, worker: CodingWorker, cand
 }
 
 /**
- * One selector run per free slot, each over the issues the earlier runs did not
- * take. Sequential on purpose: a pick has to see the previous claims, and the
- * issue is labelled `factory:wip` as soon as it is picked.
+ * The default: no agent between grooming and implementing. The oldest groomed
+ * issues fill the slots, each labelled `factory:wip` as it is taken. Grooming
+ * is the one judge of whether an issue is buildable, and the implementer's
+ * attempt is what tests that — a ranking in between changes the order, not
+ * the outcome, and its cost grows with the groomed backlog.
+ */
+async function takeOldest(ctx: FactoryContext, tasks: Task[], slots: number): Promise<Pick[]> {
+  const picks: Pick[] = [];
+  for (const task of oldestFirst(tasks).slice(0, slots)) {
+    log(`taking oldest groomed issue #${task.issueNumber} "${task.title}" (slot ${picks.length + 1} of ${slots})`);
+    await ctx.source.markStarted(task);
+    picks.push({ task, usage: null });
+  }
+  return picks;
+}
+
+/**
+ * With `selector.enabled`: one selector run per free slot, each over the issues
+ * the earlier runs did not take. Sequential on purpose: a pick has to see the
+ * previous claims, and the issue is labelled `factory:wip` as soon as it is
+ * picked.
  */
 async function pickTasks(
   ctx: FactoryContext,
@@ -636,7 +661,7 @@ async function dryRun(ctx: FactoryContext, allCandidates: Task[]): Promise<void>
   const epics = candidates.filter((t) => isEpic(t, labels));
   const assignedGroomed = allCandidates.filter((t) => t.assignees.length > 0 && isGroomed(t, labels)).length;
   if (!ctx.config.assignedIssues.implement && assignedGroomed > 0) {
-    log(`${assignedGroomed} groomed issue(s) withheld from the selector: assigned to a human.`);
+    log(`${assignedGroomed} groomed issue(s) withheld from implementation: assigned to a human.`);
   }
   // The buckets overlap: a groomed issue someone has since replied to is both
   // implementable and queued for another look.
@@ -647,9 +672,11 @@ async function dryRun(ctx: FactoryContext, allCandidates: Task[]): Promise<void>
     log(`would groom: ${next.map((t) => `#${t.issueNumber}${isEpic(t, labels) ? ' (epic)' : ''}`).join(' ')}. Groom prompt for #${next[0]!.issueNumber}:`);
     console.log(`\n${groomPromptFor(ctx, next[0]!, loadPrinciples(ctx.config))}\n`);
   }
-  if (groomed.length > 0) {
+  if (groomed.length > 0 && ctx.config.selector.enabled) {
     log('selector prompt would be:');
     console.log(`\n${selectPrompt(groomed)}\n`);
+  } else if (groomed.length > 0) {
+    log(`selector off: would implement oldest first — ${oldestFirst(groomed).slice(0, ctx.config.maxConcurrentJobs).map((t) => `#${t.issueNumber}`).join(' ')}`);
   }
 
   const { config } = ctx;
@@ -676,7 +703,7 @@ async function runPipeline(
   ctx: FactoryContext,
   worker: CodingWorker,
   task: Task,
-  selectorAgentId: string,
+  selectorAgentId: string | undefined,
   selectorUsage: TokenUsage | null,
 ): Promise<void> {
   const { config, state } = ctx;
@@ -733,7 +760,7 @@ async function runPipeline(
     worker: config.worker.kind,
     model: config.worker.model,
     agentId: handle.agentId,
-    selectorAgentId,
+    ...(selectorAgentId === undefined ? {} : { selectorAgentId }),
     startedAt,
     finishedAt: new Date().toISOString(),
     outcome: prUrl ? 'pr-opened' : 'no-pr',

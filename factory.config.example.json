@@ -25,6 +25,7 @@
     "principlesFile": "principles.example.md"
   },
   "selector": {
+    "enabled": false,
     "maxCandidates": 100
   },
   "environment": {

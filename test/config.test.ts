@@ -11,7 +11,7 @@ function configDir(worker: Record<string, unknown>): string {
     worker: { kind: 'cursor', model: null, pollIntervalSeconds: 30, maxRunMinutes: 90, ...worker },
     labels: { factoryPr: 'factory', issueInProgress: 'factory:wip', groomed: 'factory:groomed', needsWork: 'factory:needs-work' },
     groom: { maxPerTick: 5, principlesFile: 'principles.example.md' },
-    selector: { maxCandidates: 100 },
+    selector: { enabled: false, maxCandidates: 100 },
   }));
   return dir;
 }

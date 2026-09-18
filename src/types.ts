@@ -149,6 +149,7 @@ export interface RunRecord extends AgentPass {
   taskId: string;
   issueNumber: number;
   issueTitle: string;
+  /** Absent when the selector is off and the issue was taken oldest-first. */
   selectorAgentId?: string;
   outcome: 'pr-opened' | 'no-pr' | 'failed' | 'aborted';
   failureReason?: string;

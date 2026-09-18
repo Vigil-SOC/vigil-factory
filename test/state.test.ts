@@ -24,7 +24,7 @@ function config(maxConcurrentJobs: number): FactoryConfig {
     worker: { kind: 'cursor', model: null, pollIntervalSeconds: 30, maxRunMinutes: 90, agentEnv: [] },
     labels: { factoryPr: 'factory', issueInProgress: 'factory:wip', groomed: 'factory:groomed', needsWork: 'factory:needs-work', environmentPr: 'factory:env', simplifyPr: 'factory:simplify', epic: 'type:epic' },
     groom: { maxPerTick: 5, principlesFile: 'principles.example.md' },
-    selector: { maxCandidates: 100 },
+    selector: { enabled: false, maxCandidates: 100 },
     environment: { enabled: true, maxPrsPerPass: 3 },
     simplify: { enabled: true },
     assignedIssues: { groom: true, implement: false },

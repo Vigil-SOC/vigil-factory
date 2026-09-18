@@ -89,3 +89,14 @@ describe('filterAssigned', () => {
     expect(filterAssigned(tasks)).toEqual(tasks);
   });
 });
+
+describe('oldestFirst', () => {
+  it('orders groomed issues by number ascending, lowest number first', async () => {
+    const { oldestFirst } = await import('../src/controller.ts');
+    const t = (n: number) => ({ id: `o/r#${n}`, issueNumber: n, title: '', body: '', comments: [], labels: [], assignees: [], url: '' });
+    const input = [t(40), t(7), t(19)];
+    expect(oldestFirst(input).map((x) => x.issueNumber)).toEqual([7, 19, 40]);
+    // Non-mutating: the fetch order is left as GitHub gave it.
+    expect(input.map((x) => x.issueNumber)).toEqual([40, 7, 19]);
+  });
+});
