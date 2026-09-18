@@ -25,8 +25,10 @@
 
 import { resolve } from 'node:path';
 import type { CodingWorker, CurrentRun, EnvRecord, GroomRecord, RunHandle, RunRecord, RunResult, SimplifyRecord, Task, TokenUsage } from './types.ts';
-import { loadConfig, loadDotEnv, loadPrinciples, projectRoot, repoSlug, requireCursorApiKey, type FactoryConfig } from './config.ts';
-import { CursorWorker, RunBudgetExceeded } from './worker.ts';
+import { agentCredentials, claudeBin, githubTokenForAgents, loadConfig, loadDotEnv, loadPrinciples, projectRoot, repoSlug, requireCursorApiKey, type FactoryConfig } from './config.ts';
+import { RunBudgetExceeded } from './types.ts';
+import { CursorWorker } from './worker.ts';
+import { ClaudeCodeWorker } from './claudeCodeWorker.ts';
 import { GitHubIssueSource } from './workSource.ts';
 import { FactoryState } from './state.ts';
 import { Telemetry } from './telemetry.ts';
@@ -34,7 +36,7 @@ import { filterAssigned, filterClaimed, filterEpics, parseSelection, type Select
 import { environmentPrompt, fixChecksPrompt, groomEpicPrompt, groomPrompt, implementPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
 import { factoryComment, groomState, isEpic, isGroomed, needsGroom, openIssues, parseGroomReply, stampExtrasFor, verdict, type OpenIssues } from './groom.ts';
 import { addPrLabels, awaitPrChecks, closePr, commentOnIssue, commentOnPr, defaultBranchHead, ensureLabel, findPrByBranch, listPrsByLabel, markPrReady, prChecks, viewPr } from './github.ts';
-import { ENV_AGENT_MARK, environmentChangedAt, recentVerdicts, skipReason, unreadFactoryPrs, type UnreadPrs } from './environment.ts';
+import { ENV_AGENT_MARK, environmentChangedAt, recentVerdicts, skipReason, unreadFactoryPrs, workerSkipReason, type UnreadPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
 
 export function log(msg: string): void {
@@ -59,20 +61,40 @@ export function buildContext(): FactoryContext {
 
 /**
  * Resolves the base once, here, so every agent a tick launches starts from the
- * same commit and none can be handed a stale clone.
+ * same commit and none can be handed a stale clone. Which runtime the agents
+ * are is `worker.kind`; nothing downstream of this function knows.
  */
-export async function buildWorker(config: FactoryConfig): Promise<CursorWorker> {
+export async function buildWorker(config: FactoryConfig): Promise<CodingWorker> {
   const { branch, sha } = await defaultBranchHead(repoSlug(config));
-  log(`agents will start from ${branch} @ ${sha.slice(0, 8)}`);
-  return new CursorWorker({
-    apiKey: requireCursorApiKey(),
+  log(`agents will start from ${branch} @ ${sha.slice(0, 8)} (worker: ${config.worker.kind})`);
+  const common = {
     repoUrl: config.repo.url,
     startingRef: sha,
     model: config.worker.model,
-    pollIntervalSeconds: config.worker.pollIntervalSeconds,
     maxRunMinutes: config.worker.maxRunMinutes,
     log,
-  });
+  };
+  const credentials = agentCredentials(config);
+  if (credentials.missing.length > 0) {
+    log(`agent credentials not set here, so not handed to agents: ${credentials.missing.join(', ')}`);
+  }
+  switch (config.worker.kind) {
+    case 'cursor':
+      // The claude-code worker's agents inherit this process's environment, so
+      // only Cursor's VMs need the values carried across.
+      return new CursorWorker({ ...common, apiKey: requireCursorApiKey(), envVars: credentials.values, pollIntervalSeconds: config.worker.pollIntervalSeconds });
+    case 'claude-code': {
+      const worker = new ClaudeCodeWorker({
+        ...common,
+        bin: claudeBin(),
+        workRoot: resolve(projectRoot, config.telemetryDir, 'workspaces'),
+        ghToken: githubTokenForAgents(),
+      });
+      const version = await worker.check();
+      log(`claude-code worker: ${version}; agents ${githubTokenForAgents() ? 'push with GH_TOKEN' : "push with this machine's own git/gh login"}`);
+      return worker;
+    }
+  }
 }
 
 /**
@@ -146,7 +168,7 @@ async function groomOne(
   });
   const result = await worker.awaitResult(handle);
   if (result.status !== 'FINISHED') {
-    throw new Error(`groom run ended with status ${result.status}: ${result.resultText.slice(0, 300) || opaqueRunNote(handle)}`);
+    throw new Error(`groom run ended with status ${result.status}: ${result.resultText.slice(0, 300) || worker.opaqueRunNote(handle)}`);
   }
   const reply = parseGroomReply(result.resultText);
   if (!reply) {
@@ -184,7 +206,7 @@ async function groomOne(
     hadNotes: reply.notes !== undefined,
     ...(epic ? { epic: true, childrenFiled } : {}),
     ...(reply.blocked !== undefined ? { blockedOn: reply.blocked } : {}),
-    worker: 'cursor',
+    worker: ctx.config.worker.kind,
     model: ctx.config.worker.model,
     agentId: handle.agentId,
     startedAt,
@@ -194,17 +216,6 @@ async function groomOne(
   };
   ctx.telemetry.append(record);
   return record;
-}
-
-/**
- * What the log says when Cursor ends a run without a word. The API carries no
- * reason for an ERROR, and the cause is usually outside the run: on
- * 2026-09-16 three implementers died in the same minute because the team's
- * included usage hit 100% with on-demand spend off. The agent page is where
- * that shows, so the log points there.
- */
-function opaqueRunNote(handle: RunHandle): string {
-  return `Cursor gave no reason; see https://cursor.com/agents/${handle.agentId} (an account-wide cause, such as the usage limit, shows there and hits every run at once)`;
 }
 
 /**
@@ -234,7 +245,7 @@ export async function runSelector(
   });
   const result = await worker.awaitResult(handle);
   if (result.status !== 'FINISHED') {
-    throw new Error(`selector run ended with status ${result.status}: ${result.resultText.slice(0, 300) || opaqueRunNote(handle)}`);
+    throw new Error(`selector run ended with status ${result.status}: ${result.resultText.slice(0, 300) || worker.opaqueRunNote(handle)}`);
   }
   const usage = (await worker.usage(handle.agentId)) ?? null;
   return {
@@ -259,8 +270,10 @@ export async function environmentInputs(config: FactoryConfig): Promise<{
   changedAt: string | null;
   verdicts: string[];
 }> {
-  if (!config.environment.enabled) {
-    return { skip: skipReason(false, [], { fresh: [], stale: [] }), unread: { fresh: [], stale: [] }, changedAt: null, verdicts: [] };
+  // Settled before asking GitHub anything: off, or not this worker's phase.
+  const gate = config.environment.enabled ? workerSkipReason(config.worker.kind) : skipReason(false, [], { fresh: [], stale: [] });
+  if (gate) {
+    return { skip: gate, unread: { fresh: [], stale: [] }, changedAt: null, verdicts: [] };
   }
   const repo = repoSlug(config);
   const [envPrs, factoryPrs] = await Promise.all([
@@ -271,7 +284,7 @@ export async function environmentInputs(config: FactoryConfig): Promise<{
   const changedAt = environmentChangedAt(envPrs);
   const unread = unreadFactoryPrs(factoryPrs, changedAt);
   return {
-    skip: skipReason(true, openEnvPrs, unread, changedAt),
+    skip: skipReason(true, openEnvPrs, unread, changedAt, config.worker.kind),
     unread,
     changedAt,
     verdicts: recentVerdicts(factoryPrs, ENV_VERDICTS_SHOWN),
@@ -304,7 +317,7 @@ export async function runEnvironmentPhase(
   log(`environment: reading ${prUrls.length} factory PR(s) for verification the agents could not run: ${prUrls.join(' ')}`);
 
   const startedAt = new Date().toISOString();
-  const handle = await worker.start(environmentPrompt(prUrls, verdicts), {
+  const handle = await worker.start(environmentPrompt(prUrls, verdicts, agentCredentials(config).present), {
     autoCreatePR: true,
     name: 'factory-env',
   });
@@ -315,7 +328,7 @@ export async function runEnvironmentPhase(
       prsExamined: prUrls,
       outcome: 'no-gap',
       prUrl: null,
-      worker: 'cursor',
+      worker: config.worker.kind,
       model: config.worker.model,
       agentId: handle.agentId,
       startedAt,
@@ -393,7 +406,7 @@ async function simplifyPromptFor(ctx: FactoryContext): Promise<string> {
  *
  * Returns the record it wrote, or null when the pass did not run.
  */
-export async function runSimplifyPhase(ctx: FactoryContext, worker: CursorWorker): Promise<SimplifyRecord | null> {
+export async function runSimplifyPhase(ctx: FactoryContext, worker: CodingWorker): Promise<SimplifyRecord | null> {
   const { config } = ctx;
   const repo = repoSlug(config);
   const baseSha = worker.startingRef;
@@ -413,7 +426,7 @@ export async function runSimplifyPhase(ctx: FactoryContext, worker: CursorWorker
       baseSha,
       outcome: 'no-change',
       prUrl: null,
-      worker: 'cursor',
+      worker: config.worker.kind,
       model: config.worker.model,
       agentId: handle.agentId,
       startedAt,
@@ -631,7 +644,7 @@ async function dryRun(ctx: FactoryContext, allCandidates: Task[]): Promise<void>
   } else {
     const prUrls = unread.fresh.slice(0, config.environment.maxPrsPerPass);
     log(`environment: would read ${prUrls.length} of ${unread.fresh.length} unread factory PR(s)${unread.stale.length ? `, ignoring ${unread.stale.length} written before the environment changed` : ''}. Its prompt would be:`);
-    console.log(`\n${environmentPrompt(prUrls, verdicts)}\n`);
+    console.log(`\n${environmentPrompt(prUrls, verdicts, agentCredentials(ctx.config).present)}\n`);
   }
 
   const { sha } = await defaultBranchHead(repoSlug(config));
@@ -654,7 +667,7 @@ async function runPipeline(
   const { config, state } = ctx;
   const startedAt = new Date().toISOString();
 
-  const handle = await worker.start(implementPrompt(task), {
+  const handle = await worker.start(implementPrompt(task, agentCredentials(config).present), {
     autoCreatePR: true,
     name: `factory: #${task.issueNumber} ${task.title}`.slice(0, 100),
   });
@@ -670,7 +683,7 @@ async function runPipeline(
 
   const result = await worker.awaitResult(handle);
   if (result.status !== 'FINISHED') {
-    throw new Error(`run ended with status ${result.status}: ${result.resultText.slice(0, 300) || opaqueRunNote(handle)}`);
+    throw new Error(`run ended with status ${result.status}: ${result.resultText.slice(0, 300) || worker.opaqueRunNote(handle)}`);
   }
 
   const prUrl = await openedPr(config, result);
@@ -702,7 +715,7 @@ async function runPipeline(
     taskId: task.id,
     issueNumber: task.issueNumber,
     issueTitle: task.title,
-    worker: 'cursor',
+    worker: config.worker.kind,
     model: config.worker.model,
     agentId: handle.agentId,
     selectorAgentId,
@@ -781,7 +794,7 @@ async function failRun(ctx: FactoryContext, worker: CodingWorker, task: Task, er
     taskId: task.id,
     issueNumber: task.issueNumber,
     issueTitle: task.title,
-    worker: 'cursor',
+    worker: ctx.config.worker.kind,
     model: ctx.config.worker.model,
     agentId: current?.agentId ?? 'unknown',
     startedAt: current?.startedAt ?? new Date().toISOString(),

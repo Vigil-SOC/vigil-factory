@@ -29,6 +29,21 @@ export interface RunHandle {
   runId: string;
 }
 
+/** Which coding runtime the factory hands its prompts to. */
+export type WorkerKind = 'cursor' | 'claude-code';
+
+/**
+ * The factory's own `maxRunMinutes` ran out. Distinct from a worker's terminal
+ * statuses because it means something different: an ERROR is the machinery, a
+ * blown budget is evidence about the size of the work.
+ */
+export class RunBudgetExceeded extends Error {
+  constructor(readonly runId: string, readonly maxRunMinutes: number) {
+    super(`Run ${runId} exceeded ${maxRunMinutes} minutes; cancelled.`);
+    this.name = 'RunBudgetExceeded';
+  }
+}
+
 export type RunStatus =
   | 'CREATING'
   | 'RUNNING'
@@ -54,16 +69,28 @@ export interface TokenUsage {
   costCents?: number;
 }
 
-/** The coding worker boundary. V1 implementation: Cursor cloud agents. */
+/**
+ * The coding worker boundary. Two implementations: Cursor cloud agents
+ * (worker.ts) and local Claude Code sessions (claudeCodeWorker.ts). The
+ * controller sees only this.
+ */
 export interface CodingWorker {
+  /** The commit every agent this worker launches starts from; null = whatever
+   *  the runtime resolves as the default branch. */
+  readonly startingRef: string | null;
   /** Launch a fresh agent on the target repo. */
   start(prompt: string, opts?: StartOptions): Promise<RunHandle>;
   /** Send a follow-up instruction to an existing agent (same workspace/branch). */
   continueRun(handle: RunHandle, instruction: string): Promise<RunHandle>;
-  /** Poll a run until it reaches a terminal state. */
+  /** Wait for a run to reach a terminal state. Throws RunBudgetExceeded when
+   *  the factory's own `maxRunMinutes` ran out first. */
   awaitResult(handle: RunHandle): Promise<RunResult>;
   /** Token usage across all runs of an agent. */
   usage(agentId: string): Promise<TokenUsage | undefined>;
+  /** Best-effort: stop a run that is still going. */
+  cancel(handle: RunHandle): Promise<void>;
+  /** What the log says when a run ends with no text: where a human looks next. */
+  opaqueRunNote(handle: RunHandle): string;
 }
 
 export interface StartOptions {

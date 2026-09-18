@@ -5,9 +5,11 @@
     "url": "https://github.com/acme/widgets"
   },
   "worker": {
+    "kind": "cursor",
     "model": null,
     "pollIntervalSeconds": 30,
-    "maxRunMinutes": 90
+    "maxRunMinutes": 90,
+    "agentEnv": []
   },
   "labels": {
     "factoryPr": "factory",

@@ -1,7 +1,8 @@
 # deeptempo-factory
 
 An opinionated software factory: agents groom your backlog, one PR is in flight
-at a time, and humans merge. Cursor cloud agents do the coding; this repo owns
+at a time, and humans merge. Cursor cloud agents do the coding — or Claude Code
+sessions on the machine running the tick, see [Workers](#workers) — and this repo owns
 only the **factory policy** — what is worth building, when work happens, which
 issue is admissible, verification requirements, review policy, the
 human-approval boundary, and run/outcome telemetry.
@@ -90,7 +91,8 @@ label the resulting PRs `factory`, comment on the issues, record telemetry
 → ENVIRONMENT agent, last, so the PRs just opened are in front of it: reads the factory
    PRs it has not read yet, looking for a check the implementer could not run, and fixes
    .cursor/environment.json in the target repo so the next one can. Opens a PR only when
-   it finds a gap it can close; one open at a time
+   it finds a gap it can close; one open at a time. Cursor worker only: local agents fix
+   their own machine as they go
 stop — a human merging or closing a PR is what frees the next slot
 ```
 
@@ -121,7 +123,7 @@ the factory retracts the verdict: `factory:groomed` comes off, `factory:needs-wo
 goes on, and a comment carries the agent's report. That comment is not a new groom
 stamp, so the fingerprint still points at what the groom read — the issue is groomed
 again when a human replies or edits, and that groom is told to weigh the failed
-attempt. Failures that say nothing about the issue (a Cursor error, a cancelled run, a
+attempt. Failures that say nothing about the issue (a worker error, a cancelled run, a
 GitHub hiccup) only release it for a later tick.
 
 ## Grooming
@@ -329,6 +331,17 @@ thing, and the honest answer is a different check. The agent says so and opens n
 out, this is the phase's obvious failure mode: an agent that installs its way around
 problems that were never about the environment.
 
+**Credentials are the one gap closed from the factory's side, not the environment's.**
+`worker.agentEnv` in `factory.config.json` names environment variables the tick machine
+holds — an LLM provider key, say — each with a description of what it is for. Every
+implementer gets the set ones in its shell (Cursor: session-scoped `envVars` on the VM,
+deleted with the agent; `claude-code`: inherited) and a **Credentials in your environment**
+section in its prompt naming them, so the live test that needs the real model gets run
+rather than filed under blocked. The environment agent is told the same list, so "no API
+key here" reads as the implementer's skip, not the machine's. The values live in `.env`
+locally and as Actions secrets in CI; one that is unset where the tick runs is logged and
+left out, never an error. Prompts carry names and descriptions only.
+
 Either way the finding is posted back onto the PRs that produced it, which is where the
 human who hit the blocked check is looking.
 
@@ -337,6 +350,11 @@ human who hit the blocked check is looking.
 the other only product code — so a full review queue never leaves the agents' machine
 broken. The cost is honest: it is a second thing that can be awaiting your review. Set
 `environment.enabled` to `false` to turn the phase off entirely.
+
+**The phase belongs to the Cursor worker.** `.cursor/environment.json` describes the
+machine Cursor's cloud agents get. With `worker.kind` set to `claude-code` the agents run
+on the machine running the tick, with permission to install whatever they lack, so there
+is no environment file to write and the phase reports itself skipped.
 
 **Every input comes from GitHub, none from telemetry.** The factory PRs are the ones
 carrying the factory label; a PR has been read when the environment agent's comment is on
@@ -411,13 +429,42 @@ target repo. `factory.config.json` names the repo and its labels;
 
 ```bash
 npm install
-cp .env.example .env       # put your Cursor API key in it (cursor.com/dashboard → API Keys)
+cp .env.example .env       # Cursor API key (cursor.com/dashboard → API Keys), or nothing for claude-code
 gh auth status             # gh must be authenticated with repo scope on the target repo
 ```
 
 `factory.config.example.json` and `principles.example.md` are the blank
 versions a second deployment would start from. `telemetry/` is gitignored; the
 record lives on the `telemetry` branch (see [Telemetry](#telemetry)).
+
+### Workers
+
+`worker.kind` in `factory.config.json` names the runtime the factory hands its prompts
+to. Everything else — prompts, phases, labels, telemetry — is the same either way.
+
+- **`cursor`** (default): Cursor Cloud Agents. Each agent gets a fresh VM, clones the
+  repo itself, and opens the PR itself. Needs `CURSOR_API_KEY`. The
+  [environment phase](#the-environment) maintains its machine.
+- **`claude-code`**: Claude Code sessions on the machine running the tick. The worker
+  clones the target repo at the tick's pinned commit into `telemetry/workspaces/<session>`,
+  puts the agent on a `factory/…` branch, and runs `claude -p` there with
+  `--dangerously-skip-permissions` — the same latitude a Cursor agent has in its VM, but
+  on this machine, so run it somewhere you would let an agent run. The agent pushes and
+  opens the PR with `gh`; a CI fix round is `claude --resume` in the same clone. Auth is
+  the machine's claude.ai login, so runs draw on the team subscription rather than API
+  keys; where there is no browser, `claude setup-token` prints a one-year token for
+  `CLAUDE_CODE_OAUTH_TOKEN`. The agents see only the MCP servers the target repo's
+  `.mcp.json` declares, never this machine's. `FACTORY_CLAUDE_BIN` points at the
+  executable when `claude` is not on PATH.
+
+`worker.model` is written once, in Cursor's shape, and translated for Claude Code:
+`params.context: "1m"` becomes the `[1m]` suffix and `params.effort` becomes `--effort`;
+`thinking` is dropped (Fable's is always on). Cost in the telemetry for `claude-code` runs
+is Claude Code's estimate of what the run would have cost on the API, not a bill.
+
+**Falling back.** `FACTORY_WORKER=claude-code npm run factory -- run` overrides
+`worker.kind` for one tick; in Actions, the manual dispatch has a `worker` input that does
+the same. That is the move when the Cursor account is out of usage: nothing else changes.
 
 ## Commands
 
@@ -429,7 +476,7 @@ npm run factory -- select          # run just the selector agent over the groome
 npm run factory -- env             # run just the environment phase over the unread factory PRs
 npm run factory -- simplify        # run just the simplification phase: one PR that removes more than it adds
 npm run factory -- status          # grooming progress, capacity, in-flight jobs, recent telemetry
-npm run factory -- abort           # abandon every stuck pipeline (cancels the Cursor runs)
+npm run factory -- abort           # abandon every stuck pipeline (cancels the runs where the worker can)
 npm run factory -- abort --issue 42  # ...or just the one working issue #42
 npm run check                      # typecheck + unit tests
 ```
@@ -442,18 +489,25 @@ Two options; both just invoke the idempotent tick.
 `~/Library/LaunchAgents/`, adjust paths, then `launchctl load` it.
 
 **GitHub Actions:** `.github/workflows/factory.yml` (daily cron + manual
-dispatch). Requires two repo secrets: `CURSOR_API_KEY`, and `FACTORY_GH_TOKEN`
-(a PAT with `repo` scope on the target repo — the default `GITHUB_TOKEN` is
-scoped to this repo and cannot touch the target repo). The tick step is skipped
-when no `factory.config.json` is committed.
+dispatch). Requires `FACTORY_GH_TOKEN` (a PAT with `repo` scope on the target
+repo — the default `GITHUB_TOKEN` is scoped to this repo and cannot touch the
+target repo; the `claude-code` worker's agents push with it too) plus the
+worker's own secret: `CURSOR_API_KEY` for `cursor`, `CLAUDE_CODE_OAUTH_TOKEN`
+for `claude-code`. Each credential named in `worker.agentEnv` is a secret of the
+same name, passed through in the tick step (`VERTEX_API_KEY` today). The dispatch
+form's `worker` input overrides `worker.kind` for that run. The tick step is skipped when no `factory.config.json` is
+committed.
 
 ## Policy knobs
 
 - `principles.md` — **what is worth building.** The product-direction standard
   grooming enforces. This is the highest-leverage file in the repo; editing it changes
   what the factory will and will not build.
-- `factory.config.json` — target repo, model (`null` = Cursor default; list with
-  `GET https://api.cursor.com/v1/models`), poll interval, max run minutes,
+- `factory.config.json` — target repo, `worker.kind` (`cursor` or `claude-code`, see
+  [Workers](#workers)), model (`null` = the worker's default; Cursor's list is
+  `GET https://api.cursor.com/v1/models`, Claude Code takes any alias or id it accepts),
+  poll interval, max run minutes, `worker.agentEnv` (credentials handed to every agent,
+  see [The environment](#the-environment)),
   `groom.maxPerTick` (how much backlog to vet per tick), `maxConcurrentJobs` (how many
   jobs may be in flight at once — the whole implementation throttle), stale-run cutoff,
   labels.
@@ -544,6 +598,7 @@ tasks whose historical human-rejection rate is ~zero).
 principles.md      what is worth building  ← factory policy (ships as principles.example.md)
 src/types.ts       CodingWorker / WorkSource boundaries + telemetry records
 src/worker.ts      CursorWorker (Cursor Cloud Agents v1 API) — the only Cursor-aware file
+src/claudeCodeWorker.ts  ClaudeCodeWorker: a clone per session, `claude -p` in it
                    Every agent is pinned to one `startingRef`, resolved per tick
 src/workSource.ts  GitHubIssueSource (incl. writing groom verdicts back to issues)
 src/groom.ts       verdict labels + fingerprint, backlog filters, VERDICT parsing
@@ -560,8 +615,9 @@ src/cli.ts         run / groom / select / env / simplify / status / abort
 
 Non-goals (V1, on purpose): custom agent runtime, custom sandboxes, multi-agent
 framework, workflow engines, autonomous merging, persistent state machines. Parallelism
-is one integer (`maxConcurrentJobs`), not a scheduler. Swapping the worker later = reimplementing `CodingWorker` (three methods
-plus usage) — nothing else knows Cursor exists.
+is one integer (`maxConcurrentJobs`), not a scheduler. A worker is one class implementing
+`CodingWorker` (start, continue, await, usage, cancel) chosen by `worker.kind`; there are
+two, and nothing outside them knows which runtime is coding.
 
 ## License
 

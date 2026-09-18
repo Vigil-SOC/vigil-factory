@@ -6,6 +6,7 @@
 // an issue better than a prompt can excerpt it — it sees comments, edits, and
 // whatever else has accumulated, and nothing is cut off at a character limit.
 
+import type { AgentCredential } from './config.ts';
 import type { Task } from './types.ts';
 
 /** What the implementer actually is, so grooming's "one PR" means something. */
@@ -120,11 +121,29 @@ const WORKING_RULES = `- Keep code concise, with brief inline comments only wher
 - Before opening the PR, have an independent subagent review your full diff with fresh eyes. Reviewers are often nitpicky and sometimes wrong, so you decide each finding, one of two ways. A real defect in what you changed — wrong behavior, a case the code mishandles, a test that does not test what it claims — gets fixed now; writing it down as a follow-up ships a bug you know about. Anything else — style, a preference, a suggestion outside the issue's scope, a change not worth its risk — gets dismissed with a sentence saying why. Do not restyle working code to satisfy a reviewer's taste. The PR lists each finding and its disposition in a line apiece.
 - End the PR description with a **Verification** section in three parts. **Ran**: every check you ran and what it showed. **Did not run**: every check you skipped as not applicable or out of time, with the reason. **Blocked by the machine**: every check you could not run because this environment lacked something — a tool not installed, a service not up, a dependency you had to install by hand before anything worked — even if you then worked around it. Keep that last part separate and write "none" when it is empty: the factory reads it to fix its own environment, and a gap you leave unmentioned or file under the wrong heading stays.`;
 
-export function implementPrompt(task: Task): string {
+/**
+ * What an agent is told about the credentials in its environment: names and
+ * purpose, never values. Without this an implementer whose live test needs a
+ * real model writes "no API key on this machine" and stops, when the key was
+ * in its shell the whole time.
+ */
+export function credentialsSection(credentials: AgentCredential[]): string {
+  if (credentials.length === 0) return '';
+  const list = credentials.map((c) => `- \`${c.name}\`: ${c.description}`).join('\n');
+  return `
+
+## Credentials in your environment
+
+These environment variables are set on this machine. When the live test needs the real service, use them — a check one of these would have let you run is not blocked by the machine, and a PR that skips it says so honestly under **Did not run**. Never print, commit, or paste a value.
+
+${list}`;
+}
+
+export function implementPrompt(task: Task, credentials: AgentCredential[] = []): string {
   return `Implement the GitHub issue below and open a PR that resolves it (reference "Closes #${task.issueNumber}").
 
 How we like to work in this repo:
-${WORKING_RULES}
+${WORKING_RULES}${credentialsSection(credentials)}
 
 ## Issue #${task.issueNumber}: ${task.title}
 ${task.url}
@@ -195,7 +214,10 @@ ${opts.recentPrs.join('\n') || '(none yet)'}${declined}`;
  * gets wrong — cloud agents can run Docker, but not on the default image and
  * not without the overlay/iptables workarounds.
  */
-export function environmentPrompt(prUrls: string[], verdicts: string[] = []): string {
+export function environmentPrompt(prUrls: string[], verdicts: string[] = [], credentials: AgentCredential[] = []): string {
+  const held = credentials.length > 0
+    ? ` The factory does hold these, and every implementer below had them in its environment: ${credentials.map((c) => `\`${c.name}\``).join(', ')}. A check skipped for want of one of those was skipped by the implementer, not the machine.`
+    : '';
   const priors = verdicts.length > 0
     ? `
 
@@ -218,7 +240,7 @@ If you find a gap the environment can close, close it. Commit \`.cursor/environm
 - Services CI declares — Postgres, Redis, whatever the workflow's \`services:\` block names — belong in the environment's \`start\` command, brought up the way the repo's own compose file or test scripts bring them up, so they are ready when the agent's first command runs.
 - Build to what CI needs, not beyond it. Every layer costs every future agent its startup time, so a tool no workflow installs is not yours to add; but anything a workflow installs before running tests is already paid for in CI and cheap here by comparison. You can add to this file again next week.
 
-**Not every gap is yours to close.** A check that needs an artifact which does not exist yet at review time, a credential the factory does not hold, or a display or cluster no CI job has either, is not an environment problem — the implementer verified the wrong thing, and the honest fix is a different check. When that is what you find, say what should have been verified instead and open no PR. Do not install your way around it.
+**Not every gap is yours to close.** A check that needs an artifact which does not exist yet at review time, a credential the factory does not hold, or a display or cluster no CI job has either, is not an environment problem — the implementer verified the wrong thing, and the honest fix is a different check. When that is what you find, say what should have been verified instead and open no PR. Do not install your way around it.${held}
 
 Open no PR when nothing was blocked and nothing had to be set up; a needless PR costs a human review. Whatever you write is posted back onto the PRs you read, so write it to the humans reviewing them.${priors}
 

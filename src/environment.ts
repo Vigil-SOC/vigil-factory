@@ -111,13 +111,27 @@ export function recentVerdicts(prs: FactoryPr[], limit: number): string[] {
  * proposed a fix for, and reviewing two competing `.cursor/environment.json`
  * diffs is worse than waiting.
  */
+/**
+ * Why the phase does not apply to this worker at all, or null. It edits
+ * `.cursor/environment.json`: the machine Cursor's agents get. Claude Code
+ * agents run on the machine running the tick and install what they lack as
+ * they go, so there is no environment file to write for them.
+ */
+export function workerSkipReason(workerKind: string): string | null {
+  if (workerKind === 'cursor') return null;
+  return `the environment phase only applies to the cursor worker (worker.kind is ${workerKind}); local agents fix their own machine`;
+}
+
 export function skipReason(
   enabled: boolean,
   openEnvPrs: { url: string }[],
   unread: UnreadPrs,
   changedAt: string | null = null,
+  workerKind: string = 'cursor',
 ): string | null {
   if (!enabled) return 'environment phase is disabled in factory.config.json';
+  const worker = workerSkipReason(workerKind);
+  if (worker) return worker;
   if (openEnvPrs.length > 0) {
     return `an environment PR is already awaiting a human (${openEnvPrs.map((p) => p.url).join(', ')})`;
   }

@@ -173,3 +173,28 @@ describe('red checks go back to the implementer', () => {
     expect(p).toContain('Do not open a new PR');
   });
 });
+
+// A credential is handed over by name and purpose only. The value is in the
+// agent's shell; the prompt says what it is for, so the live test that needs
+// the real service gets run instead of reported as blocked.
+describe('credentials reach agents as names, never values', () => {
+  const creds = [{ name: 'VERTEX_API_KEY', description: 'Google Vertex express-mode key for Gemini.' }];
+
+  it('implementer is told what is in its environment and what it is for', () => {
+    const p = implementPrompt(task, creds);
+    expect(p).toContain('## Credentials in your environment');
+    expect(p).toContain('`VERTEX_API_KEY`: Google Vertex express-mode key for Gemini.');
+    expect(p).toContain('Never print, commit, or paste a value');
+  });
+
+  it('no section when the factory holds nothing', () => {
+    expect(implementPrompt(task)).not.toContain('Credentials in your environment');
+  });
+
+  it('environment agent knows which credentials the factory holds', () => {
+    const prs = ['https://github.com/o/r/pull/1'];
+    expect(environmentPrompt(prs, [], creds)).toContain('`VERTEX_API_KEY`');
+    expect(environmentPrompt(prs, [], creds)).toContain('skipped by the implementer, not the machine');
+    expect(environmentPrompt(prs)).not.toContain('The factory does hold');
+  });
+});

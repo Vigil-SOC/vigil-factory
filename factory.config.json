@@ -5,6 +5,7 @@
     "url": "https://github.com/Vigil-SOC/vigil"
   },
   "worker": {
+    "kind": "cursor",
     "model": {
       "id": "claude-fable-5-1",
       "params": {
@@ -14,7 +15,13 @@
       }
     },
     "pollIntervalSeconds": 30,
-    "maxRunMinutes": 90
+    "maxRunMinutes": 90,
+    "agentEnv": [
+      {
+        "name": "VERTEX_API_KEY",
+        "description": "Google Vertex AI express-mode API key: Gemini models over the aiplatform.googleapis.com REST API with ?key=, no GCP project or region. In this repo Bifrost fronts every model; its seeded `vertex` key is an empty env placeholder for a service account, so register this key instead as a bare `value` on the vertex provider through Bifrost's key API (core/llm/bifrost/admin.py push_provider_key, or PUT /api/providers/vertex/keys) and add a vertex provider row pointing at it. Use it for a real end-to-end triage/chat run, not just routing."
+      }
+    ]
   },
   "labels": {
     "factoryPr": "factory",

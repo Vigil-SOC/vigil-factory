@@ -21,7 +21,7 @@ import type { CurrentRun } from '../src/types.ts';
 function config(maxConcurrentJobs: number): FactoryConfig {
   return {
     repo: { owner: 'o', name: 'r', url: 'https://github.com/o/r' },
-    worker: { model: null, pollIntervalSeconds: 30, maxRunMinutes: 90 },
+    worker: { kind: 'cursor', model: null, pollIntervalSeconds: 30, maxRunMinutes: 90, agentEnv: [] },
     labels: { factoryPr: 'factory', issueInProgress: 'factory:wip', groomed: 'factory:groomed', needsWork: 'factory:needs-work', environmentPr: 'factory:env', simplifyPr: 'factory:simplify', epic: 'type:epic' },
     groom: { maxPerTick: 5, principlesFile: 'principles.example.md' },
     selector: { maxCandidates: 100 },

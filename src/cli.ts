@@ -3,12 +3,12 @@
 // for humans operating the factory.
 
 import { admissible, buildContext, buildWorker, candidateTasks, environmentInputs, log, runEnvironmentPhase, runGroomPhase, runSelector, runSimplifyPhase, simplifySkip, tick } from './controller.ts';
-import { repoSlug, requireCursorApiKey } from './config.ts';
+import { repoSlug } from './config.ts';
 import { isEpic, isGroomed, needsGroom, openIssues, verdict } from './groom.ts';
 import { defaultBranchHead } from './github.ts';
-import type { CurrentRun } from './types.ts';
+import type { CodingWorker, CurrentRun } from './types.ts';
 
-const USAGE = `deeptempo-factory — thin software-factory control plane around Cursor
+const USAGE = `deeptempo-factory — thin software-factory control plane around Cursor cloud agents or local Claude Code
 
 Usage:
   npm run factory -- run [--dry-run]   One idempotent tick: groom part of the backlog, then a selector agent picks a groomed issue and a fresh agent implements it.
@@ -25,7 +25,9 @@ Usage:
                                        A PR that grows the code is closed by the factory before a human sees it.
   npm run factory -- status            Show grooming progress, capacity, in-flight jobs, pending PRs, and recent telemetry.
   npm run factory -- abort [--issue N] Abandon stuck local pipelines — all of them, or just issue N's
-                                       (cancels the Cursor runs if possible).
+                                       (cancels the runs if the worker still can).
+
+Environment: FACTORY_WORKER=cursor|claude-code overrides worker.kind for one invocation.
 `;
 
 async function groom(opts: { limit?: number; force?: boolean }): Promise<void> {
@@ -158,26 +160,24 @@ async function abort(opts: { issueNumber?: number }): Promise<void> {
     );
     return;
   }
-  for (const current of runs) await abortRun(ctx, current);
+  const worker = await buildWorker(ctx.config).catch((err: Error) => {
+    log(`could not build the worker to cancel runs (${err.message}); clearing local state only.`);
+    return null;
+  });
+  for (const current of runs) await abortRun(ctx, worker, current);
 }
 
-async function abortRun(ctx: ReturnType<typeof buildContext>, current: CurrentRun): Promise<void> {
-  try {
-    const apiKey = requireCursorApiKey();
-    const res = await fetch(
-      `https://api.cursor.com/v1/agents/${current.agentId}/runs/${current.runId}/cancel`,
-      { method: 'POST', headers: { Authorization: `Bearer ${apiKey}` } },
-    );
-    log(`cancel request for agent ${current.agentId} run ${current.runId}: HTTP ${res.status}`);
-  } catch (err) {
-    log(`could not cancel the Cursor run (${(err as Error).message}); stop it from the Cursor dashboard if needed.`);
+async function abortRun(ctx: ReturnType<typeof buildContext>, worker: CodingWorker | null, current: CurrentRun): Promise<void> {
+  if (worker) {
+    await worker.cancel({ agentId: current.agentId, runId: current.runId });
+    log(`cancel requested for agent ${current.agentId} run ${current.runId}`);
   }
   ctx.telemetry.append({
     type: 'run',
     taskId: current.taskId,
     issueNumber: current.issueNumber,
     issueTitle: '',
-    worker: 'cursor',
+    worker: ctx.config.worker.kind,
     model: ctx.config.worker.model,
     agentId: current.agentId,
     startedAt: current.startedAt,

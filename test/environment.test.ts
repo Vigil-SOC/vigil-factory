@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ENV_AGENT_MARK,
+  workerSkipReason,
   environmentChangedAt,
   recentVerdicts,
   skipReason,
@@ -144,5 +145,15 @@ describe('skipReason', () => {
 
   it('reports the open PR before anything else when both apply', () => {
     expect(skipReason(true, [{ url: pr(20) }], unread())).toMatch(/already awaiting a human/);
+  });
+});
+
+describe('workerSkipReason', () => {
+  it('lets the cursor worker run the phase', () => {
+    expect(workerSkipReason('cursor')).toBeNull();
+  });
+
+  it('skips it for the claude-code worker, saying why', () => {
+    expect(workerSkipReason('claude-code')).toMatch(/only applies to the cursor worker/);
   });
 });
