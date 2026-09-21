@@ -8,6 +8,7 @@ import {
   recentVerdicts,
   skipReason,
   unreadFactoryPrs,
+  withOpenedThisTick,
   type FactoryPr,
   type UnreadPrs,
 } from '../src/environment.ts';
@@ -207,5 +208,25 @@ describe('filedIssueBody', () => {
   it('names every PR the pass read', () => {
     const body = filedIssueBody(draft, [pr(1067), pr(1066)]);
     expect(body).toContain(`implementers of ${pr(1067)}, ${pr(1066)}`);
+  });
+});
+
+// GitHub's label index lags a label write by seconds, and the pass lists by
+// label seconds after the implementers labelled their PRs. The tick vouches
+// for what it opened.
+describe('withOpenedThisTick', () => {
+  it('puts a PR GitHub has not listed yet in front of the fresh ones', () => {
+    expect(withOpenedThisTick(unread([pr(1070), pr(1067)]), [pr(1071)])).toEqual(unread([pr(1071), pr(1070), pr(1067)]));
+  });
+
+  it('does not repeat a PR GitHub already listed, fresh or stale', () => {
+    const u = unread([pr(1070)], [pr(900)]);
+    expect(withOpenedThisTick(u, [pr(1070), pr(900)])).toBe(u);
+    expect(withOpenedThisTick(u, [pr(1071), pr(1071)])).toEqual(unread([pr(1071), pr(1070)], [pr(900)]));
+  });
+
+  it('is a no-op when nothing was opened', () => {
+    const u = unread([pr(1070)]);
+    expect(withOpenedThisTick(u, [])).toBe(u);
   });
 });

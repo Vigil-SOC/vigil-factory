@@ -125,6 +125,21 @@ export function unreadFactoryPrs(prs: FactoryPr[], changedAt: string | null): Un
 }
 
 /**
+ * The PRs this tick just opened, put in front of what GitHub listed. GitHub's
+ * label index lags a label write by a few seconds, and the pass lists PRs by
+ * label seconds after the implementers labelled theirs: on Vigil #1071 the
+ * gap was five seconds and the pass read the day's other two PRs and not the
+ * newest. The tick knows what it opened; it does not need GitHub to confirm.
+ * Nothing else changes — a PR that was already listed, or already read, is
+ * not repeated.
+ */
+export function withOpenedThisTick(unread: UnreadPrs, opened: string[]): UnreadPrs {
+  const known = new Set([...unread.fresh, ...unread.stale]);
+  const missing = opened.filter((url, i) => !known.has(url) && opened.indexOf(url) === i);
+  return missing.length === 0 ? unread : { fresh: [...missing, ...unread.fresh], stale: unread.stale };
+}
+
+/**
  * The environment agent's most recent verdicts, newest PR first: a link to the
  * last comment it left on each. Handed back to the next pass so a gap that
  * shows up as a shrug in every PR — "installed the deps myself" — is seen as

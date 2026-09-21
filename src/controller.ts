@@ -37,7 +37,7 @@ import { filterAssigned, filterClaimed, filterEpics, parseSelection, type Select
 import { environmentPrompt, fixChecksPrompt, groomEpicPrompt, groomPrompt, implementPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
 import { factoryComment, groomState, isEpic, isGroomed, needsGroom, openIssues, parseGroomReply, stampExtrasFor, unaccountedBlockers, verdict, type OpenIssues } from './groom.ts';
 import { addPrLabels, awaitPrChecks, closePr, commentOnIssue, commentOnPr, createIssue, defaultBranchHead, ensureLabel, findPrByBranch, listPrsByLabel, markPrReady, prChecks, viewPr } from './github.ts';
-import { ENV_AGENT_MARK, environmentChangedAt, filedIssueBody, parseEnvReport, recentVerdicts, skipReason, unreadFactoryPrs, workerSkipReason, type UnreadPrs } from './environment.ts';
+import { ENV_AGENT_MARK, environmentChangedAt, filedIssueBody, parseEnvReport, recentVerdicts, skipReason, unreadFactoryPrs, withOpenedThisTick, workerSkipReason, type UnreadPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
 
 export function log(msg: string): void {
@@ -296,7 +296,7 @@ const ENV_VERDICTS_SHOWN = 5;
  * the tick, the dry run, and `factory status` cannot disagree. See the header
  * of environment.ts for why none of it comes from telemetry.
  */
-export async function environmentInputs(config: FactoryConfig): Promise<{
+export async function environmentInputs(config: FactoryConfig, openedThisTick: string[] = []): Promise<{
   skip: string | null;
   unread: UnreadPrs;
   changedAt: string | null;
@@ -314,7 +314,9 @@ export async function environmentInputs(config: FactoryConfig): Promise<{
   ]);
   const openEnvPrs = envPrs.filter((p) => p.state === 'OPEN');
   const changedAt = environmentChangedAt(envPrs);
-  const unread = unreadFactoryPrs(factoryPrs, changedAt);
+  // The PRs this tick opened are the freshest evidence and may not be in
+  // GitHub's label index yet; the tick vouches for them itself.
+  const unread = withOpenedThisTick(unreadFactoryPrs(factoryPrs, changedAt), openedThisTick);
   return {
     skip: skipReason(true, openEnvPrs, unread, changedAt, config.worker.kind),
     unread,
@@ -337,9 +339,10 @@ export async function environmentInputs(config: FactoryConfig): Promise<{
 export async function runEnvironmentPhase(
   ctx: FactoryContext,
   worker: CodingWorker,
+  openedThisTick: string[] = [],
 ): Promise<EnvRecord | null> {
   const { config } = ctx;
-  const { skip, unread, verdicts } = await environmentInputs(config);
+  const { skip, unread, verdicts } = await environmentInputs(config, openedThisTick);
   if (skip) {
     log(`environment: skipped — ${skip}.`);
     return null;
@@ -545,7 +548,7 @@ export async function tick(opts: { dryRun: boolean }): Promise<void> {
   //    accreting codebase is a problem whether or not there is anything to
   //    build today, and the tick that notices is the idle one. Concurrent with
   //    the implementers because it touches no issue and takes no slot.
-  await Promise.all([
+  const [, openedThisTick] = await Promise.all([
     runSimplifyPhase(ctx, worker).catch((err: Error) => {
       log(`simplify phase error: ${err.message}`);
       return null;
@@ -558,7 +561,7 @@ export async function tick(opts: { dryRun: boolean }): Promise<void> {
   //    tick are the freshest evidence — a pass before the implementers would
   //    read yesterday's and hand today's to tomorrow. Still independent of the
   //    backlog: it runs on an idle tick too, on whatever it has not yet read.
-  await runEnvironmentPhase(ctx, worker).catch((err: Error) => {
+  await runEnvironmentPhase(ctx, worker, openedThisTick).catch((err: Error) => {
     log(`environment phase error: ${err.message}`);
     return null;
   });
@@ -577,11 +580,12 @@ export function oldestFirst(tasks: Task[]): Task[] {
 }
 
 /** The implementation half of a tick: capacity gate, picks, implementers. */
-async function runImplementation(ctx: FactoryContext, worker: CodingWorker, candidates: Task[]): Promise<void> {
+/** Returns the PRs it opened, for the environment pass that follows. */
+async function runImplementation(ctx: FactoryContext, worker: CodingWorker, candidates: Task[]): Promise<string[]> {
   const { config } = ctx;
   if (candidates.length === 0) {
     log('no open issues. Nothing to implement.');
-    return;
+    return [];
   }
 
   // Capacity gate, for the implementation half only.
@@ -593,7 +597,7 @@ async function runImplementation(ctx: FactoryContext, worker: CodingWorker, cand
       log(`  in flight: ${run.taskId} (agent ${run.agentId}). Use \`factory abort\` if it is dead.`);
     }
     log('implementation paused until a human clears a slot.');
-    return;
+    return [];
   }
 
   // Picks fill the free slots. Re-fetch, since the groom phase just rewrote
@@ -601,24 +605,26 @@ async function runImplementation(ctx: FactoryContext, worker: CodingWorker, cand
   const tasks = admissible(ctx, await candidateTasks(ctx), 'implement').filter((t) => isGroomed(t, ctx.config.labels));
   if (tasks.length === 0) {
     log('no groomed issues available to implement. Nothing to do.');
-    return;
+    return [];
   }
 
   await ensureLabel(repoSlug(config), config.labels.factoryPr, '0E8A16', 'Opened by the software factory');
   const picks = config.selector.enabled ? await pickTasks(ctx, worker, tasks, capacity.slots) : await takeOldest(ctx, tasks, capacity.slots);
-  if (picks.length === 0) return;
+  if (picks.length === 0) return [];
 
   // Handoff: one fresh implementer session per pick, run concurrently. They
   // work on separate branches, so the only collisions are ones a human
   // resolves at review time — the same as two people picking up two issues.
-  await Promise.all(
+  const opened = await Promise.all(
     picks.map((pick) =>
       runPipeline(ctx, worker, pick.task, pick.agentId, pick.usage).catch(async (err) => {
         log(`pipeline error for #${pick.task.issueNumber}: ${(err as Error).message}`);
         await failRun(ctx, worker, pick.task, err as Error);
+        return null;
       }),
     ),
   );
+  return opened.filter((url): url is string => url !== null);
 }
 
 /**
@@ -739,7 +745,7 @@ async function runPipeline(
   task: Task,
   selectorAgentId: string | undefined,
   selectorUsage: TokenUsage | null,
-): Promise<void> {
+): Promise<string | null> {
   const { config, state } = ctx;
   const startedAt = new Date().toISOString();
 
@@ -805,6 +811,7 @@ async function runPipeline(
     ...(ci ?? {}),
   });
   state.clearRun(task.id);
+  return prUrl;
 }
 
 /** How long the pipeline waits for a PR's CI before treating it as unsettled. */
