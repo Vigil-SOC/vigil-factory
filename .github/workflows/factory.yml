@@ -73,7 +73,7 @@ jobs:
           # factory.config.json). Cursor agents get them as session env vars;
           # claude-code agents inherit them from this step. One unset here is
           # logged and left out, never an error.
-          VERTEX_API_KEY: ${{ secrets.VERTEX_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       # Append this tick's rows to the record. Only the tick writes to this
       # branch, so a rejected push means another tick beat us to it: refetch
       # and replay the new rows onto whatever is there now. The branch is

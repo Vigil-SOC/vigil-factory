@@ -509,7 +509,7 @@ repo — the default `GITHUB_TOKEN` is scoped to this repo and cannot touch the
 target repo; the `claude-code` worker's agents push with it too) plus the
 worker's own secret: `CURSOR_API_KEY` for `cursor`, `CLAUDE_CODE_OAUTH_TOKEN`
 for `claude-code`. Each credential named in `worker.agentEnv` is a secret of the
-same name, passed through in the tick step (`VERTEX_API_KEY` today). The dispatch
+same name, passed through in the tick step (`GEMINI_API_KEY` today). The dispatch
 form's `worker` input overrides `worker.kind` for that run. The tick step is skipped when no `factory.config.json` is
 committed.
 
