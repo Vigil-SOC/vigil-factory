@@ -36,8 +36,8 @@ import { Telemetry } from './telemetry.ts';
 import { filterAssigned, filterClaimed, filterEpics, parseSelection, type Selection } from './selector.ts';
 import { environmentPrompt, fixChecksPrompt, groomEpicPrompt, groomPrompt, implementPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
 import { factoryComment, groomState, isEpic, isGroomed, needsGroom, openIssues, parseGroomReply, stampExtrasFor, unaccountedBlockers, verdict, type OpenIssues } from './groom.ts';
-import { addPrLabels, awaitPrChecks, closePr, commentOnIssue, commentOnPr, defaultBranchHead, ensureLabel, findPrByBranch, listPrsByLabel, markPrReady, prChecks, viewPr } from './github.ts';
-import { ENV_AGENT_MARK, environmentChangedAt, recentVerdicts, skipReason, unreadFactoryPrs, workerSkipReason, type UnreadPrs } from './environment.ts';
+import { addPrLabels, awaitPrChecks, closePr, commentOnIssue, commentOnPr, createIssue, defaultBranchHead, ensureLabel, findPrByBranch, listPrsByLabel, markPrReady, prChecks, viewPr } from './github.ts';
+import { ENV_AGENT_MARK, environmentChangedAt, filedIssueBody, parseEnvReport, recentVerdicts, skipReason, unreadFactoryPrs, workerSkipReason, type UnreadPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
 
 export function log(msg: string): void {
@@ -389,13 +389,31 @@ export async function runEnvironmentPhase(
     await addPrLabels(repoSlug(config), envPrUrl, [config.labels.environmentPr]);
   }
 
+  // A gap that was the repo's, not the machine's, is filed as an issue and
+  // enters the groom queue unlabelled, like one a human wrote. Filed one at a
+  // time so a failure leaves a legible partial list in the PR comment.
+  const { report, issues } = parseEnvReport(result.resultText);
+  const issuesFiled: string[] = [];
+  for (const draft of issues) {
+    try {
+      const filed = await createIssue(repoSlug(config), draft.title, filedIssueBody(draft, prUrls), []);
+      issuesFiled.push(filed.url);
+      log(`environment: filed ${filed.url} — ${draft.title}`);
+    } catch (err) {
+      log(`environment: could not file issue "${draft.title}": ${(err as Error).message}`);
+    }
+  }
+
   // Either way the finding belongs on the PRs that produced it — that is where
   // the human who hit the blocked check is looking.
   const alongside = prUrls.length > 1 ? ` (alongside ${prUrls.length - 1} other recent factory PR${prUrls.length > 2 ? 's' : ''})` : '';
+  const filedNote = issuesFiled.length > 0
+    ? `\n\nIt also read a defect in the repo itself, not the machine, and filed it: ${issuesFiled.join(', ')}.`
+    : '';
   // The comment is also the "read" mark the next pass looks for.
   const note = envPrUrl
-    ? `🏭 ${ENV_AGENT_MARK} Reading this PR${alongside} it found a gap in the cloud-agent environment and opened ${envPrUrl} to close it.`
-    : `🏭 ${ENV_AGENT_MARK} It read this PR${alongside} looking for a check that could not run in the cloud-agent environment, and opened none. Its report:\n\n${result.resultText.trim() || '_(no report)_'}`;
+    ? `🏭 ${ENV_AGENT_MARK} Reading this PR${alongside} it found a gap in the cloud-agent environment and opened ${envPrUrl} to close it.${filedNote}`
+    : `🏭 ${ENV_AGENT_MARK} It read this PR${alongside} looking for a check that could not run in the cloud-agent environment, and opened none.${filedNote} Its report:\n\n${report || '_(no report)_'}`;
   for (const prUrl of prUrls) {
     await commentOnPr(repoSlug(config), prUrl, factoryComment(note)).catch((err: Error) => {
       log(`environment: could not comment on ${prUrl}: ${err.message}`);
@@ -404,8 +422,8 @@ export async function runEnvironmentPhase(
 
   log(envPrUrl
     ? `environment: opened ${envPrUrl}; it awaits a human and does not spend an implementer slot.`
-    : 'environment: no gap the environment could close.');
-  return record({ outcome: envPrUrl ? 'pr-opened' : 'no-gap', prUrl: envPrUrl });
+    : `environment: no gap the environment could close${issuesFiled.length ? `; ${issuesFiled.length} repo defect(s) filed as issues` : ''}.`);
+  return record({ outcome: envPrUrl ? 'pr-opened' : 'no-gap', prUrl: envPrUrl, ...(issuesFiled.length ? { issuesFiled } : {}) });
 }
 
 /** Why the simplification pass is not running against `baseSha`, or null if it should. */

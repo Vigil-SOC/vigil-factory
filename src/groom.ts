@@ -466,13 +466,25 @@ const NOTES_RE = /```notes[ \t]*\n([\s\S]*?)```/g;
 const CHILD_RE = /```child[ \t]*\n([\s\S]*?)```/g;
 
 /** First non-empty line is the title, shorn of markdown; the rest is the body. */
-function parseChild(block: string): ChildDraft | null {
+function parseDraft(block: string): ChildDraft | null {
   const lines = block.split('\n');
   const i = lines.findIndex((l) => l.trim().length > 0);
   if (i === -1) return null;
   const title = lines[i]!.trim().replace(/^(#+\s*|title:\s*)/i, '').replace(/^\*\*(.*)\*\*$/, '$1').trim();
   const body = lines.slice(i + 1).join('\n').trim();
   return title ? { title, body } : null;
+}
+
+/**
+ * Every fenced ```<tag> block in an agent's reply, read as an issue draft, and
+ * the reply with those blocks removed. This is the one shape in which an agent
+ * hands the factory an issue to file: the groomer's children under an epic,
+ * and the environment agent's repo defects. Blocks with no title are dropped.
+ */
+export function parseDraftBlocks(text: string, tag: string): { drafts: ChildDraft[]; rest: string } {
+  const re = new RegExp('```' + tag + '[ \\t]*\\n([\\s\\S]*?)```', 'g');
+  const drafts = [...text.matchAll(re)].map((m) => parseDraft(m[1]!)).filter((c): c is ChildDraft => c !== null);
+  return { drafts, rest: text.replace(re, '').trim() };
 }
 
 /**
@@ -490,9 +502,7 @@ export function parseGroomReply(text: string): GroomReply | null {
   const notes = [...text.matchAll(NOTES_RE)].at(-1)?.[1]?.trim() || undefined;
   const blockedLine = [...text.matchAll(BLOCKED_RE)].at(-1)?.[1];
   const blocked = blockedLine && verdict === 'needs-work' ? Number(blockedLine) : undefined;
-  const children = [...text.matchAll(CHILD_RE)]
-    .map((m) => parseChild(m[1]!))
-    .filter((c): c is ChildDraft => c !== null);
+  const children = parseDraftBlocks(text, 'child').drafts;
 
   // The reasoning is everything except the machinery, for the issue comment.
   const reasoning = text

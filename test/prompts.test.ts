@@ -165,6 +165,18 @@ describe('environment agent judges against CI and sees its own history', () => {
     expect(environmentPrompt(prs, verdicts)).toContain(verdicts[0]);
     expect(environmentPrompt(prs)).not.toContain('recent verdicts');
   });
+
+  it('a defect in the repo is filed as an issue block, not fixed in the image or left as prose', () => {
+    const p = environmentPrompt(prs);
+    expect(p).toContain('Some gaps are the repo\'s, and those you file.');
+    expect(p).toContain('```issue');
+    expect(p).toMatch(/check the repo's open issues for the same defect/);
+    expect(p).toMatch(/do not put it in the environment file/);
+  });
+
+  it('the implementer files a shipped config that would not start under the same heading', () => {
+    expect(implementPrompt(task)).toMatch(/a shipped config or script of this repo that would not start until you changed it/);
+  });
 });
 
 // CI is the repo's own verdict. The factory relays a red check to the agent

@@ -321,7 +321,20 @@ report and its reply is not scanned for one — deciding whether a PR describes 
 check is a judgment call, so it lives in an agent, handed links the way grooming is handed
 an issue link. And the pass's own verdict is the branch it pushed: a PR means it found a
 fixable gap, no PR means it did not. That is the same handoff the controller already reads
-from an implementer, so the phase adds no new grammar to the factory.
+from an implementer, so the phase adds no new grammar to the factory. The one exception is
+below, and it borrows the groomer's grammar rather than adding its own.
+
+**Some gaps are the repo's, and those get filed.** An implementer sometimes reports, under
+the same heading, that the repo as shipped did not work — the example config rejects the
+agent layer's own service-to-service calls, say. The image cannot fix that and neither can
+a different check; it is a defect, and the fix is a change to the repo. The agent used to be
+able to say only that: it called one CSRF bug "worth its own issue" on two PRs in a row,
+and nobody filed it. Now it writes the defect as a fenced ```` ```issue ```` block — the
+shape the groomer already uses for an epic's children — and the factory files it, unlabelled,
+with the PRs it came from named at the top. It enters the groom queue like an issue a human
+wrote, and the groomer judges it there; the environment agent's job ends at naming it. It
+is told to check open issues and its own recent verdicts first, so one defect reported by
+several implementers is filed once.
 
 The implementer's Verification section does keep **Blocked by the machine** as its own
 heading, apart from checks that were not applicable or ran out of time. That is not a

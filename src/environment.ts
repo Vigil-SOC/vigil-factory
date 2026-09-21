@@ -31,8 +31,44 @@
 // reads complaints about a machine that no longer exists and "fixes" what is
 // already fixed.
 
+//
+// One thing in the report is not prose to the factory: a repo defect. A
+// "Blocked by the machine" item is sometimes neither the image's fault nor the
+// implementer's — the repo as shipped does not start, or rejects its own
+// service-to-service calls — and the environment agent can only say so. It
+// said so twice, on two PRs, for one CSRF bug, and nobody filed the issue. So
+// the agent writes the defect as a fenced ```issue block, the same shape the
+// groomer uses for an epic's children, and the factory files it. The groomer
+// then judges it like any other issue; the environment agent's job ends at
+// naming it.
+
+import { parseDraftBlocks, type ChildDraft } from './groom.ts';
+
 /** What the pass posts on every PR it reads. Its presence is the "read" mark. */
 export const ENV_AGENT_MARK = '**Factory environment agent.**';
+
+/** A repo defect the environment agent wrote up, before it has a number. */
+export type IssueDraft = ChildDraft;
+
+/**
+ * The environment agent's reply, split: the issues it asks the factory to
+ * file, and the report that is posted to the PRs it read with those blocks
+ * removed — the filed issues are linked there instead.
+ */
+export function parseEnvReport(text: string): { report: string; issues: IssueDraft[] } {
+  const { drafts, rest } = parseDraftBlocks(text, 'issue');
+  return { report: rest, issues: drafts };
+}
+
+/**
+ * The body of an issue the pass files: where the evidence is, then the
+ * agent's write-up. The PR links are the provenance a groomer follows, the
+ * way a child's first line names its epic.
+ */
+export function filedIssueBody(draft: IssueDraft, prUrls: string[]): string {
+  const from = prUrls.length === 1 ? `Reported by the implementer of ${prUrls[0]}` : `Reported by the implementers of ${prUrls.join(', ')}`;
+  return `${from} under **Blocked by the machine**; the factory's environment agent read it as a defect in the repo, not the machine, and filed it.\n\n${draft.body}`.trimEnd() + '\n';
+}
 
 /** The slice of a GitHub PR this phase reasons about. */
 export interface FactoryPr {

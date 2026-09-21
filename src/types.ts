@@ -208,6 +208,8 @@ export interface EnvRecord extends AgentPass {
   prsExamined: string[];
   outcome: 'pr-opened' | 'no-gap' | 'failed';
   prUrl: string | null;
+  /** Repo defects the pass filed as issues: gaps that were the repo's, not the machine's. */
+  issuesFiled?: string[];
   failureReason?: string;
 }
 
