@@ -34,7 +34,12 @@
 // only because another issue has to land first is about that other issue as
 // much as this one, so the stamp names it, and the verdict goes stale the tick
 // after #N is no longer open — the same move a human reply makes, without a
-// human having to make it.
+// human having to make it. "No longer open" is checked against every open
+// issue in the repo, and #N is not always one of those: the groomer may name a
+// pull request, or an issue past the fetch cap. A number the open issues do
+// not account for is looked up on its own and held open until GitHub says it
+// is closed, so a verdict blocked on an open PR stays current instead of
+// going stale every tick and being groomed again to the same conclusion.
 //
 // Epics are groomed by the same machinery with one difference in what
 // "groomed" means: not "one PR can land this" but "this direction is settled,
@@ -232,20 +237,38 @@ export function verdict(task: Task, labels: GroomLabels): GroomVerdict | null {
   return null;
 }
 
-/** Every open issue in the repo, claimed or not, by number. */
-export type OpenIssues = Map<number, Task>;
+/**
+ * Every open issue in the repo, claimed or not, by number — plus `heldOpen`:
+ * numbers a verdict is blocked on that are not among those issues but are not
+ * known to be closed either. A pull request, an issue past the fetch cap, or a
+ * reference the lookup could not settle. Absence from the map is only evidence
+ * of closure for the numbers this set does not hold.
+ */
+export type OpenIssues = Map<number, Task> & { readonly heldOpen: ReadonlySet<number> };
 
-export function openIssues(tasks: Task[]): OpenIssues {
-  return new Map(tasks.map((t) => [t.issueNumber, t]));
+export function openIssues(tasks: Task[], heldOpen: Iterable<number> = []): OpenIssues {
+  return Object.assign(new Map(tasks.map((t) => [t.issueNumber, t])), { heldOpen: new Set(heldOpen) });
+}
+
+/**
+ * The blockers current verdicts name that the open issues do not account for.
+ * Each is either closed — and the verdict waiting on it is stale — or open
+ * somewhere the issue list does not reach; only a lookup can tell which.
+ */
+export function unaccountedBlockers(tasks: Task[], open: OpenIssues): number[] {
+  const named = tasks.map((t) => readBlocker(t)).filter((n): n is number => n !== null && !open.has(n));
+  return [...new Set(named)].sort((a, b) => a - b);
 }
 
 /**
  * Whether what a blocked verdict waited for has happened. A sibling has to
  * land, so it clears when it is no longer open. An epic never closes while its
  * children are being built; it clears when it is groomed, because that is the
- * moment its children have a premise.
+ * moment its children have a premise. A blocker that is not an open issue but
+ * is held open — a pull request still in flight — has not cleared.
  */
 function blockerCleared(blocker: number, open: OpenIssues, labels: GroomLabels): boolean {
+  if (open.heldOpen.has(blocker)) return false;
   const target = open.get(blocker);
   if (!target) return true;
   return isEpic(target, labels) && verdict(target, labels) === 'groomed';

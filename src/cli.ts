@@ -2,9 +2,9 @@
 // factory CLI — the daily trigger runs `factory run`; everything else is
 // for humans operating the factory.
 
-import { admissible, buildContext, buildWorker, candidateTasks, environmentInputs, log, runEnvironmentPhase, runGroomPhase, runSelector, runSimplifyPhase, simplifySkip, tick } from './controller.ts';
+import { admissible, buildContext, buildWorker, candidateTasks, environmentInputs, log, openSet, runEnvironmentPhase, runGroomPhase, runSelector, runSimplifyPhase, simplifySkip, tick } from './controller.ts';
 import { repoSlug } from './config.ts';
-import { isEpic, isGroomed, needsGroom, openIssues, verdict } from './groom.ts';
+import { isEpic, isGroomed, needsGroom, verdict } from './groom.ts';
 import { defaultBranchHead } from './github.ts';
 import type { CodingWorker, CurrentRun } from './types.ts';
 
@@ -33,7 +33,7 @@ Environment: FACTORY_WORKER=cursor|claude-code overrides worker.kind for one inv
 async function groom(opts: { limit?: number; force?: boolean }): Promise<void> {
   const ctx = buildContext();
   const all = await candidateTasks(ctx);
-  const open = openIssues(all);
+  const open = await openSet(ctx, all);
   const candidates = admissible(ctx, all, 'groom');
   const records = await runGroomPhase(ctx, await buildWorker(ctx.config), candidates, { ...opts, open });
   if (records.length === 0) {
@@ -64,7 +64,7 @@ async function status(): Promise<void> {
   const epics = candidates.filter((t) => isEpic(t, labels)).length;
   // The buckets overlap: a groomed issue someone has since replied to is both
   // implementable and queued for another look.
-  const pending = needsGroom(candidates, labels, false, openIssues(allCandidates)).length;
+  const pending = needsGroom(candidates, labels, false, await openSet(ctx, allCandidates)).length;
   log(`backlog: ${candidates.length} unclaimed — ${groomed} groomed, ${needsWork} needs-work, ${candidates.length - groomed - needsWork} never groomed, ${epics} epic(s) among them (${pending} queued for a groom)`);
 
   const implementable = admissible(ctx, allCandidates, 'implement').filter((t) => isGroomed(t, labels)).length;

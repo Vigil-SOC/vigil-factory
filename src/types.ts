@@ -108,6 +108,9 @@ export type GroomVerdict = 'groomed' | 'needs-work' | 'epic';
 /** The work source boundary. V1 implementation: GitHub issues. */
 export interface WorkSource {
   eligibleTasks(): Promise<Task[]>;
+  /** Of these issue or PR numbers, the ones not known to be closed. Asked about
+   *  blockers that `eligibleTasks` does not return — pull requests, mostly. */
+  stillOpen(numbers: number[]): Promise<Set<number>>;
   markStarted(task: Task): Promise<void>;
   markFinished(task: Task): Promise<void>;
   /** Publish a groom verdict on the issue: a stamped comment saying what the

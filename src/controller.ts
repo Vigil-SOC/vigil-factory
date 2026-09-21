@@ -35,7 +35,7 @@ import { FactoryState } from './state.ts';
 import { Telemetry } from './telemetry.ts';
 import { filterAssigned, filterClaimed, filterEpics, parseSelection, type Selection } from './selector.ts';
 import { environmentPrompt, fixChecksPrompt, groomEpicPrompt, groomPrompt, implementPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
-import { factoryComment, groomState, isEpic, isGroomed, needsGroom, openIssues, parseGroomReply, stampExtrasFor, verdict, type OpenIssues } from './groom.ts';
+import { factoryComment, groomState, isEpic, isGroomed, needsGroom, openIssues, parseGroomReply, stampExtrasFor, unaccountedBlockers, verdict, type OpenIssues } from './groom.ts';
 import { addPrLabels, awaitPrChecks, closePr, commentOnIssue, commentOnPr, defaultBranchHead, ensureLabel, findPrByBranch, listPrsByLabel, markPrReady, prChecks, viewPr } from './github.ts';
 import { ENV_AGENT_MARK, environmentChangedAt, recentVerdicts, skipReason, unreadFactoryPrs, workerSkipReason, type UnreadPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
@@ -105,6 +105,22 @@ export async function buildWorker(config: FactoryConfig): Promise<CodingWorker> 
  */
 export async function candidateTasks(ctx: FactoryContext): Promise<Task[]> {
   return ctx.source.eligibleTasks();
+}
+
+/**
+ * The open set a blocked verdict is checked against. Starts as the open
+ * issues; then every blocker a verdict names that is not one of them — a pull
+ * request, an issue past the fetch cap — is looked up, and held open unless
+ * GitHub says it is closed. Without this a verdict blocked on an open PR reads
+ * as cleared every tick and is groomed again, to the same verdict, forever.
+ */
+export async function openSet(ctx: FactoryContext, tasks: Task[]): Promise<OpenIssues> {
+  const open = openIssues(tasks);
+  const unaccounted = unaccountedBlockers(tasks, open);
+  if (unaccounted.length === 0) return open;
+  const held = await ctx.source.stillOpen(unaccounted);
+  if (held.size > 0) log(`blocker(s) not among the open issues but still open: ${[...held].map((n) => `#${n}`).join(' ')}`);
+  return openIssues(tasks, held);
 }
 
 /**
@@ -502,7 +518,7 @@ export async function tick(opts: { dryRun: boolean }): Promise<void> {
   // 2. Grooming: vet part of the backlog. Deliberately ahead of the
   //    capacity gate — it produces no code, so it cannot collide.
   if (candidates.length > 0) {
-    await runGroomPhase(ctx, worker, admissible(ctx, candidates, 'groom'), { open: openIssues(candidates) });
+    await runGroomPhase(ctx, worker, admissible(ctx, candidates, 'groom'), { open: await openSet(ctx, candidates) });
   }
 
   // 3. Simplification alongside implementation: take back some of the
@@ -653,7 +669,7 @@ async function pickTasks(
 async function dryRun(ctx: FactoryContext, allCandidates: Task[]): Promise<void> {
   const { labels } = ctx.config;
   const candidates = admissible(ctx, allCandidates, 'groom');
-  const pending = needsGroom(candidates, labels, false, openIssues(allCandidates));
+  const pending = needsGroom(candidates, labels, false, await openSet(ctx, allCandidates));
   const groomed = admissible(ctx, allCandidates, 'implement').filter((t) => isGroomed(t, labels));
   const heldBack = filterClaimed(allCandidates, labels.issueInProgress).length - candidates.length;
   if (heldBack > 0) log(`${heldBack} assigned issue(s) held back from grooming.`);

@@ -255,7 +255,10 @@ or until a sibling lands, is `needs-work` with a `BLOCKED: #N` line in the groom
 The factory carries that into the stamp — `<!-- factory-groom sha=… blocked=#N -->` — and
 treats the verdict as stale the tick after the blocker clears, exactly as if a human had
 replied: a sibling clears when it is no longer open, an epic clears when it is groomed,
-since an epic never closes while its children are being built. So a first-slice child
+since an epic never closes while its children are being built. A blocker that is not an
+open issue — a pull request, usually — is looked up on its own and held open until GitHub
+says it is closed, so the verdict does not read as cleared, and get groomed again to the
+same conclusion, every tick. So a first-slice child
 blocked on its sibling is groomed again, unprompted, once the sibling merges. The only
 state is in the issue, as always. Epics are groomed ahead of everything else in a tick,
 because their children are newer than they are by construction and grooming a child

@@ -2,7 +2,7 @@ import type { Task, WorkSource } from './types.ts';
 import type { FactoryConfig } from './config.ts';
 import { repoSlug } from './config.ts';
 import {
-  addIssueLabels, commentOnIssue, createIssue, editIssueBody, ensureLabel, listOpenIssues, removeIssueLabels,
+  addIssueLabels, commentOnIssue, createIssue, editIssueBody, ensureLabel, listOpenIssues, referenceState, removeIssueLabels,
 } from './github.ts';
 import {
   childrenFiledComment, epicRecognizedComment, failedAttemptComment, groomComment, hasLegacyBlock, isEpic, stripLegacyBlock,
@@ -28,6 +28,17 @@ export class GitHubIssueSource implements WorkSource {
       assignees: (i.assignees ?? []).map((a) => a.login),
       url: i.url,
     }));
+  }
+
+  /**
+   * Of the numbers given, those not confirmed closed. One call each, for the
+   * few blockers the open-issue list does not account for. A reference GitHub
+   * cannot settle is held open too: a verdict should not go stale, and cost a
+   * groom every tick, on a lookup that failed.
+   */
+  async stillOpen(numbers: number[]): Promise<Set<number>> {
+    const states = await Promise.all(numbers.map(async (n) => [n, await referenceState(this.repo, n)] as const));
+    return new Set(states.filter(([, s]) => s !== 'closed').map(([n]) => n));
   }
 
   async markStarted(task: Task): Promise<void> {

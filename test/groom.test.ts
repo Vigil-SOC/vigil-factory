@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   fingerprint, groomComment, groomNotes, groomState, hasLegacyBlock, isEpic, isFactoryComment, isGroomed, needsGroom, openIssues,
   childrenFiledComment, epicRecognizedComment, openChildren, parentEpic, parseGroomReply, premiseOf, readBlocker, readChildren,
-  readFingerprint, readPremise, recordFingerprint, stampExtrasFor, stripLegacyBlock, verdict,
+  readFingerprint, readPremise, recordFingerprint, stampExtrasFor, stripLegacyBlock, unaccountedBlockers, verdict,
 } from '../src/groom.ts';
 import type { GroomVerdict, IssueComment, Task } from '../src/types.ts';
 
@@ -246,6 +246,22 @@ describe('blocked verdicts', () => {
 
   it('does not consult the blocker when the open set is unknown', () => {
     expect(groomState(blocked, LABELS)).toBe('current');
+  });
+
+  it('a blocker that is not an open issue but is held open — a PR in flight — has not cleared', () => {
+    // #15 is a pull request: never in the issue list, so absent from the map.
+    expect(groomState(blocked, LABELS, openIssues([blocked], [15]))).toBe('current');
+    expect(groomState(blocked, LABELS, openIssues([blocked], []))).toBe('stale');
+    expect(needsGroom([blocked], LABELS, false, openIssues([blocked], [15]))).toEqual([]);
+  });
+
+  it('names the blockers the open issues do not account for, once each', () => {
+    const sibling = task(15, 'the sibling');
+    const alsoBlocked = verdictOn(task(21, 'another child'), 'needs-work', undefined, 15);
+    const onPr = verdictOn(task(22, 'waits on a PR'), 'needs-work', undefined, 913);
+    const unblocked = verdictOn(task(23, 'fine'), 'groomed');
+    expect(unaccountedBlockers([blocked, alsoBlocked, onPr, unblocked, sibling], openIssues([blocked, alsoBlocked, onPr, unblocked, sibling]))).toEqual([913]);
+    expect(unaccountedBlockers([blocked, alsoBlocked, onPr], openIssues([blocked, alsoBlocked, onPr]))).toEqual([15, 913]);
   });
 
   it('never stamps a blocker on a groomed verdict', () => {

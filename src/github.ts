@@ -57,6 +57,21 @@ export async function listOpenIssues(repo: string, limit: number): Promise<Issue
   ]);
 }
 
+/**
+ * Whether an issue or pull request is still open. `repos/…/issues/N` answers
+ * for both, which is the point: a groom verdict may be blocked on a PR, and the
+ * issue list never sees one. `unknown` when GitHub could not say — deleted,
+ * transferred, or the call failed.
+ */
+export async function referenceState(repo: string, number: number): Promise<'open' | 'closed' | 'unknown'> {
+  try {
+    const { state } = await ghJson<{ state: string }>(['api', `repos/${repo}/issues/${number}`]);
+    return state === 'open' ? 'open' : state === 'closed' ? 'closed' : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
 /** Open issues carrying a label — the in-progress label, for reconciliation. */
 export async function listIssuesByLabel(repo: string, label: string, limit = 100): Promise<IssueData[]> {
   return ghJson<IssueData[]>([
