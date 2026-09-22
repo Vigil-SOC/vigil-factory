@@ -61,7 +61,8 @@ Plenty of tools point an agent at a backlog. This one takes positions:
 ```
 reconcile with GitHub: record the verdict on every factory PR that has closed, release the
    in-progress label on every issue nothing is working on any more
-→ GROOM agents (up to groom.maxPerTick, in parallel, oldest first): vet issues against
+→ GROOM agents (up to groom.maxPerTick, in parallel; epics, then blockers, then oldest
+   first): vet issues against
    principles.md — "groomed" or "needs-work", recorded as a label, alongside a comment
    giving the conclusion, why, and any coding-level notes (the issue is never closed).
    An issue carrying the repo's epic label is groomed as a DIRECTION instead: the agent
@@ -78,9 +79,11 @@ count the jobs already in flight (open factory PRs + running pipelines)
    → no free slot under maxConcurrentJobs? stop here
 for each free slot:
    → take the OLDEST groomed issue by number (minus factory:wip claims, issues assigned
-      to a human, and the picks made earlier this tick). With selector.enabled, a
-      SELECTOR agent instead gets LINKS to those issues, reads them, and picks the
-      best-defined one by judgment — no scores, no weights, no veto
+      to a human, and the picks made earlier this tick), except that a groomed issue
+      labelled factory:blocker comes first however new it is. With selector.enabled, a
+      SELECTOR agent instead gets LINKS to those issues — only the blockers, while any
+      stand — reads them, and picks the best-defined one by judgment — no scores, no
+      weights, no veto
    label the pick factory:wip
 → handoff to a FRESH implementer agent per pick, running concurrently, each with a
    short workflow prompt and the issue LINK (not its text — the agent reads the
@@ -93,7 +96,9 @@ label the resulting PRs `factory`, comment on the issues, record telemetry
 → ENVIRONMENT agent, last, so the PRs just opened are in front of it: reads the factory
    PRs it has not read yet, looking for a check the implementer could not run, and fixes
    .cursor/environment.json in the target repo so the next one can. Opens a PR only when
-   it finds a gap it can close; one open at a time. Cursor worker only: local agents fix
+   it finds a gap it can close; one open at a time. A gap that is the repo's, not the
+   machine's, is filed as an issue labelled factory:blocker, which puts it at the front
+   of both queues above. Cursor worker only: local agents fix
    their own machine as they go
 stop — a human merging or closing a PR is what frees the next slot
 ```
@@ -149,6 +154,17 @@ the oldest pending issue is the one whose verdict the most other issues rest on.
 old issue still costs a groom, but its `needs-work` is a real answer about the backlog,
 and the newer issues that assumed it are then judged against that answer rather than
 ahead of it.
+
+One more tier sits between the epics and the rest: **blockers**. An issue labelled
+`factory:blocker` is a defect that stops the factory's own implementers verifying their
+changes — a test script that leaves the database empty, a shipped config that rejects the
+app's own calls. The environment pass files these from the factory's PRs (see
+[The environment](#the-environment)); a human can label
+one too, or remove the label to demote it. Every PR opened while a blocker stands hits it,
+so it is groomed ahead of the backlog and, once groomed, implemented ahead of it, however
+new its number. The label is an ordering claim and nothing more: the groomer still judges
+the issue, can still say `needs-work`, and the implementer's attempt still tests the
+verdict. It does not skip the gate; it goes to the front of the line for it.
 
 `principles.md` holds the product-direction principles grooming judges against. Its
 first section, *What the product is*, is the short list of settled commitments an epic's
@@ -330,11 +346,21 @@ agent layer's own service-to-service calls, say. The image cannot fix that and n
 a different check; it is a defect, and the fix is a change to the repo. The agent used to be
 able to say only that: it called one CSRF bug "worth its own issue" on two PRs in a row,
 and nobody filed it. Now it writes the defect as a fenced ```` ```issue ```` block — the
-shape the groomer already uses for an epic's children — and the factory files it, unlabelled,
-with the PRs it came from named at the top. It enters the groom queue like an issue a human
-wrote, and the groomer judges it there; the environment agent's job ends at naming it. It
-is told to check open issues and its own recent verdicts first, so one defect reported by
-several implementers is filed once.
+shape the groomer already uses for an epic's children — and the factory files it, labelled
+`factory:blocker`, with the PRs it came from named at the top. The groomer judges it like
+an issue a human wrote; the environment agent's job ends at naming it. It is told to check
+open issues and its own recent verdicts first, so one defect reported by several
+implementers is filed once.
+
+The label is what keeps the finding from sinking. An oldest-first queue puts a defect filed
+last night behind everything filed before it, and the first such issue the factory filed
+sat unlabelled behind twenty ungroomed and eighteen groomed issues while every new PR
+hit the same broken test database. An implementer already hit it, so every implementer
+after it will too: it is a premise for their verification the way an epic's verdict is a
+premise for its children, and both queues put it ahead of the backlog for the same reason.
+Filing an issue rather than a PR is still right — the environment agent read a report, it
+did not hit the bug, and a PR from it would be a second implementer routed around the
+groom — so what changed is where the issue lands, not who builds it.
 
 The implementer's Verification section does keep **Blocked by the machine** as its own
 heading, apart from checks that were not applicable or ran out of time. That is not a
@@ -544,6 +570,10 @@ committed.
   labels.
 - `factory.config.json` → `labels.epic` — the repo's own epic label (default `type:epic`).
   Issues carrying it are groomed as direction and never implemented; see "Epics" above.
+- `factory.config.json` → `labels.blocker` — (default `factory:blocker`) an issue that
+  blocks the agents' own verification. Groomed and implemented ahead of the rest of the
+  backlog; the environment pass applies it to the repo defects it files, and a human may
+  apply or remove it. Ordering only: the groomer still judges the issue.
 - `factory.config.json` → `assignedIssues` — whether each phase may act on an issue a
   human has assigned to themselves. Defaults to `{ "groom": true, "implement": false }`:
   vetting an assigned issue costs its assignee nothing, implementing one collides with

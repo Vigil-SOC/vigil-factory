@@ -18,7 +18,8 @@
     "needsWork": "factory:needs-work",
     "environmentPr": "factory:env",
     "simplifyPr": "factory:simplify",
-    "epic": "type:epic"
+    "epic": "type:epic",
+    "blocker": "factory:blocker"
   },
   "groom": {
     "maxPerTick": 5,

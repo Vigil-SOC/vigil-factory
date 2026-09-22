@@ -48,6 +48,12 @@ export interface FactoryConfig {
      *  children — and is never handed to the selector. Not a factory label:
      *  the repo already has one, and a human applies it. */
     epic: string;
+    /** An issue that blocks the agents' own verification: a repo defect the
+     *  environment pass filed from the factory's PRs, or one a human labelled
+     *  so. Groomed and implemented ahead of the rest of the backlog, because
+     *  every PR opened meanwhile hits it. An ordering claim only: the groomer
+     *  still judges it. */
+    blocker: string;
   };
   groom: { maxPerTick: number; principlesFile: string };
   /** How a free slot gets its issue. Off (the default), the oldest groomed
@@ -128,6 +134,7 @@ export function loadConfig(root: string = projectRoot): FactoryConfig {
   config.labels.environmentPr ??= 'factory:env';
   config.labels.simplifyPr ??= 'factory:simplify';
   config.labels.epic ??= 'type:epic';
+  config.labels.blocker ??= 'factory:blocker';
   config.simplify ??= { enabled: true };
   config.selector ??= { enabled: false, maxCandidates: 100 };
   config.selector.enabled ??= false;

@@ -148,6 +148,13 @@ describe('backlog filters', () => {
     expect(needsGroom([groomed, rejected, fresh, stale], LABELS).map((t) => t.issueNumber)).toEqual([9, 12]);
   });
 
+  it('grooms a blocker ahead of the backlog, and an epic ahead of that', () => {
+    const blocker = task(1080, 'test db empty', [], ['factory:blocker']);
+    const epic = task(2000, 'a direction', [], ['type:epic']);
+    const labels = { ...LABELS, epic: 'type:epic', blocker: 'factory:blocker' };
+    expect(needsGroom([fresh, blocker, stale, epic], labels).map((t) => t.issueNumber)).toEqual([2000, 1080, 9, 12]);
+  });
+
   it('offers every issue carrying the groomed label for implementation', () => {
     expect([groomed, rejected, fresh, stale].filter((t) => isGroomed(t, LABELS)).map((t) => t.issueNumber)).toEqual([10, 9]);
   });

@@ -123,11 +123,35 @@ export interface GroomLabels {
   /** The repo's own epic label. An issue carrying it is groomed as direction
    *  and never implemented. Optional so older tests and configs still read. */
   epic?: string;
+  /** Blocks the agents' own verification; goes ahead of the ordinary backlog. */
+  blocker?: string;
 }
 
 /** An epic: a direction the groomer settles and decomposes, never a PR. */
 export function isEpic(task: Task, labels: GroomLabels): boolean {
   return labels.epic !== undefined && task.labels.includes(labels.epic);
+}
+
+/**
+ * A blocker: an issue whose defect stops implementers verifying their own
+ * changes — a test script that leaves the database empty, a shipped config
+ * that rejects the app's own calls. The environment pass files these from the
+ * factory's PRs and labels them; a human can label one too. It is a premise
+ * for every PR opened while it stands, so it goes ahead of the queue.
+ */
+export function isBlocker(task: Task, labels: GroomLabels): boolean {
+  return labels.blocker !== undefined && task.labels.includes(labels.blocker);
+}
+
+/**
+ * The one order both queues use: epics, then blockers, then oldest first.
+ * Each tier is a premise for the tier below — an epic's verdict for its
+ * children, a blocker's fix for every implementer's verification — and issue
+ * numbers are the order issues were filed.
+ */
+export function queueOrder(labels: GroomLabels): (a: Task, b: Task) => number {
+  const tier = (t: Task) => (isEpic(t, labels) ? 0 : isBlocker(t, labels) ? 1 : 2);
+  return (a, b) => tier(a) - tier(b) || a.issueNumber - b.issueNumber;
 }
 
 export type GroomState =
@@ -411,7 +435,9 @@ export function failedAttemptComment(report: string): string {
  *
  * Epics go ahead of everything, because an epic's verdict is the premise for the
  * issues around it: its children are newer than it by construction, and grooming
- * them first only produces verdicts blocked on it. Going first is not enough
+ * them first only produces verdicts blocked on it. Blockers go next: every
+ * implementer that runs before one is fixed hits it, so its verdict is wanted
+ * before the backlog's. Going first is not enough
  * when the batch runs in parallel, so a child whose epic is itself waiting for a
  * groom is left out altogether until the epic has one: its verdict would be
  * about a record that is about to change.
@@ -423,7 +449,7 @@ export function failedAttemptComment(report: string): string {
 export function needsGroom(tasks: Task[], labels: GroomLabels, force = false, open?: OpenIssues): Task[] {
   const pending = tasks
     .filter((t) => force || groomState(t, labels, open) !== 'current')
-    .sort((a, b) => Number(isEpic(b, labels)) - Number(isEpic(a, labels)) || a.issueNumber - b.issueNumber);
+    .sort(queueOrder(labels));
   const pendingEpics = new Set(pending.filter((t) => isEpic(t, labels)).map((t) => t.issueNumber));
   return pending.filter((t) => {
     const parent = parentEpic(t);

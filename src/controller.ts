@@ -1,8 +1,9 @@
 // The factory controller: one idempotent tick.
 //
 //   reconcile with GitHub → groom ungroomed issues → simplify, alongside:
-//   measure free capacity → for each free slot, take the oldest GROOMED issue
-//   (or, with the selector on, have an agent pick the best-defined one) → hand
+//   measure free capacity → for each free slot, take the oldest GROOMED issue,
+//   blockers first (or, with the selector on, have an agent pick the
+//   best-defined one) → hand
 //   each to a FRESH implementer agent → label
 //   the resulting PRs (or, if the attempt refuted the groom, retract the
 //   verdict) → record telemetry → fix the agents' environment from what those
@@ -35,7 +36,7 @@ import { FactoryState } from './state.ts';
 import { Telemetry } from './telemetry.ts';
 import { filterAssigned, filterClaimed, filterEpics, parseSelection, type Selection } from './selector.ts';
 import { environmentPrompt, fixChecksPrompt, groomEpicPrompt, groomPrompt, implementPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
-import { factoryComment, groomState, isEpic, isGroomed, needsGroom, openIssues, parseGroomReply, stampExtrasFor, unaccountedBlockers, verdict, type OpenIssues } from './groom.ts';
+import { factoryComment, groomState, isBlocker, isEpic, isGroomed, needsGroom, queueOrder, openIssues, parseGroomReply, stampExtrasFor, unaccountedBlockers, verdict, type GroomLabels, type OpenIssues } from './groom.ts';
 import { addPrLabels, awaitPrChecks, closePr, commentOnIssue, commentOnPr, createIssue, defaultBranchHead, ensureLabel, findPrByBranch, listPrsByLabel, markPrReady, prChecks, viewPr } from './github.ts';
 import { ENV_AGENT_MARK, environmentChangedAt, filedIssueBody, parseEnvReport, recentVerdicts, skipReason, unreadFactoryPrs, withOpenedThisTick, workerSkipReason, type UnreadPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
@@ -392,14 +393,19 @@ export async function runEnvironmentPhase(
     await addPrLabels(repoSlug(config), envPrUrl, [config.labels.environmentPr]);
   }
 
-  // A gap that was the repo's, not the machine's, is filed as an issue and
-  // enters the groom queue unlabelled, like one a human wrote. Filed one at a
-  // time so a failure leaves a legible partial list in the PR comment.
+  // A gap that was the repo's, not the machine's, is filed as an issue. It
+  // carries the blocker label: an implementer hit it, so every implementer
+  // after it will too, and both queues put it ahead of the backlog. The label
+  // orders; the groomer still judges. Filed one at a time so a failure leaves
+  // a legible partial list in the PR comment.
   const { report, issues } = parseEnvReport(result.resultText);
   const issuesFiled: string[] = [];
+  if (issues.length > 0) {
+    await ensureLabel(repoSlug(config), config.labels.blocker, 'B60205', 'Blocks the factory agents\' own verification; groomed and implemented ahead of the backlog');
+  }
   for (const draft of issues) {
     try {
-      const filed = await createIssue(repoSlug(config), draft.title, filedIssueBody(draft, prUrls), []);
+      const filed = await createIssue(repoSlug(config), draft.title, filedIssueBody(draft, prUrls), [config.labels.blocker]);
       issuesFiled.push(filed.url);
       log(`environment: filed ${filed.url} — ${draft.title}`);
     } catch (err) {
@@ -411,7 +417,7 @@ export async function runEnvironmentPhase(
   // the human who hit the blocked check is looking.
   const alongside = prUrls.length > 1 ? ` (alongside ${prUrls.length - 1} other recent factory PR${prUrls.length > 2 ? 's' : ''})` : '';
   const filedNote = issuesFiled.length > 0
-    ? `\n\nIt also read a defect in the repo itself, not the machine, and filed it: ${issuesFiled.join(', ')}.`
+    ? `\n\nIt also read a defect in the repo itself, not the machine, and filed it ahead of the backlog as \`${config.labels.blocker}\`: ${issuesFiled.join(', ')}.`
     : '';
   // The comment is also the "read" mark the next pass looks for.
   const note = envPrUrl
@@ -574,9 +580,25 @@ interface Pick {
   usage: TokenUsage | null;
 }
 
-/** Oldest first: GitHub lists newest first, and issue numbers are the order issues were filed. */
-export function oldestFirst(tasks: Task[]): Task[] {
-  return [...tasks].sort((a, b) => a.issueNumber - b.issueNumber);
+/**
+ * Blockers first, then oldest first: GitHub lists newest first, and issue
+ * numbers are the order issues were filed. A blocker is a defect that stops
+ * implementers verifying their changes, so every PR opened while it stands
+ * hits it; it goes ahead of the backlog however new it is. Same order the
+ * groom queue uses, minus epics, which are never implemented.
+ */
+export function oldestFirst(tasks: Task[], labels: GroomLabels): Task[] {
+  return [...tasks].sort(queueOrder(labels));
+}
+
+/**
+ * What the selector is given: only the blockers while any stand, the whole
+ * groomed set otherwise. The selector ranks by definition, not urgency, and a
+ * blocker's urgency is the factory's call, not the agent's.
+ */
+export function selectorCandidates(tasks: Task[], labels: GroomLabels): Task[] {
+  const blockers = tasks.filter((t) => isBlocker(t, labels));
+  return blockers.length > 0 ? blockers : tasks;
 }
 
 /** The implementation half of a tick: capacity gate, picks, implementers. */
@@ -636,8 +658,8 @@ async function runImplementation(ctx: FactoryContext, worker: CodingWorker, cand
  */
 async function takeOldest(ctx: FactoryContext, tasks: Task[], slots: number): Promise<Pick[]> {
   const picks: Pick[] = [];
-  for (const task of oldestFirst(tasks).slice(0, slots)) {
-    log(`taking oldest groomed issue #${task.issueNumber} "${task.title}" (slot ${picks.length + 1} of ${slots})`);
+  for (const task of oldestFirst(tasks, ctx.config.labels).slice(0, slots)) {
+    log(`taking ${isBlocker(task, ctx.config.labels) ? 'blocker' : 'oldest groomed issue'} #${task.issueNumber} "${task.title}" (slot ${picks.length + 1} of ${slots})`);
     await ctx.source.markStarted(task);
     picks.push({ task, usage: null });
   }
@@ -660,8 +682,9 @@ async function pickTasks(
   let remaining = tasks;
 
   while (picks.length < slots && remaining.length > 0) {
-    log(`handing ${remaining.length} groomed issue(s) to the selector agent (slot ${picks.length + 1} of ${slots})`);
-    const picked = await runSelector(worker, remaining);
+    const offered = selectorCandidates(remaining, ctx.config.labels);
+    log(`handing ${offered.length} groomed issue(s)${offered.length < remaining.length ? ' (blockers only)' : ''} to the selector agent (slot ${picks.length + 1} of ${slots})`);
+    const picked = await runSelector(worker, offered);
 
     if (picked.selection.kind === 'none') {
       // The selector has no veto — size was grooming's call — so this is a
@@ -709,14 +732,14 @@ async function dryRun(ctx: FactoryContext, allCandidates: Task[]): Promise<void>
 
   const next = pending.slice(0, ctx.config.groom.maxPerTick);
   if (next.length > 0) {
-    log(`would groom: ${next.map((t) => `#${t.issueNumber}${isEpic(t, labels) ? ' (epic)' : ''}`).join(' ')}. Groom prompt for #${next[0]!.issueNumber}:`);
+    log(`would groom: ${next.map((t) => `#${t.issueNumber}${isEpic(t, labels) ? ' (epic)' : isBlocker(t, labels) ? ' (blocker)' : ''}`).join(' ')}. Groom prompt for #${next[0]!.issueNumber}:`);
     console.log(`\n${groomPromptFor(ctx, next[0]!, loadPrinciples(ctx.config))}\n`);
   }
   if (groomed.length > 0 && ctx.config.selector.enabled) {
     log('selector prompt would be:');
-    console.log(`\n${selectPrompt(groomed)}\n`);
+    console.log(`\n${selectPrompt(selectorCandidates(groomed, labels))}\n`);
   } else if (groomed.length > 0) {
-    log(`selector off: would implement oldest first — ${oldestFirst(groomed).slice(0, ctx.config.maxConcurrentJobs).map((t) => `#${t.issueNumber}`).join(' ')}`);
+    log(`selector off: would implement blockers first, then oldest — ${oldestFirst(groomed, labels).slice(0, ctx.config.maxConcurrentJobs).map((t) => `#${t.issueNumber}`).join(' ')}`);
   }
 
   const { config } = ctx;

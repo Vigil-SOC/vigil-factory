@@ -22,7 +22,7 @@ function config(maxConcurrentJobs: number): FactoryConfig {
   return {
     repo: { owner: 'o', name: 'r', url: 'https://github.com/o/r' },
     worker: { kind: 'cursor', model: null, pollIntervalSeconds: 30, maxRunMinutes: 90, agentEnv: [] },
-    labels: { factoryPr: 'factory', issueInProgress: 'factory:wip', groomed: 'factory:groomed', needsWork: 'factory:needs-work', environmentPr: 'factory:env', simplifyPr: 'factory:simplify', epic: 'type:epic' },
+    labels: { factoryPr: 'factory', issueInProgress: 'factory:wip', groomed: 'factory:groomed', needsWork: 'factory:needs-work', environmentPr: 'factory:env', simplifyPr: 'factory:simplify', epic: 'type:epic', blocker: 'factory:blocker' },
     groom: { maxPerTick: 5, principlesFile: 'principles.example.md' },
     selector: { enabled: false, maxCandidates: 100 },
     environment: { enabled: true, maxPrsPerPass: 3 },
