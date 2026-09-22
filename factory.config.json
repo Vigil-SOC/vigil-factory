@@ -10,7 +10,8 @@
       "id": "claude-opus-5-5",
       "params": {
         "context": "1m",
-        "effort": "medium"
+        "effort": "medium",
+        "fast": "false"
       }
     },
     "pollIntervalSeconds": 30,
