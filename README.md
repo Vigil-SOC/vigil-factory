@@ -516,7 +516,7 @@ to. Everything else — prompts, phases, labels, telemetry — is the same eithe
 
 `worker.model` is written once, in Cursor's shape, and translated for Claude Code:
 `params.context: "1m"` becomes the `[1m]` suffix and `params.effort` becomes `--effort`;
-`thinking` is dropped (Fable's is always on). Cost in the telemetry for `claude-code` runs
+`thinking` is dropped (Claude Code has no flag for it). Cost in the telemetry for `claude-code` runs
 is Claude Code's estimate of what the run would have cost on the API, not a bill.
 
 **Falling back.** `FACTORY_WORKER=claude-code npm run factory -- run` overrides

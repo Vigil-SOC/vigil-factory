@@ -102,7 +102,7 @@ export interface ClaudeResultJson {
 /**
  * The factory's ModelSpec, written for Cursor's parameter shape, as Claude
  * Code flags. `context: "1m"` becomes the `[1m]` model suffix and `effort`
- * becomes `--effort`; `thinking` has no flag (Fable's is always on) and
+ * becomes `--effort`; `thinking` has no flag and
  * anything else Cursor-specific is dropped. Same config, either worker.
  */
 export function modelArgs(model: ModelSpec | null): string[] {

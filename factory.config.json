@@ -7,11 +7,10 @@
   "worker": {
     "kind": "cursor",
     "model": {
-      "id": "claude-fable-5-1",
+      "id": "claude-opus-5-5",
       "params": {
-        "thinking": "true",
         "context": "1m",
-        "effort": "low"
+        "effort": "medium"
       }
     },
     "pollIntervalSeconds": 30,
