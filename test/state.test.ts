@@ -27,6 +27,7 @@ function config(maxConcurrentJobs: number): FactoryConfig {
     selector: { enabled: false, maxCandidates: 100 },
     environment: { enabled: true, maxPrsPerPass: 3 },
     simplify: { enabled: true },
+    review: { enabled: false, maxPerTick: 3 },
     assignedIssues: { groom: true, implement: false },
     telemetryDir: 'telemetry',
     staleRunHours: 24,

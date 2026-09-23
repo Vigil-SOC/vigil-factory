@@ -14,10 +14,11 @@
 // once, and so one tick starts at most that many pipelines. Default 1 keeps the
 // strict one-at-a-time factory.
 //
-// Grooming, the environment phase, and the simplification phase all run
-// outside the capacity gate on purpose: a PR sitting in review is no reason to
-// stop vetting the backlog, to leave the agents' machine broken, or to let the
-// code keep accreting. Environment and simplification PRs are each their own
+// Grooming, the environment phase, the simplification phase, and the review of
+// PRs the factory did not open all run outside the capacity gate on purpose: a
+// PR sitting in review is no reason to stop vetting the backlog, to leave the
+// agents' machine broken, to let the code keep accreting, or to leave someone
+// else's PR waiting. Environment and simplification PRs are each their own
 // one-deep queue and never spend an implementer's slot. The environment phase
 // runs last, after the implementers, so the PRs it reads include this tick's.
 //
@@ -26,7 +27,7 @@
 // the handoffs and keeps the capacity gate.
 
 import { resolve } from 'node:path';
-import type { CodingWorker, CurrentRun, EnvRecord, GroomRecord, RunHandle, RunRecord, RunResult, SimplifyRecord, Task, TokenUsage } from './types.ts';
+import type { CodingWorker, CurrentRun, EnvRecord, GroomRecord, ReviewRecord, RunHandle, RunRecord, RunResult, SimplifyRecord, Task, TokenUsage } from './types.ts';
 import { agentCredentials, claudeBin, githubTokenForAgents, loadConfig, loadDotEnv, loadPrinciples, projectRoot, repoSlug, requireCursorApiKey, type FactoryConfig } from './config.ts';
 import { RunBudgetExceeded } from './types.ts';
 import { CursorWorker } from './worker.ts';
@@ -35,11 +36,12 @@ import { GitHubIssueSource } from './workSource.ts';
 import { FactoryState } from './state.ts';
 import { Telemetry } from './telemetry.ts';
 import { filterAssigned, filterClaimed, filterEpics, parseSelection, type Selection } from './selector.ts';
-import { environmentPrompt, fixChecksPrompt, groomEpicPrompt, groomPrompt, implementPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
+import { environmentPrompt, fixChecksPrompt, groomEpicPrompt, groomPrompt, implementPrompt, reviewPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
 import { factoryComment, groomState, isBlocker, isEpic, isGroomed, needsGroom, queueOrder, openIssues, parseGroomReply, stampExtrasFor, unaccountedBlockers, verdict, type GroomLabels, type OpenIssues } from './groom.ts';
-import { addPrLabels, awaitPrChecks, closePr, commentOnIssue, commentOnPr, createIssue, defaultBranchHead, ensureLabel, findPrByBranch, listPrsByLabel, markPrReady, prChecks, viewPr } from './github.ts';
+import { addPrLabels, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, defaultBranchHead, ensureLabel, findPrByBranch, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, reopenPr, viewPr, viewPrForReview } from './github.ts';
 import { ENV_AGENT_MARK, environmentChangedAt, filedIssueBody, parseEnvReport, recentVerdicts, skipReason, unreadFactoryPrs, withOpenedThisTick, workerSkipReason, type UnreadPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
+import { isBot, parseReviewReply, reviewComment, reviewQueue, reviewStamp, sameCommit, skipReason as reviewSkipReason, touchesGithub, type ReviewOutcome, type ReviewPr, type ReviewReply } from './review.ts';
 
 export function log(msg: string): void {
   console.log(`[${new Date().toISOString()}] ${msg}`);
@@ -525,6 +527,187 @@ export async function runSimplifyPhase(ctx: FactoryContext, worker: CodingWorker
   return record({ outcome: 'pr-opened', prUrl, additions, deletions });
 }
 
+/** The labels that mark a PR as the factory's own, whoever GitHub says opened it. */
+function factoryPrLabels(config: FactoryConfig): string[] {
+  return [config.labels.factoryPr, config.labels.environmentPr, config.labels.simplifyPr];
+}
+
+/**
+ * What the review phase would take up, read from GitHub in one place so the
+ * tick, the dry run, and `factory status` agree. `reopen` is PRs the factory
+ * closed whose author has replied since; they go first, because the author is
+ * waiting on an answer they asked for.
+ */
+export async function reviewInputs(config: FactoryConfig): Promise<{ skip: string | null; open: ReviewPr[]; reopen: ReviewPr[] }> {
+  const gate = reviewSkipReason(config.review.enabled, config.worker.kind);
+  if (gate) return { skip: gate, open: [], reopen: [] };
+  const repo = repoSlug(config);
+  const [open, closed] = await Promise.all([
+    listPrsForReview(repo, 'open', 100),
+    listPrsForReview(repo, 'closed', 50),
+  ]);
+  const queue = reviewQueue([...open, ...closed], factoryPrLabels(config));
+  const skip = queue.open.length + queue.reopen.length === 0 ? 'no PR from outside the factory is new or changed since the factory last reviewed it' : null;
+  return { skip, ...queue };
+}
+
+/**
+ * The review phase: PRs the factory did not open, one agent each, in parallel.
+ * The agent decides — merge, close, or leave — and the controller acts, holding
+ * a merge to the rules in review.ts. `only` reviews that one PR whether or not
+ * it is due, the way `groom --force` does.
+ */
+export async function runReviewPhase(ctx: FactoryContext, worker: CodingWorker, opts: { only?: number } = {}): Promise<ReviewRecord[]> {
+  const { config } = ctx;
+  let picks: { pr: ReviewPr; reopened: boolean }[];
+  if (opts.only !== undefined) {
+    const gate = reviewSkipReason(true, config.worker.kind);
+    if (gate) {
+      log(`review: skipped — ${gate}.`);
+      return [];
+    }
+    const pr = await viewPrForReview(repoSlug(config), String(opts.only));
+    if (pr.state !== 'OPEN' || isBot(pr) || pr.labels.some((l) => factoryPrLabels(config).includes(l.name))) {
+      log(`review: #${opts.only} is not an open PR from outside the factory; nothing to review.`);
+      return [];
+    }
+    picks = [{ pr, reopened: false }];
+  } else {
+    const { skip, open, reopen } = await reviewInputs(config);
+    if (skip) {
+      log(`review: skipped — ${skip}.`);
+      return [];
+    }
+    picks = [...reopen.map((pr) => ({ pr, reopened: true })), ...open.map((pr) => ({ pr, reopened: false }))].slice(0, config.review.maxPerTick);
+  }
+
+  log(`review: ${picks.length} PR(s) from outside the factory: ${picks.map((p) => `#${p.pr.number}${p.reopened ? ' (author replied to a close)' : ''}`).join(' ')}`);
+  const principles = loadPrinciples(config);
+  const records = await Promise.all(picks.map((p) =>
+    reviewOne(ctx, worker, p.pr, p.reopened, principles).catch((err: Error) => {
+      log(`review of #${p.pr.number} failed: ${err.message}`);
+      return null;
+    })));
+  return records.filter((r): r is ReviewRecord => r !== null);
+}
+
+async function reviewOne(ctx: FactoryContext, worker: CodingWorker, pr: ReviewPr, reopened: boolean, principles: string): Promise<ReviewRecord> {
+  const { config } = ctx;
+  const repo = repoSlug(config);
+  if (reopened) {
+    await reopenPr(repo, pr.url);
+    log(`review: reopened ${pr.url} — its author replied after the factory closed it`);
+  }
+
+  const startedAt = new Date().toISOString();
+  // No credentials: this agent runs code nobody here wrote.
+  const handle = await worker.start(reviewPrompt(pr, principles), {
+    prUrl: pr.url,
+    withholdCredentials: true,
+    name: `factory-review: #${pr.number} ${pr.title}`.slice(0, 100),
+  });
+
+  const record = async (over: Partial<ReviewRecord> & { verdict: ReviewRecord['verdict']; outcome: ReviewRecord['outcome'] }): Promise<ReviewRecord> => {
+    const full: ReviewRecord = {
+      type: 'review',
+      prUrl: pr.url,
+      prNumber: pr.number,
+      author: pr.author.login,
+      ...(reopened ? { reopened } : {}),
+      worker: config.worker.kind,
+      model: config.worker.model,
+      agentId: handle.agentId,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      usage: (await worker.usage(handle.agentId)) ?? null,
+      durationMs: Date.now() - Date.parse(startedAt),
+      ...over,
+    };
+    ctx.telemetry.append(full);
+    return full;
+  };
+
+  // A review that reached no verdict leaves no stamp, so the next tick tries again.
+  const result = await worker.awaitResult(handle).catch((err: Error) => err);
+  if (result instanceof Error || result.status !== 'FINISHED') {
+    const reason = result instanceof Error ? result.message : `run ended with status ${result.status}: ${result.resultText.slice(0, 300) || worker.opaqueRunNote(handle)}`;
+    log(`review of #${pr.number}: ${reason}`);
+    return record({ verdict: null, outcome: 'failed', reason });
+  }
+  const reply = parseReviewReply(result.resultText);
+  if (!reply) {
+    log(`review of #${pr.number}: reply had no VERDICT line:\n${result.resultText.slice(0, 500)}`);
+    return record({ verdict: null, outcome: 'failed', reason: 'no VERDICT line' });
+  }
+
+  const act = await actOnReview(config, worker, handle, pr.url, reply).catch((err: Error) => err);
+  if (act instanceof Error) {
+    log(`review of #${pr.number}: could not act on "${reply.verdict}": ${act.message}`);
+    return record({ verdict: reply.verdict, outcome: 'failed', reason: act.message.slice(0, 500) });
+  }
+  // Stamped against the PR as it stands now, so a push or a reply after this
+  // comment is what brings it back. An unstamped note means "look again".
+  const now = await viewPrForReview(repo, pr.url);
+  const body = reviewComment(act.outcome, reply.report, act.note);
+  await commentOnPr(repo, pr.url, factoryComment(act.stamped ? `${reviewStamp(now, act.outcome)}\n${body}` : body));
+  if (act.outcome === 'closed') await closePrQuietly(repo, pr.url);
+  log(`review of #${pr.number}: agent answered ${reply.verdict}; ${act.outcome}${act.reason ? ` (${act.reason})` : ''} — ${pr.url}`);
+  return record({ verdict: reply.verdict, outcome: act.outcome, ...(act.reason ? { reason: act.reason } : {}), ...(act.ci ?? {}) });
+}
+
+/**
+ * What the factory does with a review's verdict. Close and leave are the
+ * agent's call alone. Merge is the agent's call held to the factory's rules:
+ * the commit it names is the PR's head, nothing under `.github/` changes, CI is
+ * green on it after at most one fix round by the same agent, and GitHub's own
+ * rules allow the merge without an admin bypass.
+ */
+async function actOnReview(
+  config: FactoryConfig,
+  worker: CodingWorker,
+  handle: RunHandle,
+  prUrl: string,
+  reply: ReviewReply,
+): Promise<{ outcome: ReviewOutcome; stamped: boolean; note?: string; reason?: string; ci?: { fixRounds: number; checks: NonNullable<RunRecord['checks']> } }> {
+  if (reply.verdict === 'close') return { outcome: 'closed', stamped: true };
+  if (reply.verdict === 'leave') return { outcome: 'left', stamped: true };
+
+  const repo = repoSlug(config);
+  const moved = (verified: string, head: string) => ({
+    outcome: 'left' as const,
+    stamped: false,
+    reason: 'head moved',
+    note: `The review verified ${verified.slice(0, 8)}, but the PR's head is now ${head.slice(0, 8)}, so nothing was merged; the factory reviews it again as it stands.`,
+  });
+  const github = (paths: string[]) => ({
+    outcome: 'left' as const,
+    stamped: true,
+    reason: 'touches .github',
+    note: `The review would merge it, but it changes ${paths.map((p) => `\`${p}\``).join(', ')}, and the factory does not merge changes under \`.github/\`: they run with the repo's secrets.`,
+  });
+
+  const before = await viewPrForReview(repo, prUrl);
+  if (!sameCommit(reply.sha!, before.headRefOid)) return moved(reply.sha!, before.headRefOid);
+  if (touchesGithub(before.files).length > 0) return github(touchesGithub(before.files));
+
+  const ci = await greenChecks(config, worker, handle, prUrl);
+  const after = await viewPrForReview(repo, prUrl);
+  // Only the reviewer's own fix round may move the head; anything else is a
+  // push nobody verified.
+  if (ci.fixRounds === 0 && after.headRefOid !== before.headRefOid) return { ...moved(before.headRefOid, after.headRefOid), ci };
+  if (touchesGithub(after.files).length > 0) return { ...github(touchesGithub(after.files)), ci };
+  if (ci.checks === 'red') return { outcome: 'left', stamped: true, reason: 'checks red', note: 'The review would merge it, but CI is still red after the reviewer\'s fix round.', ci };
+  if (ci.checks === 'unsettled') return { outcome: 'left', stamped: true, reason: 'checks unsettled', note: `The review would merge it, but CI had not finished within ${CHECKS_WAIT_MS / 60_000} minutes.`, ci };
+
+  try {
+    await mergePr(repo, prUrl, after.headRefOid);
+  } catch (err) {
+    const msg = (err as Error).message.slice(0, 500);
+    return { outcome: 'left', stamped: true, reason: `merge refused: ${msg}`, note: `The review would merge it, but GitHub refused: ${msg}`, ci };
+  }
+  return { outcome: 'merged', stamped: true, ci };
+}
+
 export async function tick(opts: { dryRun: boolean }): Promise<void> {
   const ctx = buildContext();
   const { config } = ctx;
@@ -554,12 +737,18 @@ export async function tick(opts: { dryRun: boolean }): Promise<void> {
   //    accreting codebase is a problem whether or not there is anything to
   //    build today, and the tick that notices is the idle one. Concurrent with
   //    the implementers because it touches no issue and takes no slot.
+  //    Reviews of PRs from outside the factory run alongside too: they take
+  //    no slot and touch no issue, and their PRs are not the factory's.
   const [, openedThisTick] = await Promise.all([
     runSimplifyPhase(ctx, worker).catch((err: Error) => {
       log(`simplify phase error: ${err.message}`);
       return null;
     }),
     runImplementation(ctx, worker, candidates),
+    runReviewPhase(ctx, worker).catch((err: Error) => {
+      log(`review phase error: ${err.message}`);
+      return [];
+    }),
   ]);
 
   // 4. Environment, last: fix the machine the implementers run on from what
@@ -752,6 +941,15 @@ async function dryRun(ctx: FactoryContext, allCandidates: Task[]): Promise<void>
     console.log(`\n${environmentPrompt(prUrls, verdicts, agentCredentials(ctx.config).present)}\n`);
   }
 
+  const review = await reviewInputs(config);
+  if (review.skip) {
+    log(`review: would skip — ${review.skip}.`);
+  } else {
+    const due = [...review.reopen, ...review.open];
+    log(`review: would review ${Math.min(due.length, config.review.maxPerTick)} of ${due.length} PR(s) from outside the factory — ${due.map((p) => `#${p.number}${review.reopen.includes(p) ? ' (reopen)' : ''}`).join(' ')}. Prompt for #${due[0]!.number}:`);
+    console.log(`\n${reviewPrompt(due[0]!, '<principles.md>')}\n`);
+  }
+
   const { sha } = await defaultBranchHead(repoSlug(config));
   const simplifySkipped = await simplifySkip(ctx, sha);
   if (simplifySkipped) {
@@ -792,6 +990,13 @@ async function runPipeline(
   }
 
   const prUrl = await openedPr(config, result);
+  // Labelled before the CI wait, not after: an unlabelled PR is one the review
+  // phase would take for someone else's, and a crash mid-wait would leave it so.
+  if (prUrl) {
+    current.prUrl = prUrl;
+    state.writeRun(current);
+    await addPrLabels(repoSlug(config), prUrl, [config.labels.factoryPr]);
+  }
   const ci = prUrl ? await greenChecks(config, worker, handle, prUrl) : null;
   const usage = (await worker.usage(handle.agentId)) ?? null;
 
@@ -805,9 +1010,6 @@ async function runPipeline(
       `Agent's report:\n\n${result.resultText.trim() || '_(the agent gave no report)_'}`);
     await ctx.source.markFinished(task);
   } else {
-    current.prUrl = prUrl;
-    state.writeRun(current);
-    await addPrLabels(repoSlug(config), prUrl, [config.labels.factoryPr]);
     const pause = pauseNote(config);
     const red = ci?.checks === 'red' ? ' CI is still failing on it; the implementer could not or would not make it green, and says why on the PR.' : '';
     await commentOnIssue(repoSlug(config), task.issueNumber, factoryComment(

@@ -96,6 +96,11 @@ export interface CodingWorker {
 export interface StartOptions {
   autoCreatePR?: boolean;
   name?: string;
+  /** Work on this existing pull request: its branch is checked out, and what
+   *  the agent pushes goes to it. For reviewing a PR the factory did not open. */
+  prUrl?: string;
+  /** Hand the agent none of `worker.agentEnv`: it will run code nobody here wrote. */
+  withholdCredentials?: boolean;
 }
 
 /**
@@ -230,7 +235,26 @@ export interface SimplifyRecord extends AgentPass {
   failureReason?: string;
 }
 
-export type TelemetryRecord = RunRecord | GroomRecord | OutcomeRecord | EnvRecord | SimplifyRecord;
+/**
+ * One review of a PR the factory did not open. `verdict` is what the agent
+ * answered; `outcome` is what the factory did, which differs when a rule of its
+ * own held the merge back — `reason` says which.
+ */
+export interface ReviewRecord extends AgentPass {
+  type: 'review';
+  prUrl: string;
+  prNumber: number;
+  author: string;
+  /** The factory reopened it first: its author replied after a close. */
+  reopened?: boolean;
+  verdict: 'merge' | 'close' | 'leave' | null;
+  outcome: 'merged' | 'closed' | 'left' | 'failed';
+  reason?: string;
+  fixRounds?: number;
+  checks?: RunRecord['checks'];
+}
+
+export type TelemetryRecord = RunRecord | GroomRecord | OutcomeRecord | EnvRecord | SimplifyRecord | ReviewRecord;
 
 // --- Pipeline state for crash detection ---
 

@@ -73,14 +73,17 @@ export class CursorWorker implements CodingWorker {
   async start(prompt: string, opts: StartOptions = {}): Promise<RunHandle> {
     const body: Record<string, unknown> = {
       prompt: { text: prompt },
+      // On an existing PR, Cursor checks out its head and `workOnCurrentBranch`
+      // sends the agent's pushes there rather than to a new cursor/ branch.
       repos: [{
         url: this.opts.repoUrl,
-        ...(this.opts.startingRef ? { startingRef: this.opts.startingRef } : {}),
+        ...(opts.prUrl ? { prUrl: opts.prUrl } : this.opts.startingRef ? { startingRef: this.opts.startingRef } : {}),
       }],
       autoCreatePR: opts.autoCreatePR ?? false,
+      ...(opts.prUrl ? { workOnCurrentBranch: true } : {}),
     };
     if (opts.name) body['name'] = opts.name;
-    const envNames = Object.keys(this.opts.envVars ?? {});
+    const envNames = opts.withholdCredentials ? [] : Object.keys(this.opts.envVars ?? {});
     if (envNames.length > 0) body['envVars'] = this.opts.envVars;
     if (this.opts.model) {
       const { id, params } = this.opts.model;

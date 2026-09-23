@@ -2,7 +2,7 @@
 // factory CLI — the daily trigger runs `factory run`; everything else is
 // for humans operating the factory.
 
-import { admissible, buildContext, buildWorker, candidateTasks, environmentInputs, log, openSet, runEnvironmentPhase, runGroomPhase, runSelector, runSimplifyPhase, simplifySkip, tick } from './controller.ts';
+import { admissible, buildContext, buildWorker, candidateTasks, environmentInputs, log, openSet, reviewInputs, runEnvironmentPhase, runGroomPhase, runReviewPhase, runSelector, runSimplifyPhase, simplifySkip, tick } from './controller.ts';
 import { repoSlug } from './config.ts';
 import { isEpic, isGroomed, needsGroom, verdict } from './groom.ts';
 import { defaultBranchHead } from './github.ts';
@@ -23,6 +23,9 @@ Usage:
   npm run factory -- simplify          Run just the simplification phase: an agent reads the codebase, starting from the
                                        factory's own merged PRs, and opens one PR that removes more code than it adds.
                                        A PR that grows the code is closed by the factory before a human sees it.
+  npm run factory -- review [--pr N]   Run just the review phase: an agent per PR the factory did not open (bots and drafts
+                                       aside) reviews it against principles.md, verifies it, pushes fixes to its branch, and the
+                                       factory merges or closes it. --pr reviews that one PR whether or not it is due.
   npm run factory -- status            Show grooming progress, capacity, in-flight jobs, pending PRs, and recent telemetry.
   npm run factory -- abort [--issue N] Abandon stuck local pipelines — all of them, or just issue N's
                                        (cancels the runs if the worker still can).
@@ -105,6 +108,12 @@ async function status(): Promise<void> {
     if (last) log(`  last pass: ${last.startedAt} → ${last.outcome}${last.prUrl ? ` ${last.prUrl}` : ''} (read ${last.prsExamined.length} PR(s))`);
   }
 
+  const reviews = await reviewInputs(ctx.config);
+  log(`review: ${reviews.skip ?? `${reviews.open.length + reviews.reopen.length} PR(s) from outside the factory due; next pass reviews ${Math.min(reviews.open.length + reviews.reopen.length, ctx.config.review.maxPerTick)}`}.`);
+  for (const r of ctx.telemetry.reviews().slice(-5)) {
+    log(`  ${r.startedAt} #${r.prNumber} (${r.author}) → ${r.verdict ?? 'no verdict'}; ${r.outcome}${r.reason ? ` (${r.reason})` : ''}`);
+  }
+
   const { sha } = await defaultBranchHead(repoSlug(ctx.config));
   const simplifySkipped = await simplifySkip(ctx, sha);
   log(`simplify: ${simplifySkipped ?? `next tick looks for one simplification at ${sha.slice(0, 8)}`}.`);
@@ -121,6 +130,14 @@ async function simplify(): Promise<void> {
   if (!record) return;
   const lines = record.additions !== undefined ? ` (−${record.deletions} +${record.additions})` : '';
   log(`simplification pass → ${record.outcome}${record.prUrl ? ` ${record.prUrl}` : ''}${lines}${record.failureReason ? ` (${record.failureReason})` : ''}`);
+}
+
+async function review(opts: { only?: number }): Promise<void> {
+  const ctx = buildContext();
+  const records = await runReviewPhase(ctx, await buildWorker(ctx.config), opts);
+  for (const r of records) {
+    log(`  #${r.prNumber} (${r.author}) → ${r.verdict ?? 'no verdict'}; ${r.outcome}${r.reason ? ` (${r.reason})` : ''}`);
+  }
 }
 
 async function env(): Promise<void> {
@@ -205,6 +222,12 @@ async function main(): Promise<void> {
   if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
     throw new Error(`--limit must be a positive integer, got "${limitArg}"`);
   }
+  const prArg = args.find((a) => a.startsWith('--pr'))?.split('=')[1]
+    ?? (args.includes('--pr') ? args[args.indexOf('--pr') + 1] : undefined);
+  const only = prArg !== undefined ? Number(prArg) : undefined;
+  if (only !== undefined && (!Number.isInteger(only) || only < 1)) {
+    throw new Error(`--pr must be a positive integer, got "${prArg}"`);
+  }
   const issueArg = args.find((a) => a.startsWith('--issue'))?.split('=')[1]
     ?? (args.includes('--issue') ? args[args.indexOf('--issue') + 1] : undefined);
   const issueNumber = issueArg !== undefined ? Number(issueArg) : undefined;
@@ -227,6 +250,9 @@ async function main(): Promise<void> {
       break;
     case 'simplify':
       await simplify();
+      break;
+    case 'review':
+      await review({ ...(only !== undefined ? { only } : {}) });
       break;
     case 'status':
       await status();

@@ -36,6 +36,10 @@
   "simplify": {
     "enabled": true
   },
+  "review": {
+    "enabled": false,
+    "maxPerTick": 3
+  },
   "assignedIssues": {
     "groom": true,
     "implement": false

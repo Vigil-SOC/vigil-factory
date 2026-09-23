@@ -3,6 +3,7 @@
 
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
+import type { ReviewPr } from './review.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -233,6 +234,35 @@ export async function awaitPrChecks(
 
 export async function closePr(repo: string, prUrl: string, comment: string): Promise<void> {
   await gh(['pr', 'close', prUrl, '-R', repo, '--comment', comment]);
+}
+
+const REVIEW_PR_FIELDS = 'number,url,title,state,isDraft,body,author,headRefOid,labels,comments';
+
+/** PRs in one state, whoever opened them: the review phase's candidates. */
+export async function listPrsForReview(repo: string, state: 'open' | 'closed', limit: number): Promise<ReviewPr[]> {
+  return ghJson<ReviewPr[]>(['pr', 'list', '-R', repo, '--state', state, '--limit', String(limit), '--json', REVIEW_PR_FIELDS]);
+}
+
+export async function viewPrForReview(repo: string, prUrl: string): Promise<ReviewPr & { files: { path: string }[] }> {
+  return ghJson(['pr', 'view', prUrl, '-R', repo, '--json', `${REVIEW_PR_FIELDS},files`]);
+}
+
+/** Close without a comment of gh's own: the factory's stamped comment is posted first. */
+export async function closePrQuietly(repo: string, prUrl: string): Promise<void> {
+  await gh(['pr', 'close', prUrl, '-R', repo]);
+}
+
+export async function reopenPr(repo: string, prUrl: string): Promise<void> {
+  await gh(['pr', 'reopen', prUrl, '-R', repo]);
+}
+
+/**
+ * Squash-merge exactly `sha`: GitHub refuses if the head has moved since. Never
+ * `--admin` — the factory's token can bypass the repo's rules, and a merge that
+ * needed to is one the repo's rules said no to.
+ */
+export async function mergePr(repo: string, prUrl: string, sha: string): Promise<void> {
+  await gh(['pr', 'merge', prUrl, '-R', repo, '--squash', '--match-head-commit', sha]);
 }
 
 /** Extract "Closes #N" / "#N" issue references from a PR body. */

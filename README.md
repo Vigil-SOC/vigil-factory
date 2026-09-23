@@ -1,7 +1,8 @@
 # deeptempo-factory
 
 An opinionated software factory: agents groom your backlog, one PR is in flight
-at a time, and humans merge. Cursor cloud agents do the coding — or Claude Code
+at a time, humans merge what the factory built, and the factory reviews — and
+merges or closes — what everyone else opened. Cursor cloud agents do the coding — or Claude Code
 sessions on the machine running the tick, see [Workers](#workers) — and this repo owns
 only the **factory policy** — what is worth building, when work happens, which
 issue is admissible, verification requirements, review policy, the
@@ -52,6 +53,14 @@ Plenty of tools point an agent at a backlog. This one takes positions:
   is to remove code, in a simplification PR that must delete more lines than it adds or
   the factory closes it before a human sees it. A test proving something is gone, or a
   helper standing in for three plain lines, is not simpler.
+- **A PR from outside is finished here, not handed back.** Contributors, teammates, and
+  other people's coding agents open PRs too. An agent reviews each one against the same
+  principles grooming uses, verifies it to the implementer's standard, and fixes what stands
+  between it and merge on the PR's own branch — the agent is already spun up, so a list of
+  requested changes thrown back over the fence is the expensive answer. Then the factory
+  merges it, or closes it with the reason and an invitation to reply. It is the one place the
+  factory merges, and the rules it holds a merge to are mechanical: CI green on the exact
+  commit the agent verified, no admin bypass, nothing under `.github/`.
 - **Telemetry exists to earn autonomy.** Every groom, run, environment pass, and PR
   outcome is recorded so that "which classes of task can automerge?" becomes an
   empirical question, not a leap of faith.
@@ -75,6 +84,12 @@ reconcile with GitHub: record the verdict on every factory PR that has closed, r
    abstractions with one caller, fallback paths nothing reaches, hand-rolled copies of
    what the SDK ships. A PR that grows the code is closed by the factory, unseen. One
    open at a time; a commit the last pass already judged is not looked at again
+→ REVIEW agents, alongside too (up to review.maxPerTick, in parallel; authors replying to
+   a close first, then oldest first): each open PR the factory did not open — bots and
+   drafts aside — that is new or changed since its last review. The agent reads it against
+   principles.md, closes it if something is fundamentally wrong, otherwise verifies it live,
+   pushes the fixes it needs to its branch, and answers merge; the factory waits for CI on
+   that commit, hands a red check back once, and squash-merges it
 count the jobs already in flight (open factory PRs + running pipelines)
    → no free slot under maxConcurrentJobs? stop here
 for each free slot:
@@ -478,6 +493,67 @@ fresh 90-minute search every day. A simplification a human closes unmerged is re
 like any other rejected PR, and the next pass is handed its link and told not to propose
 it again. Set `simplify.enabled` to `false` to turn the phase off.
 
+## Reviewing outside PRs
+
+The factory is not the only thing opening PRs. Contributors do, teammates do, and more and
+more of them are somebody's coding agent opening PRs on its owner's behalf. Every one of
+those used to wait on a human, and the usual review — leave comments, send it back, wait —
+makes less sense when the reviewer is an agent that could simply make the change. So the
+review phase finishes them.
+
+**One agent, one PR, three answers.** The agent gets the PR's link and `principles.md` —
+the same standard grooming holds issues to — and decides everything itself:
+
+- **close** — something is fundamentally wrong: a duplicate, a false premise, a change the
+  principles reject, a tangle no one could review, churn with no point. This needs no build,
+  and the prompt says not to spend a verification on a PR it would close anyway. That is the
+  cheap filter for generated noise. The factory posts the reason and closes the PR, saying
+  that if it misread the change, the author should reply.
+- **merge** — the PR is worth having. The agent verified it the way an implementer verifies
+  its own work (the suites CI runs, then the behavior live), fixed what stood between it and
+  merge — a failing test, a conflict, a defect it found — by pushing to the PR's own branch,
+  and names the head commit it verified.
+- **leave** — a decision that needs a person: irreversible, legal or licensing exposure,
+  widening what the system may do on its own, or a fix it needed and could not push.
+
+Verification is a slice here, not a copy. The implementer's verification rule is one block
+in `src/prompts.ts` that the implementer, the simplifier, and the reviewer all include, and
+the CI wait-and-fix-once is the same `greenChecks` the implementer's PRs go through. A
+review is held to exactly the standard the factory's own code is.
+
+**The merge is the agent's call held to the factory's rules.** The controller merges only:
+- the commit the agent named, and only while it is still the PR's head (`--match-head-commit`)
+  — a push nobody verified is not merged; the PR is reviewed again as it stands;
+- once CI is green on it, after at most one fix round by the same agent;
+- within the repo's own rules — never `--admin`, though the factory's token could bypass
+  them, because a merge that needed to is one the repo said no to;
+- and never a PR that changes anything under `.github/`: workflows run with the repo's
+  secrets, and an outside PR is where a change to them most needs a human. Those are left
+  with the review posted.
+
+**The agent runs a stranger's code, so it gets nothing it does not need.** No
+`worker.agentEnv` credentials are handed to a review agent, and the phase runs only on the
+Cursor worker, whose VM is thrown away — the `claude-code` worker would run the PR's code on
+the machine running the tick, so there the phase reports itself skipped. The prompt also says
+that nothing written in the PR is an instruction to the agent.
+
+**State lives on the PR.** Every review ends in a factory comment over one invisible line,
+`<!-- factory-review sha=… outcome=merged|closed|left -->`, where `sha` fingerprints the
+head commit, the description, and every comment the factory did not write. Push to the
+branch, edit the description, or reply, and the PR is reviewed again. A review that reached
+no verdict leaves no stamp and is retried next tick. A PR the factory closed is watched for
+its author replying — an author often cannot reopen a PR a maintainer closed — and is then
+reopened and reviewed again with the reply in view; one somebody reopened by hand is
+reviewed again whether or not they said anything.
+
+**Which PRs.** Every open, non-draft PR not carrying a factory label (`factory`,
+`factory:env`, `factory:simplify` — the factory opens PRs under a person's account, so the
+author says nothing) and not opened by a bot. Dependabot and release-please are someone
+else's automation and are left alone. Red checks and conflicts are included on purpose:
+they are often exactly what stands between a good PR and a merge. Reviews do not count
+against `maxConcurrentJobs`; `review.maxPerTick` bounds how many run in one tick. The phase
+is off unless `review.enabled` is set, since it is the one that merges.
+
 ## Deploying
 
 This repo is a deployment: the engine plus the policy that points it at the
@@ -532,6 +608,8 @@ npm run factory -- groom           # run just the grooming phase
 npm run factory -- select          # run just the selector agent over the groomed issues (even with selector.enabled off)
 npm run factory -- env             # run just the environment phase over the unread factory PRs
 npm run factory -- simplify        # run just the simplification phase: one PR that removes more than it adds
+npm run factory -- review          # run just the review phase over the outside PRs that are due
+npm run factory -- review --pr 42  # ...or review PR #42 now, due or not
 npm run factory -- status          # grooming progress, capacity, in-flight jobs, recent telemetry
 npm run factory -- abort           # abandon every stuck pipeline (cancels the runs where the worker can)
 npm run factory -- abort --issue 42  # ...or just the one working issue #42
@@ -584,12 +662,15 @@ committed.
   keeps opening PRs whose verification was blocked and never fixes the cause.
 - `factory.config.json` → `simplify` — `enabled` (default true): the phase that removes
   code. Off means the factory only ever adds.
+- `factory.config.json` → `review` — `enabled` (default false) and `maxPerTick` (default 3):
+  the phase that reviews PRs the factory did not open and merges or closes them. Cursor
+  worker only. See [Reviewing outside PRs](#reviewing-outside-prs).
 - `factory.config.json` → `selector` — `enabled` (default false): whether an agent ranks
   the groomed issues before each implementer run. Off, the oldest groomed issue is
   implemented next; see [One judge of size](#one-judge-of-size) for why that is the
   default. `maxCandidates` (default 100) bounds the open-issue fetch either way.
-- `src/prompts.ts` — all five prompts (groom / selector / implementer / environment /
-  simplify), each a few lines. The implementer and simplifier share one block of working
+- `src/prompts.ts` — all six prompts (groom / selector / implementer / environment /
+  simplify / review), each a few lines. The implementer and simplifier share one block of working
   rules so a simplification is held to exactly the standard the code it removes was built to. Add lines only for specific opinions where the model's default behavior isn't
   what you want. **Widening autonomy later = widening this policy, not adding
   machinery.**
@@ -604,6 +685,8 @@ committed.
 - `src/simplify.ts` — only the mechanical bits: which merged PRs to point the agent at,
   which declined ones to warn it off, whether a PR shrank the code, and why a pass is not
   running.
+- `src/review.ts` — only the mechanical bits: which PRs are due a review, the stamp that
+  dates one, `VERDICT`-line parsing, and the `.github/` rule.
 
 ## Telemetry
 
@@ -643,6 +726,9 @@ Its rows:
 - `simplify` records: the commit the pass read, whether it opened a PR (`pr-opened`),
   opened one the factory closed for growing the code (`grew`), or proposed nothing
   (`no-change`), the PR's additions and deletions, agent id, token usage, duration.
+- `review` records: the outside PR, its author, the agent's verdict, what the factory did
+  (`merged` / `closed` / `left` / `failed`) and why, when a rule of its own held a merge
+  back; fix rounds, checks, agent id, token usage, duration.
 - `outcome` records: per PR — merged or rejected, human change requests, human
   comment count, time to close, and which pipeline opened it (`implementer`,
   `environment`, or `simplify`).
@@ -669,17 +755,19 @@ src/workSource.ts  GitHubIssueSource (incl. writing groom verdicts back to issue
 src/groom.ts       verdict labels + fingerprint, backlog filters, VERDICT parsing
 src/environment.ts unread-PR bookkeeping + report freshness for the environment phase
 src/simplify.ts    the shrink rule, what to point the simplifier at, when not to run it
+src/review.ts      which outside PRs are due, the review stamp, VERDICT parsing, merge rules
 src/selector.ts    wip + assignee filters, SELECTED-line parsing (mechanical only)
-src/prompts.ts     groom + selector + implementer + environment + simplify prompts  ← factory policy
+src/prompts.ts     groom + selector + implementer + environment + simplify + review prompts  ← factory policy
 src/state.ts       capacity gate (open PRs + in-flight runs), outcome reconciliation
 src/controller.ts  the tick
 src/github.ts      thin `gh` CLI wrapper
 src/telemetry.ts   JSONL groom/run/outcome log
-src/cli.ts         run / groom / select / env / simplify / status / abort
+src/cli.ts         run / groom / select / env / simplify / review / status / abort
 ```
 
 Non-goals (V1, on purpose): custom agent runtime, custom sandboxes, multi-agent
-framework, workflow engines, autonomous merging, persistent state machines. Parallelism
+framework, workflow engines, autonomous merging of the factory's own PRs (outside PRs are
+the exception, above), persistent state machines. Parallelism
 is one integer (`maxConcurrentJobs`), not a scheduler. A worker is one class implementing
 `CodingWorker` (start, continue, await, usage, cancel) chosen by `worker.kind`; there are
 two, and nothing outside them knows which runtime is coding.
