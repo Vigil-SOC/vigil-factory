@@ -347,6 +347,17 @@ and could not, because the machine lacked something.** If the environment can cl
 gap, it commits `.cursor/environment.json` (and any Dockerfile it needs) to the target repo
 and opens a PR that changes nothing else.
 
+**An environment that builds is not one that boots, so the factory boots it.** Before an
+environment PR reaches a human, the controller starts one agent on its branch, handed the
+same credentials every implementer is, with a one-line task: say OK. If that agent does not
+finish, the PR is closed with what happened, and the PRs it was written from say so. This is
+the environment's version of the simplifier's line count — a check on what the agent
+produced, not on how it worked — and it exists because of one PR: a single added apt package
+whose Dockerfile built cleanly, after which every agent launched with credentials died forty
+seconds in, and runs without them silently kept the old image. Nothing in the API said why; a
+one-line agent on the branch would have. A check that cannot launch at all is logged and not
+held against the PR.
+
 **Nothing is parsed, in either direction.** The implementer is not asked for a structured
 report and its reply is not scanned for one — deciding whether a PR describes a blocked
 check is a judgment call, so it lives in an agent, handed links the way grooming is handed
@@ -734,7 +745,8 @@ Its rows:
   it was one and how many children were filed; for a blocked verdict, the blocker.
 - `run` records: issue, worker/model, implementer agent id (and the selector's, when one
   ran), start/end, outcome (`pr-opened`/`no-pr`/`failed`/`aborted`), token usage, duration.
-- `env` records: which factory PRs the pass read, whether it opened a PR and which,
+- `env` records: which factory PRs the pass read, whether it opened a PR and which (or
+  opened one an agent could not boot on, `unbootable`, and why),
   agent id, token usage, duration. A failed pass records no PRs as read, so they are
   offered to the next one.
 - `simplify` records: the commit the pass read, whether it opened a PR (`pr-opened`),

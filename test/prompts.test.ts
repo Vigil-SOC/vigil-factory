@@ -174,6 +174,10 @@ describe('environment agent judges against CI and sees its own history', () => {
     expect(p).toMatch(/do not put it in the environment file/);
   });
 
+  it('is told the factory boots an agent on its branch before a human sees the PR', () => {
+    expect(environmentPrompt(prs)).toContain('an environment that builds is not one that boots');
+  });
+
   it('the implementer files a shipped config that would not start under the same heading', () => {
     expect(implementPrompt(task)).toMatch(/a shipped config or script of this repo that would not start until you changed it/);
   });

@@ -77,7 +77,7 @@ export class CursorWorker implements CodingWorker {
       // sends the agent's pushes there rather than to a new cursor/ branch.
       repos: [{
         url: this.opts.repoUrl,
-        ...(opts.prUrl ? { prUrl: opts.prUrl } : this.opts.startingRef ? { startingRef: this.opts.startingRef } : {}),
+        ...(opts.prUrl ? { prUrl: opts.prUrl } : (opts.startingRef ?? this.opts.startingRef) ? { startingRef: opts.startingRef ?? this.opts.startingRef } : {}),
       }],
       autoCreatePR: opts.autoCreatePR ?? false,
       ...(opts.prUrl ? { workOnCurrentBranch: true } : {}),

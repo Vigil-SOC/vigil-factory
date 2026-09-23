@@ -36,7 +36,7 @@ import { GitHubIssueSource } from './workSource.ts';
 import { FactoryState } from './state.ts';
 import { Telemetry } from './telemetry.ts';
 import { filterAssigned, filterClaimed, filterEpics, parseSelection, type Selection } from './selector.ts';
-import { environmentPrompt, fixChecksPrompt, groomEpicPrompt, groomPrompt, implementPrompt, reviewPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
+import { BOOT_CHECK_PROMPT, environmentPrompt, fixChecksPrompt, groomEpicPrompt, groomPrompt, implementPrompt, reviewPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
 import { factoryComment, groomState, isBlocker, isEpic, isGroomed, needsGroom, queueOrder, openIssues, parseGroomReply, stampExtrasFor, unaccountedBlockers, verdict, type GroomLabels, type OpenIssues } from './groom.ts';
 import { addPrLabels, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, defaultBranchHead, ensureLabel, findPrByBranch, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, reopenPr, userId, viewPr, viewPrForReview } from './github.ts';
 import { ENV_AGENT_MARK, environmentChangedAt, filedIssueBody, parseEnvReport, recentVerdicts, skipReason, unreadFactoryPrs, withOpenedThisTick, workerSkipReason, type UnreadPrs } from './environment.ts';
@@ -388,12 +388,22 @@ export async function runEnvironmentPhase(
     return record({ outcome: 'failed', prsExamined: [], failureReason: reason });
   }
 
-  const envPrUrl = await openedPr(config, result);
+  const opened = await openedPr(config, result);
 
-  if (envPrUrl) {
+  if (opened) {
     await ensureLabel(repoSlug(config), config.labels.environmentPr, '1D76DB', 'Cloud-agent environment, opened by the software factory');
-    await addPrLabels(repoSlug(config), envPrUrl, [config.labels.environmentPr]);
+    await addPrLabels(repoSlug(config), opened, [config.labels.environmentPr]);
   }
+  // The one rule the factory checks itself: the machine the PR describes boots
+  // an agent carrying the implementers' credentials. One that does not is
+  // closed before a human can merge it and take every run down with it.
+  const bootFailure = opened ? await bootCheck(config, worker, opened) : null;
+  if (opened && bootFailure) {
+    await closePr(repoSlug(config), opened, factoryComment(
+      `🏭 **Factory environment — closed.** Before this reached a human, the factory started an agent on this branch with the credentials every implementer is handed, and it did not boot and finish: ${bootFailure}. Merging it would have left every agent on a machine it cannot start. The branch is left for anyone who wants to find out why.`));
+    log(`environment: closed ${opened} — an agent could not boot on it (${bootFailure}).`);
+  }
+  const envPrUrl = bootFailure ? null : opened;
 
   // A gap that was the repo's, not the machine's, is filed as an issue. It
   // carries the blocker label: an implementer hit it, so every implementer
@@ -424,17 +434,48 @@ export async function runEnvironmentPhase(
   // The comment is also the "read" mark the next pass looks for.
   const note = envPrUrl
     ? `🏭 ${ENV_AGENT_MARK} Reading this PR${alongside} it found a gap in the cloud-agent environment and opened ${envPrUrl} to close it.${filedNote}`
-    : `🏭 ${ENV_AGENT_MARK} It read this PR${alongside} looking for a check that could not run in the cloud-agent environment, and opened none.${filedNote} Its report:\n\n${report || '_(no report)_'}`;
+    : opened
+      ? `🏭 ${ENV_AGENT_MARK} Reading this PR${alongside} it found a gap in the cloud-agent environment and opened ${opened} to close it, but an agent could not boot on that environment, so the factory closed it.${filedNote} Its report:\n\n${report || '_(no report)_'}`
+      : `🏭 ${ENV_AGENT_MARK} It read this PR${alongside} looking for a check that could not run in the cloud-agent environment, and opened none.${filedNote} Its report:\n\n${report || '_(no report)_'}`;
   for (const prUrl of prUrls) {
     await commentOnPr(repoSlug(config), prUrl, factoryComment(note)).catch((err: Error) => {
       log(`environment: could not comment on ${prUrl}: ${err.message}`);
     });
   }
 
-  log(envPrUrl
+  if (!bootFailure) log(envPrUrl
     ? `environment: opened ${envPrUrl}; it awaits a human and does not spend an implementer slot.`
     : `environment: no gap the environment could close${issuesFiled.length ? `; ${issuesFiled.length} repo defect(s) filed as issues` : ''}.`);
-  return record({ outcome: envPrUrl ? 'pr-opened' : 'no-gap', prUrl: envPrUrl, ...(issuesFiled.length ? { issuesFiled } : {}) });
+  return record({
+    outcome: envPrUrl ? 'pr-opened' : opened ? 'unbootable' : 'no-gap',
+    prUrl: opened,
+    ...(bootFailure ? { bootFailure } : {}),
+    ...(issuesFiled.length ? { issuesFiled } : {}),
+  });
+}
+
+/**
+ * Start one agent on the environment PR's branch, carrying the credentials
+ * every implementer gets, and see whether it finishes. Returns why it did not,
+ * or null. A failure to even launch the check is logged and counted as a pass:
+ * the check exists to catch a broken machine, not a flaky API.
+ */
+async function bootCheck(config: FactoryConfig, worker: CodingWorker, prUrl: string): Promise<string | null> {
+  const { headRefName } = await viewPr(repoSlug(config), prUrl);
+  log(`environment: boot check — starting an agent on ${headRefName} with the implementers' credentials`);
+  const handle = await worker.start(BOOT_CHECK_PROMPT, { startingRef: headRefName, autoCreatePR: false, name: 'factory-env-boot-check' }).catch((err: Error) => err);
+  if (handle instanceof Error) {
+    log(`environment: boot check could not launch (${handle.message}); not holding ${prUrl} to it`);
+    return null;
+  }
+  const result = await worker.awaitResult(handle).catch((err: Error) => err);
+  if (result instanceof Error) return result.message;
+  if (result.status !== 'FINISHED') {
+    const took = result.durationMs !== undefined ? ` after ${Math.round(result.durationMs / 1000)}s` : '';
+    return `the agent ended ${result.status}${took}${result.resultText ? `: ${result.resultText.slice(0, 300)}` : ` (${worker.opaqueRunNote(handle)})`}`;
+  }
+  log(`environment: boot check passed on ${headRefName}`);
+  return null;
 }
 
 /** Why the simplification pass is not running against `baseSha`, or null if it should. */

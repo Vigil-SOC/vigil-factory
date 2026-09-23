@@ -242,7 +242,7 @@ ${verdicts.join('\n')}`
 
 Below are pull requests the factory's implementers opened. Read each one — the description, and the diff where you need it. You are looking for **a check the author would have run and could not, or ran only after setting the machine up themselves, because it lacked something CI has.** They say so in the PR's Verification section: a suite skipped because its runner was not installed or its database was not up, a live test skipped because the browser was missing or broken, a "pip install" or "npm ci" the author had to run before anything else. The first two are blocked checks. The last is a tax every future implementer pays and some will skip under — treat it as the same gap.
 
-If you find a gap the environment can close, close it. Commit \`.cursor/environment.json\` and any Dockerfile it needs, change nothing else, and open a PR. Three things worth knowing:
+If you find a gap the environment can close, close it. Commit \`.cursor/environment.json\` and any Dockerfile it needs, change nothing else, and open a PR. Before a human sees it, the factory starts an agent on your branch, with the credentials every implementer is handed, and closes the PR if that agent does not boot and finish: an environment that builds is not one that boots. Three things worth knowing:
 
 - Docker is available to cloud agents but not on the default image. Installing \`docker-ce\` is not enough on its own: the daemon needs the \`fuse-overlayfs\` storage driver and \`iptables-legacy\`, and the \`ubuntu\` user needs to be in the \`docker\` group. Cursor documents the working Dockerfile at https://cursor.com/docs/cloud-agent/setup — follow it rather than improvising.
 - Services CI declares — Postgres, Redis, whatever the workflow's \`services:\` block names — belong in the environment's \`start\` command, brought up the way the repo's own compose file or test scripts bring them up, so they are ready when the agent's first command runs.
@@ -311,3 +311,12 @@ Everything else you write becomes the factory's comment on the PR, addressed to 
 
 ${principles}`;
 }
+
+/**
+ * The environment boot check: the whole task is to exist. An environment PR is
+ * a claim that agents will run on the machine it describes, and the one way to
+ * test that claim is to start an agent there, handed exactly what every
+ * implementer is handed. A Dockerfile that builds locally has booted no agent:
+ * one such PR took every run down for a day.
+ */
+export const BOOT_CHECK_PROMPT = 'This session only checks that the machine boots. Reply with the single word OK. Do not run anything else, and change nothing.';

@@ -101,6 +101,9 @@ export interface StartOptions {
   prUrl?: string;
   /** Hand the agent none of `worker.agentEnv`: it will run code nobody here wrote. */
   withholdCredentials?: boolean;
+  /** Start from this branch instead of the tick's pinned commit: the environment
+   *  boot check runs on the branch of the PR it is checking. */
+  startingRef?: string;
 }
 
 /**
@@ -211,8 +214,11 @@ export interface OutcomeRecord {
 export interface EnvRecord extends AgentPass {
   type: 'env';
   prsExamined: string[];
-  outcome: 'pr-opened' | 'no-gap' | 'failed';
+  /** `unbootable`: it opened a PR whose environment an agent could not boot on, and the factory closed it. */
+  outcome: 'pr-opened' | 'unbootable' | 'no-gap' | 'failed';
   prUrl: string | null;
+  /** Why the boot check failed, for an `unbootable` pass. */
+  bootFailure?: string;
   /** Repo defects the pass filed as issues: gaps that were the repo's, not the machine's. */
   issuesFiled?: string[];
   failureReason?: string;
