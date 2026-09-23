@@ -169,7 +169,7 @@ describe('parseEnvReport', () => {
 
 \`\`\`issue
 CSRF middleware rejects the agent layer's /internal calls with env.example's settings
-With \`VIGIL_CSRF_REPORT_ONLY="false"\` every POST /internal/tools/invoke answers 403.
+With \`APP_CSRF_REPORT_ONLY="false"\` every POST /internal/tools/invoke answers 403.
 \`\`\`
 
 The Bifrost start is the same as on #1056.`;
@@ -178,7 +178,7 @@ The Bifrost start is the same as on #1056.`;
     const { report, issues } = parseEnvReport(reply);
     expect(issues).toEqual([{
       title: "CSRF middleware rejects the agent layer's /internal calls with env.example's settings",
-      body: 'With `VIGIL_CSRF_REPORT_ONLY="false"` every POST /internal/tools/invoke answers 403.',
+      body: 'With `APP_CSRF_REPORT_ONLY="false"` every POST /internal/tools/invoke answers 403.',
     }]);
     expect(report).toContain('No environment gap');
     expect(report).toContain('same as on #1056');

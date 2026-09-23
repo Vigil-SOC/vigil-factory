@@ -127,7 +127,7 @@ export function unreadFactoryPrs(prs: FactoryPr[], changedAt: string | null): Un
 /**
  * The PRs this tick just opened, put in front of what GitHub listed. GitHub's
  * label index lags a label write by a few seconds, and the pass lists PRs by
- * label seconds after the implementers labelled theirs: on Vigil #1071 the
+ * label seconds after the implementers labelled theirs: on one target-repo tick the
  * gap was five seconds and the pass read the day's other two PRs and not the
  * newest. The tick knows what it opened; it does not need GitHub to confirm.
  * Nothing else changes — a PR that was already listed, or already read, is
