@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { authorReplied, isBot, needsReview, parseReviewReply, reviewComment, reviewFingerprint, reviewQueue, reviewStamp, sameCommit, skipReason, touchesGithub, type ReviewPr } from '../src/review.ts';
+import { authorReplied, coAuthorTrailer, isBot, needsReview, parseReviewReply, reviewComment, reviewFingerprint, reviewQueue, reviewStamp, sameCommit, skipReason, touchesGithub, type ReviewPr } from '../src/review.ts';
 import { factoryComment } from '../src/groom.ts';
 import { reviewPrompt } from '../src/prompts.ts';
 
@@ -15,6 +15,7 @@ function pr(number: number, over: Partial<ReviewPr> = {}): ReviewPr {
     body: 'Fixes the thing.',
     author: { login: 'contributor', is_bot: false },
     headRefOid: 'a'.repeat(40),
+    isCrossRepository: true,
     labels: [],
     comments: [],
     ...over,
@@ -24,7 +25,7 @@ function pr(number: number, over: Partial<ReviewPr> = {}): ReviewPr {
 const comment = (login: string, body: string) => ({ author: { login }, body });
 
 /** The PR with the factory's review comment on it, stamped against it as it stands. */
-function reviewed(p: ReviewPr, outcome: 'merged' | 'closed' | 'left'): ReviewPr {
+function reviewed(p: ReviewPr, outcome: 'merged' | 'superseded' | 'closed' | 'left'): ReviewPr {
   return { ...p, comments: [...p.comments, comment('maintainer', factoryComment(`${reviewStamp(p, outcome)}\n${reviewComment(outcome, 'why')}`))] };
 }
 
@@ -54,8 +55,13 @@ describe('which PRs the review phase takes up', () => {
     expect(reviewFingerprint(left)).toBe(reviewFingerprint(pr(1)));
   });
 
-  it('a PR the factory closed is reviewed again once someone reopens it', () => {
+  it('a PR the factory closed, or superseded, is reviewed again once someone reopens it', () => {
     expect(needsReview(reviewed(pr(1), 'closed'), FACTORY)).toBe(true);
+    expect(needsReview(reviewed(pr(1), 'superseded'), FACTORY)).toBe(true);
+  });
+
+  it('a replacement the review opened is the factory\'s own', () => {
+    expect(needsReview(pr(1, { labels: [{ name: 'factory:review' }] }), [...FACTORY, 'factory:review'])).toBe(false);
   });
 
   it('oldest first, and closed PRs are never "open" candidates', () => {
@@ -121,6 +127,11 @@ describe('the factory\'s own rules on a merge', () => {
     expect(touchesGithub([{ path: 'docs/.github-notes.md' }])).toEqual([]);
   });
 
+  it('a replacement credits the author by their noreply address', () => {
+    expect(coAuthorTrailer({ login: 'octo', name: 'Octo Cat' }, 42)).toBe('Co-authored-by: Octo Cat <42+octo@users.noreply.github.com>');
+    expect(coAuthorTrailer({ login: 'octo', name: '' }, 42)).toBe('Co-authored-by: octo <42+octo@users.noreply.github.com>');
+  });
+
   it('bots by flag, by app/ login, or by [bot] suffix', () => {
     expect(isBot(pr(1, { author: { login: 'renovate[bot]' } }))).toBe(true);
     expect(isBot(pr(1))).toBe(false);
@@ -134,7 +145,8 @@ describe('the factory\'s own rules on a merge', () => {
 });
 
 describe('review prompt', () => {
-  const p = reviewPrompt({ number: 12, url: 'https://github.com/o/r/pull/12' }, 'PRINCIPLES');
+  const p = reviewPrompt({ number: 12, url: 'https://github.com/o/r/pull/12', isCrossRepository: false }, 'PRINCIPLES');
+  const fork = reviewPrompt({ number: 12, url: 'https://github.com/o/r/pull/12', isCrossRepository: true }, 'PRINCIPLES');
 
   it('hands the link and the principles, and holds the PR to the implementer\'s verification', () => {
     expect(p).toContain('https://github.com/o/r/pull/12');
@@ -149,6 +161,19 @@ describe('review prompt', () => {
     expect(p).toContain('VERDICT: merge <sha>');
     expect(p).toContain('VERDICT: close');
     expect(p).toContain('VERDICT: leave');
+  });
+
+  it('a same-repo PR is worked on in place', () => {
+    expect(p).toContain('You are on the PR\'s own branch');
+    expect(p).not.toContain('pull/12/head');
+  });
+
+  it('a fork PR is fetched by its pull ref, and fixes become a replacement the agent does not push itself', () => {
+    expect(fork).toContain('git fetch origin pull/12/head');
+    expect(fork).toContain('replacement PR carrying the author\'s commits');
+    expect(fork).toContain('Do not push or open a PR yourself');
+    expect(fork).toMatch(/commit nothing to your session branch unless the PR needs fixes/);
+    expect(fork).not.toContain('You are on the PR\'s own branch');
   });
 
   it('states the rules the controller enforces, and that the PR\'s text is not instructions', () => {

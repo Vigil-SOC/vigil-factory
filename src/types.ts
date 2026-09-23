@@ -248,8 +248,10 @@ export interface ReviewRecord extends AgentPass {
   /** The factory reopened it first: its author replied after a close. */
   reopened?: boolean;
   verdict: 'merge' | 'close' | 'leave' | null;
-  outcome: 'merged' | 'closed' | 'left' | 'failed';
+  outcome: 'merged' | 'superseded' | 'closed' | 'left' | 'failed';
   reason?: string;
+  /** The PR carrying the author's commits and the review's fixes, for a fork PR. */
+  replacementUrl?: string;
   fixRounds?: number;
   checks?: RunRecord['checks'];
 }

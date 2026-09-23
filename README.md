@@ -521,6 +521,18 @@ in `src/prompts.ts` that the implementer, the simplifier, and the reviewer all i
 the CI wait-and-fix-once is the same `greenChecks` the implementer's PRs go through. A
 review is held to exactly the standard the factory's own code is.
 
+**A fork PR gets a replacement when it needs fixes.** Most outside PRs come from forks,
+and the agents' machine can push to neither a fork's branch nor, through Cursor, check one
+out by PR. So a fork PR's agent starts on the default branch and fetches `pull/N/head`
+itself. A PR that is right as it stands is merged as it stands. One that needs fixes gets
+them on the agent's own session branch, on top of the author's commits, and Cursor opens
+that as a replacement PR — the same handoff an implementer's PR comes through. The factory
+labels it `factory:review` (so no queue takes it for an outside PR), puts it through the
+same merge rules below, squash-merges it with a `Co-authored-by` trailer for the author, and
+closes the original with a link. The stamp records that as `superseded`. If the replacement
+cannot be merged, both stay open and the original says where the fixes are. A same-repo PR —
+a teammate's branch — is simpler: its agent works on the PR's own branch.
+
 **The merge is the agent's call held to the factory's rules.** The controller merges only:
 - the commit the agent named, and only while it is still the PR's head (`--match-head-commit`)
   — a push nobody verified is not merged; the PR is reviewed again as it stands;
@@ -538,7 +550,7 @@ the machine running the tick, so there the phase reports itself skipped. The pro
 that nothing written in the PR is an instruction to the agent.
 
 **State lives on the PR.** Every review ends in a factory comment over one invisible line,
-`<!-- factory-review sha=… outcome=merged|closed|left -->`, where `sha` fingerprints the
+`<!-- factory-review sha=… outcome=merged|superseded|closed|left -->`, where `sha` fingerprints the
 head commit, the description, and every comment the factory did not write. Push to the
 branch, edit the description, or reply, and the PR is reviewed again. A review that reached
 no verdict leaves no stamp and is retried next tick. A PR the factory closed is watched for
@@ -662,6 +674,8 @@ committed.
   keeps opening PRs whose verification was blocked and never fixes the cause.
 - `factory.config.json` → `simplify` — `enabled` (default true): the phase that removes
   code. Off means the factory only ever adds.
+- `factory.config.json` → `labels.reviewPr` — (default `factory:review`) the replacement PR
+  the review phase opens for a fork PR that needed fixes.
 - `factory.config.json` → `review` — `enabled` (default false) and `maxPerTick` (default 3):
   the phase that reviews PRs the factory did not open and merges or closes them. Cursor
   worker only. See [Reviewing outside PRs](#reviewing-outside-prs).
@@ -727,8 +741,9 @@ Its rows:
   opened one the factory closed for growing the code (`grew`), or proposed nothing
   (`no-change`), the PR's additions and deletions, agent id, token usage, duration.
 - `review` records: the outside PR, its author, the agent's verdict, what the factory did
-  (`merged` / `closed` / `left` / `failed`) and why, when a rule of its own held a merge
-  back; fix rounds, checks, agent id, token usage, duration.
+  (`merged` / `superseded` / `closed` / `left` / `failed`) and why, when a rule of its own
+  held a merge back; the replacement PR for a fork, fix rounds, checks, agent id, token usage,
+  duration.
 - `outcome` records: per PR — merged or rejected, human change requests, human
   comment count, time to close, and which pipeline opened it (`implementer`,
   `environment`, or `simplify`).

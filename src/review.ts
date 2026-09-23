@@ -27,12 +27,21 @@
 // for one thing: its author replying, which is the invitation the close comment
 // makes — the factory reopens it and looks again. A closed PR someone reopened
 // is reviewed again whether or not they said anything.
+//
+// A PR from a fork is the common case and the awkward one: the agents' machine
+// cannot push to a contributor's fork, and Cursor cannot check one out by PR.
+// So the agent starts on the default branch and fetches `pull/N/head` itself.
+// A fork PR that is right as it stands is merged as it stands. One that needs
+// fixes gets them on the agent's own session branch, on top of the author's
+// commits, and Cursor opens that as a replacement PR — the same handoff an
+// implementer's PR comes through. The factory merges the replacement, credits
+// the author as co-author, and closes the original with a link: `superseded`.
 
 import { createHash } from 'node:crypto';
 import { isFactoryComment } from './groom.ts';
 
 export type ReviewVerdict = 'merge' | 'close' | 'leave';
-export type ReviewOutcome = 'merged' | 'closed' | 'left';
+export type ReviewOutcome = 'merged' | 'superseded' | 'closed' | 'left';
 
 /** The slice of a GitHub PR this phase reasons about. */
 export interface ReviewPr {
@@ -42,8 +51,10 @@ export interface ReviewPr {
   state: 'OPEN' | 'CLOSED' | 'MERGED';
   isDraft: boolean;
   body: string;
-  author: { login: string; is_bot?: boolean };
+  author: { login: string; name?: string; is_bot?: boolean };
   headRefOid: string;
+  /** From a fork: nothing here can push to its branch. */
+  isCrossRepository: boolean;
   labels: { name: string }[];
   /** Chronological. */
   comments: { author: { login: string } | null; body: string }[];
@@ -63,7 +74,7 @@ function parseStamp(body: string): ReviewStamp | null {
   const sha = attrs.get('sha');
   if (!sha) return null;
   const outcome = attrs.get('outcome');
-  return { sha, outcome: outcome === 'merged' || outcome === 'closed' || outcome === 'left' ? outcome : null };
+  return { sha, outcome: outcome === 'merged' || outcome === 'superseded' || outcome === 'closed' || outcome === 'left' ? outcome : null };
 }
 
 /** The index of the factory's latest review comment, or -1. */
@@ -102,7 +113,8 @@ export function needsReview(pr: ReviewPr, factoryLabels: string[]): boolean {
   if (pr.labels.some((l) => factoryLabels.includes(l.name))) return false;
   const last = latestReview(pr);
   if (!last) return true;
-  if (last.outcome === 'closed') return true;
+  // Open again after the factory closed it, whoever reopened it.
+  if (last.outcome === 'closed' || last.outcome === 'superseded') return true;
   return last.sha !== reviewFingerprint(pr);
 }
 
@@ -168,6 +180,7 @@ export function sameCommit(named: string, head: string): boolean {
 export function reviewComment(outcome: ReviewOutcome, report: string, note?: string): string {
   const heading = {
     merged: '🏭 **Factory review — merged.**',
+    superseded: '🏭 **Factory review — merged with fixes.**',
     closed: '🏭 **Factory review — closed.**',
     left: '🏭 **Factory review — left for a human.**',
   }[outcome];
@@ -177,6 +190,14 @@ export function reviewComment(outcome: ReviewOutcome, report: string, note?: str
       ? '\n\nPush to the branch or reply here and the factory reviews it again.'
       : '';
   return `${heading}${note ? ` ${note}` : ''}\n\n${report.trim() || '_(no report)_'}${tail}`;
+}
+
+/**
+ * The trailer that credits a PR's author on the commit that lands their work
+ * under someone else's name. GitHub attributes it by the noreply address.
+ */
+export function coAuthorTrailer(author: { login: string; name?: string }, userId: number): string {
+  return `Co-authored-by: ${author.name?.trim() || author.login} <${userId}+${author.login}@users.noreply.github.com>`;
 }
 
 /** Why the review phase is not running at all, or null if it may. */

@@ -38,10 +38,10 @@ import { Telemetry } from './telemetry.ts';
 import { filterAssigned, filterClaimed, filterEpics, parseSelection, type Selection } from './selector.ts';
 import { environmentPrompt, fixChecksPrompt, groomEpicPrompt, groomPrompt, implementPrompt, reviewPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
 import { factoryComment, groomState, isBlocker, isEpic, isGroomed, needsGroom, queueOrder, openIssues, parseGroomReply, stampExtrasFor, unaccountedBlockers, verdict, type GroomLabels, type OpenIssues } from './groom.ts';
-import { addPrLabels, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, defaultBranchHead, ensureLabel, findPrByBranch, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, reopenPr, viewPr, viewPrForReview } from './github.ts';
+import { addPrLabels, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, defaultBranchHead, ensureLabel, findPrByBranch, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, reopenPr, userId, viewPr, viewPrForReview } from './github.ts';
 import { ENV_AGENT_MARK, environmentChangedAt, filedIssueBody, parseEnvReport, recentVerdicts, skipReason, unreadFactoryPrs, withOpenedThisTick, workerSkipReason, type UnreadPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
-import { isBot, parseReviewReply, reviewComment, reviewQueue, reviewStamp, sameCommit, skipReason as reviewSkipReason, touchesGithub, type ReviewOutcome, type ReviewPr, type ReviewReply } from './review.ts';
+import { coAuthorTrailer, isBot, parseReviewReply, reviewComment, reviewQueue, reviewStamp, sameCommit, skipReason as reviewSkipReason, touchesGithub, type ReviewOutcome, type ReviewPr, type ReviewReply } from './review.ts';
 
 export function log(msg: string): void {
   console.log(`[${new Date().toISOString()}] ${msg}`);
@@ -529,7 +529,7 @@ export async function runSimplifyPhase(ctx: FactoryContext, worker: CodingWorker
 
 /** The labels that mark a PR as the factory's own, whoever GitHub says opened it. */
 function factoryPrLabels(config: FactoryConfig): string[] {
-  return [config.labels.factoryPr, config.labels.environmentPr, config.labels.simplifyPr];
+  return [config.labels.factoryPr, config.labels.environmentPr, config.labels.simplifyPr, config.labels.reviewPr];
 }
 
 /**
@@ -600,9 +600,11 @@ async function reviewOne(ctx: FactoryContext, worker: CodingWorker, pr: ReviewPr
   }
 
   const startedAt = new Date().toISOString();
-  // No credentials: this agent runs code nobody here wrote.
+  // No credentials: this agent runs code nobody here wrote. A fork PR cannot be
+  // checked out by Cursor or pushed to, so its agent starts on the default
+  // branch, and a session branch it commits to becomes the replacement PR.
   const handle = await worker.start(reviewPrompt(pr, principles), {
-    prUrl: pr.url,
+    ...(pr.isCrossRepository ? { autoCreatePR: true } : { prUrl: pr.url }),
     withholdCredentials: true,
     name: `factory-review: #${pr.number} ${pr.title}`.slice(0, 100),
   });
@@ -634,73 +636,126 @@ async function reviewOne(ctx: FactoryContext, worker: CodingWorker, pr: ReviewPr
     log(`review of #${pr.number}: ${reason}`);
     return record({ verdict: null, outcome: 'failed', reason });
   }
+  // Labelled at once, like an implementer's PR, so no queue takes it for someone else's.
+  const replacement = pr.isCrossRepository ? await openedPr(config, result) : null;
+  if (replacement) {
+    await ensureLabel(repo, config.labels.reviewPr, '5319E7', 'Replacement for an outside PR: its commits plus the factory review\'s fixes');
+    await addPrLabels(repo, replacement, [config.labels.reviewPr]);
+  }
   const reply = parseReviewReply(result.resultText);
   if (!reply) {
     log(`review of #${pr.number}: reply had no VERDICT line:\n${result.resultText.slice(0, 500)}`);
+    if (replacement) await closePr(repo, replacement, factoryComment(`🏭 The review of ${pr.url} reached no verdict, so this replacement is closed.`)).catch(() => {});
     return record({ verdict: null, outcome: 'failed', reason: 'no VERDICT line' });
   }
 
-  const act = await actOnReview(config, worker, handle, pr.url, reply).catch((err: Error) => err);
+  const act = await actOnReview(config, worker, handle, pr, reply, replacement).catch((err: Error) => err);
   if (act instanceof Error) {
     log(`review of #${pr.number}: could not act on "${reply.verdict}": ${act.message}`);
-    return record({ verdict: reply.verdict, outcome: 'failed', reason: act.message.slice(0, 500) });
+    return record({ verdict: reply.verdict, outcome: 'failed', reason: act.message.slice(0, 500), ...(replacement ? { replacementUrl: replacement } : {}) });
   }
   // Stamped against the PR as it stands now, so a push or a reply after this
   // comment is what brings it back. An unstamped note means "look again".
   const now = await viewPrForReview(repo, pr.url);
   const body = reviewComment(act.outcome, reply.report, act.note);
   await commentOnPr(repo, pr.url, factoryComment(act.stamped ? `${reviewStamp(now, act.outcome)}\n${body}` : body));
-  if (act.outcome === 'closed') await closePrQuietly(repo, pr.url);
-  log(`review of #${pr.number}: agent answered ${reply.verdict}; ${act.outcome}${act.reason ? ` (${act.reason})` : ''} — ${pr.url}`);
-  return record({ verdict: reply.verdict, outcome: act.outcome, ...(act.reason ? { reason: act.reason } : {}), ...(act.ci ?? {}) });
+  if (act.outcome === 'closed' || act.outcome === 'superseded') await closePrQuietly(repo, pr.url);
+  log(`review of #${pr.number}: agent answered ${reply.verdict}; ${act.outcome}${act.reason ? ` (${act.reason})` : ''}${replacement ? ` via ${replacement}` : ''} — ${pr.url}`);
+  return record({ verdict: reply.verdict, outcome: act.outcome, ...(act.reason ? { reason: act.reason } : {}), ...(act.ci ?? {}), ...(replacement ? { replacementUrl: replacement } : {}) });
 }
+
+type ReviewAct = { outcome: ReviewOutcome; stamped: boolean; note?: string; reason?: string; ci?: { fixRounds: number; checks: NonNullable<RunRecord['checks']> } };
 
 /**
  * What the factory does with a review's verdict. Close and leave are the
  * agent's call alone. Merge is the agent's call held to the factory's rules:
- * the commit it names is the PR's head, nothing under `.github/` changes, CI is
- * green on it after at most one fix round by the same agent, and GitHub's own
- * rules allow the merge without an admin bypass.
+ * the commit it names is the head of what gets merged — the PR itself, or for
+ * a fork PR that needed fixes, the replacement Cursor opened — nothing under
+ * `.github/` changes, CI is green on it after at most one fix round by the same
+ * agent, and GitHub's own rules allow the merge without an admin bypass.
  */
 async function actOnReview(
   config: FactoryConfig,
   worker: CodingWorker,
   handle: RunHandle,
-  prUrl: string,
+  pr: ReviewPr,
   reply: ReviewReply,
-): Promise<{ outcome: ReviewOutcome; stamped: boolean; note?: string; reason?: string; ci?: { fixRounds: number; checks: NonNullable<RunRecord['checks']> } }> {
-  if (reply.verdict === 'close') return { outcome: 'closed', stamped: true };
-  if (reply.verdict === 'leave') return { outcome: 'left', stamped: true };
-
+  replacement: string | null,
+): Promise<ReviewAct> {
   const repo = repoSlug(config);
-  const moved = (verified: string, head: string) => ({
-    outcome: 'left' as const,
+  const discard = async (why: string) => {
+    if (replacement) await closePr(repo, replacement, factoryComment(`🏭 Closed: ${why} See ${pr.url}.`));
+  };
+  if (reply.verdict === 'close') {
+    await discard('the review closed the PR it was replacing.');
+    return { outcome: 'closed', stamped: true };
+  }
+  if (reply.verdict === 'leave') {
+    await discard('the review left the PR it was replacing for a human.');
+    return { outcome: 'left', stamped: true };
+  }
+
+  const sha = reply.sha!;
+  const before = await viewPrForReview(repo, pr.url);
+  if (sameCommit(sha, before.headRefOid)) {
+    await discard('the review merged the PR as it stands, without this.');
+    return mergeVerified(config, worker, handle, pr.url, before);
+  }
+  if (!replacement) return headMoved(sha, before.headRefOid);
+
+  const rep = await viewPrForReview(repo, replacement);
+  if (!sameCommit(sha, rep.headRefOid)) {
+    await discard(`its head is ${rep.headRefOid.slice(0, 8)}, not ${sha.slice(0, 8)}, the commit the review verified.`);
+    return headMoved(sha, rep.headRefOid);
+  }
+  const trailer = coAuthorTrailer(pr.author, await userId(pr.author.login));
+  const merged = await mergeVerified(config, worker, handle, replacement, rep,
+    `Supersedes #${pr.number} by @${pr.author.login}: the author's commits with the factory review's fixes.\n\n${trailer}`);
+  if (merged.outcome !== 'merged') {
+    return { ...merged, note: `${merged.note ?? ''} The review's fixes are in ${replacement}, left open.`.trim() };
+  }
+  return { ...merged, outcome: 'superseded', note: `Merged as ${replacement}, which carries your commits and the review's fixes; you are credited as co-author on the commit.` };
+}
+
+/** The review verified one commit and the PR now has another: nothing is merged, and it is looked at again. */
+function headMoved(verified: string, head: string): ReviewAct {
+  return {
+    outcome: 'left',
     stamped: false,
     reason: 'head moved',
-    note: `The review verified ${verified.slice(0, 8)}, but the PR's head is now ${head.slice(0, 8)}, so nothing was merged; the factory reviews it again as it stands.`,
-  });
-  const github = (paths: string[]) => ({
-    outcome: 'left' as const,
+    note: `The review verified ${verified.slice(0, 8)}, but the head is now ${head.slice(0, 8)}, so nothing was merged; the factory reviews it again as it stands.`,
+  };
+}
+
+/** Merge `target` at the head the review verified, if the factory's rules allow. */
+async function mergeVerified(
+  config: FactoryConfig,
+  worker: CodingWorker,
+  handle: RunHandle,
+  target: string,
+  before: ReviewPr & { files: { path: string }[] },
+  body?: string,
+): Promise<ReviewAct> {
+  const repo = repoSlug(config);
+  const github = (paths: string[]): ReviewAct => ({
+    outcome: 'left',
     stamped: true,
     reason: 'touches .github',
     note: `The review would merge it, but it changes ${paths.map((p) => `\`${p}\``).join(', ')}, and the factory does not merge changes under \`.github/\`: they run with the repo's secrets.`,
   });
-
-  const before = await viewPrForReview(repo, prUrl);
-  if (!sameCommit(reply.sha!, before.headRefOid)) return moved(reply.sha!, before.headRefOid);
   if (touchesGithub(before.files).length > 0) return github(touchesGithub(before.files));
 
-  const ci = await greenChecks(config, worker, handle, prUrl);
-  const after = await viewPrForReview(repo, prUrl);
+  const ci = await greenChecks(config, worker, handle, target);
+  const after = await viewPrForReview(repo, target);
   // Only the reviewer's own fix round may move the head; anything else is a
   // push nobody verified.
-  if (ci.fixRounds === 0 && after.headRefOid !== before.headRefOid) return { ...moved(before.headRefOid, after.headRefOid), ci };
+  if (ci.fixRounds === 0 && after.headRefOid !== before.headRefOid) return { ...headMoved(before.headRefOid, after.headRefOid), ci };
   if (touchesGithub(after.files).length > 0) return { ...github(touchesGithub(after.files)), ci };
   if (ci.checks === 'red') return { outcome: 'left', stamped: true, reason: 'checks red', note: 'The review would merge it, but CI is still red after the reviewer\'s fix round.', ci };
   if (ci.checks === 'unsettled') return { outcome: 'left', stamped: true, reason: 'checks unsettled', note: `The review would merge it, but CI had not finished within ${CHECKS_WAIT_MS / 60_000} minutes.`, ci };
 
   try {
-    await mergePr(repo, prUrl, after.headRefOid);
+    await mergePr(repo, target, after.headRefOid, body);
   } catch (err) {
     const msg = (err as Error).message.slice(0, 500);
     return { outcome: 'left', stamped: true, reason: `merge refused: ${msg}`, note: `The review would merge it, but GitHub refused: ${msg}`, ci };

@@ -30,6 +30,7 @@
     "needsWork": "factory:needs-work",
     "environmentPr": "factory:env",
     "simplifyPr": "factory:simplify",
+    "reviewPr": "factory:review",
     "epic": "type:epic",
     "blocker": "factory:blocker"
   },

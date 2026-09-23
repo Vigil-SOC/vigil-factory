@@ -43,6 +43,10 @@ export interface FactoryConfig {
     environmentPr: string;
     /** Likewise for the simplification agent's PRs. */
     simplifyPr: string;
+    /** A replacement PR the review phase opened for a fork PR that needed
+     *  fixes: the author's commits plus the review's. Merged in the same pass
+     *  when it can be; the label keeps it out of every other queue. */
+    reviewPr: string;
     /** The repo's own epic label. An issue carrying it is groomed as a
      *  direction — the groomer settles its open decisions and writes its
      *  children — and is never handed to the selector. Not a factory label:
@@ -138,6 +142,7 @@ export function loadConfig(root: string = projectRoot): FactoryConfig {
   }
   config.labels.environmentPr ??= 'factory:env';
   config.labels.simplifyPr ??= 'factory:simplify';
+  config.labels.reviewPr ??= 'factory:review';
   config.labels.epic ??= 'type:epic';
   config.labels.blocker ??= 'factory:blocker';
   config.simplify ??= { enabled: true };
