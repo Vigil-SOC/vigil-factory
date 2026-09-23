@@ -10,7 +10,7 @@
       "id": "grok-4.7",
       "params": {
         "context": "500k",
-        "reasoning_effort": "high",
+        "reasoning_effort": "medium",
         "fast": "false"
       }
     },
