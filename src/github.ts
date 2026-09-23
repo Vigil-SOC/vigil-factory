@@ -115,6 +115,12 @@ export async function findPrByBranch(repo: string, branch: string): Promise<PrDa
   return prs[0] ?? null;
 }
 
+/** Open a PR from `branch` onto the default branch; returns its URL. */
+export async function createPr(repo: string, branch: string, title: string, body: string): Promise<string> {
+  const out = await ghStdin(['pr', 'create', '-R', repo, '--head', branch, '--title', title, '--body-file', '-'], body);
+  return out.trim().split('\n').pop()!;
+}
+
 export async function viewPr(repo: string, prUrl: string): Promise<PrData> {
   return ghJson<PrData>(['pr', 'view', prUrl, '-R', repo, '--json', PR_FIELDS]);
 }

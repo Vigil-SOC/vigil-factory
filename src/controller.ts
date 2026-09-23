@@ -38,7 +38,7 @@ import { Telemetry } from './telemetry.ts';
 import { filterAssigned, filterClaimed, filterEpics, parseSelection, type Selection } from './selector.ts';
 import { BOOT_CHECK_PROMPT, environmentPrompt, fixChecksPrompt, groomEpicPrompt, groomPrompt, implementPrompt, reviewPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
 import { factoryComment, groomState, isBlocker, isEpic, isGroomed, needsGroom, queueOrder, openIssues, parseGroomReply, stampExtrasFor, unaccountedBlockers, verdict, type GroomLabels, type OpenIssues } from './groom.ts';
-import { addPrLabels, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, defaultBranchHead, ensureLabel, findPrByBranch, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, reopenPr, userId, viewPr, viewPrForReview } from './github.ts';
+import { addPrLabels, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, reopenPr, userId, viewPr, viewPrForReview } from './github.ts';
 import { ENV_AGENT_MARK, environmentChangedAt, filedIssueBody, parseEnvReport, recentVerdicts, skipReason, unreadFactoryPrs, withOpenedThisTick, workerSkipReason, type UnreadPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
 import { coAuthorTrailer, isBot, parseReviewReply, reviewComment, reviewQueue, reviewStamp, sameCommit, skipReason as reviewSkipReason, touchesGithub, type ReviewOutcome, type ReviewPr, type ReviewReply } from './review.ts';
@@ -678,7 +678,7 @@ async function reviewOne(ctx: FactoryContext, worker: CodingWorker, pr: ReviewPr
     return record({ verdict: null, outcome: 'failed', reason });
   }
   // Labelled at once, like an implementer's PR, so no queue takes it for someone else's.
-  const replacement = pr.isCrossRepository ? await openedPr(config, result) : null;
+  const replacement = pr.isCrossRepository ? await replacementPr(config, pr, result) : null;
   if (replacement) {
     await ensureLabel(repo, config.labels.reviewPr, '5319E7', 'Replacement for an outside PR: its commits plus the factory review\'s fixes');
     await addPrLabels(repo, replacement, [config.labels.reviewPr]);
@@ -703,6 +703,25 @@ async function reviewOne(ctx: FactoryContext, worker: CodingWorker, pr: ReviewPr
   if (act.outcome === 'closed' || act.outcome === 'superseded') await closePrQuietly(repo, pr.url);
   log(`review of #${pr.number}: agent answered ${reply.verdict}; ${act.outcome}${act.reason ? ` (${act.reason})` : ''}${replacement ? ` via ${replacement}` : ''} — ${pr.url}`);
   return record({ verdict: reply.verdict, outcome: act.outcome, ...(act.reason ? { reason: act.reason } : {}), ...(act.ci ?? {}), ...(replacement ? { replacementUrl: replacement } : {}) });
+}
+
+/**
+ * The replacement a fork review's fixes landed in. Cursor pushes the session
+ * branch of a review run but does not always open a PR for it — its history is
+ * the fork's, not the default branch's — so when it reports a branch and no PR,
+ * the factory opens one. No commits on the branch means no fixes: gh refuses,
+ * and there is no replacement.
+ */
+async function replacementPr(config: FactoryConfig, pr: ReviewPr, result: RunResult): Promise<string | null> {
+  const opened = await openedPr(config, result);
+  if (opened || !result.branch) return opened;
+  try {
+    return await createPr(repoSlug(config), result.branch, `${pr.title} (review fixes for #${pr.number})`,
+      `🏭 Replacement for ${pr.url} by @${pr.author.login}: the author's commits with the factory review's fixes. The factory merges this in place of #${pr.number}, crediting the author, or closes it.`);
+  } catch (err) {
+    log(`review of #${pr.number}: no replacement from ${result.branch} — ${(err as Error).message.trim()}`);
+    return null;
+  }
 }
 
 type ReviewAct = { outcome: ReviewOutcome; stamped: boolean; note?: string; reason?: string; ci?: { fixRounds: number; checks: NonNullable<RunRecord['checks']> } };
