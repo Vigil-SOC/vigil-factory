@@ -204,10 +204,17 @@ export interface PrCheck {
 /**
  * The PR's checks as they stand right now. Exit code is 0 even when checks
  * are red because of `--json`; without it gh signals red with a nonzero exit
- * and the wrapper would throw.
+ * and the wrapper would throw. A PR with no checks at all — a repo without CI,
+ * or a fork's first run waiting on a maintainer's approval — makes gh exit
+ * nonzero even with `--json`; that is an empty list, not an error.
  */
 export async function prChecks(repo: string, prUrl: string): Promise<PrCheck[]> {
-  return ghJson<PrCheck[]>(['pr', 'checks', prUrl, '-R', repo, '--json', 'name,bucket,link']);
+  try {
+    return await ghJson<PrCheck[]>(['pr', 'checks', prUrl, '-R', repo, '--json', 'name,bucket,link']);
+  } catch (err) {
+    if (/no checks reported/i.test((err as Error).message)) return [];
+    throw err;
+  }
 }
 
 /**

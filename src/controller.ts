@@ -793,6 +793,7 @@ async function mergeVerified(
   if (ci.fixRounds === 0 && after.headRefOid !== before.headRefOid) return { ...headMoved(before.headRefOid, after.headRefOid), ci };
   if (touchesGithub(after.files).length > 0) return { ...github(touchesGithub(after.files)), ci };
   if (ci.checks === 'red') return { outcome: 'left', stamped: true, reason: 'checks red', note: 'The review would merge it, but CI is still red after the reviewer\'s fix round.', ci };
+  if (ci.checks === 'none') return { outcome: 'left', stamped: true, reason: 'no checks', note: 'The review would merge it, but no CI has run on it, and the factory merges only on green checks. A fork\'s first workflow run waits for a maintainer to approve it; once CI is green, a human can merge it.', ci };
   if (ci.checks === 'unsettled') return { outcome: 'left', stamped: true, reason: 'checks unsettled', note: `The review would merge it, but CI had not finished within ${CHECKS_WAIT_MS / 60_000} minutes.`, ci };
 
   try {
