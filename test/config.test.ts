@@ -25,12 +25,12 @@ describe('agent credentials', () => {
 
   it('only what is set here is forwarded; the rest is named as missing', () => {
     const config = loadConfig(configDir({ agentEnv: [
-      { name: 'VERTEX_API_KEY', description: 'Vertex' },
+      { name: 'MODEL_API_KEY', description: 'Model provider' },
       { name: 'OPENAI_API_KEY', description: 'OpenAI' },
     ] }));
-    const creds = agentCredentials(config, { VERTEX_API_KEY: 'AQ.x', OPENAI_API_KEY: '' });
-    expect(creds.present.map((c) => c.name)).toEqual(['VERTEX_API_KEY']);
-    expect(creds.values).toEqual({ VERTEX_API_KEY: 'AQ.x' });
+    const creds = agentCredentials(config, { MODEL_API_KEY: 'AQ.x', OPENAI_API_KEY: '' });
+    expect(creds.present.map((c) => c.name)).toEqual(['MODEL_API_KEY']);
+    expect(creds.values).toEqual({ MODEL_API_KEY: 'AQ.x' });
     expect(creds.missing).toEqual(['OPENAI_API_KEY']);
   });
 

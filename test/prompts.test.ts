@@ -201,12 +201,12 @@ describe('red checks go back to the implementer', () => {
 // agent's shell; the prompt says what it is for, so the live test that needs
 // the real service gets run instead of reported as blocked.
 describe('credentials reach agents as names, never values', () => {
-  const creds = [{ name: 'VERTEX_API_KEY', description: 'Google Vertex express-mode key for Gemini.' }];
+  const creds = [{ name: 'MODEL_API_KEY', description: 'API key for the model provider the app calls.' }];
 
   it('implementer is told what is in its environment and what it is for', () => {
     const p = implementPrompt(task, creds);
     expect(p).toContain('## Credentials in your environment');
-    expect(p).toContain('`VERTEX_API_KEY`: Google Vertex express-mode key for Gemini.');
+    expect(p).toContain('`MODEL_API_KEY`: API key for the model provider the app calls.');
     expect(p).toContain('Never print, commit, or paste a value');
   });
 
@@ -216,7 +216,7 @@ describe('credentials reach agents as names, never values', () => {
 
   it('environment agent knows which credentials the factory holds', () => {
     const prs = ['https://github.com/o/r/pull/1'];
-    expect(environmentPrompt(prs, [], creds)).toContain('`VERTEX_API_KEY`');
+    expect(environmentPrompt(prs, [], creds)).toContain('`MODEL_API_KEY`');
     expect(environmentPrompt(prs, [], creds)).toContain('skipped by the implementer, not the machine');
     expect(environmentPrompt(prs)).not.toContain('The factory does hold');
   });

@@ -172,7 +172,7 @@ CSRF middleware rejects the agent layer's /internal calls with env.example's set
 With \`APP_CSRF_REPORT_ONLY="false"\` every POST /internal/tools/invoke answers 403.
 \`\`\`
 
-The Bifrost start is the same as on #1056.`;
+The database start is the same as on #56.`;
 
   it('lifts each issue block out, title first line and body the rest', () => {
     const { report, issues } = parseEnvReport(reply);
@@ -181,7 +181,7 @@ The Bifrost start is the same as on #1056.`;
       body: 'With `APP_CSRF_REPORT_ONLY="false"` every POST /internal/tools/invoke answers 403.',
     }]);
     expect(report).toContain('No environment gap');
-    expect(report).toContain('same as on #1056');
+    expect(report).toContain('same as on #56');
     expect(report).not.toContain('```issue');
     expect(report).not.toContain('answers 403');
   });
