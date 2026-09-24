@@ -39,7 +39,8 @@
   },
   "review": {
     "enabled": false,
-    "maxPerTick": 3
+    "maxPerTick": 3,
+    "maxCommitsBehind": 100
   },
   "assignedIssues": {
     "groom": true,

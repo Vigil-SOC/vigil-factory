@@ -86,10 +86,12 @@ reconcile with GitHub: record the verdict on every factory PR that has closed, r
    open at a time; a commit the last pass already judged is not looked at again
 → REVIEW agents, alongside too (up to review.maxPerTick, in parallel; authors replying to
    a close first, then oldest first): each open PR the factory did not open — bots and
-   drafts aside — that is new or changed since its last review. The agent reads it against
-   principles.md, closes it if something is fundamentally wrong, otherwise verifies it live,
-   pushes the fixes it needs to its branch, and answers merge; the factory waits for CI on
-   that commit, hands a red check back once, and squash-merges it
+   drafts aside — that is new or changed since its last review. One that conflicts with the
+   default branch or is more than review.maxCommitsBehind commits behind it is closed with a
+   request to rebase, no agent spent. Otherwise the agent reads it against principles.md,
+   closes it if something is fundamentally wrong, otherwise tests it live (the suites are
+   CI's), pushes the fixes it needs to its branch, and answers merge; the factory waits for
+   CI on that commit, hands a red check back once, and squash-merges it
 count the jobs already in flight (open factory PRs + running pipelines)
    → no free slot under maxConcurrentJobs? stop here
 for each free slot:
@@ -572,8 +574,11 @@ reviewed again whether or not they said anything.
 **Which PRs.** Every open, non-draft PR not carrying a factory label (`factory`,
 `factory:env`, `factory:simplify` — the factory opens PRs under a person's account, so the
 author says nothing) and not opened by a bot. Dependabot and release-please are someone
-else's automation and are left alone. Red checks and conflicts are included on purpose:
-they are often exactly what stands between a good PR and a merge. Reviews do not count
+else's automation and are left alone. Red checks are included on purpose: they are often
+exactly what stands between a good PR and a merge. Drift is not: a PR that conflicts with
+the default branch, or is more than `review.maxCommitsBehind` commits behind it, is closed
+before any agent starts, asking its author to rebase and open a new one. Catching a PR up
+and re-verifying it is an implementer's run on someone else's code. Reviews do not count
 against `maxConcurrentJobs`; `review.maxPerTick` bounds how many run in one tick. The phase
 is off unless `review.enabled` is set, since it is the one that merges.
 
@@ -687,9 +692,9 @@ committed.
   code. Off means the factory only ever adds.
 - `factory.config.json` → `labels.reviewPr` — (default `factory:review`) the replacement PR
   the review phase opens for a fork PR that needed fixes.
-- `factory.config.json` → `review` — `enabled` (default false) and `maxPerTick` (default 3):
-  the phase that reviews PRs the factory did not open and merges or closes them. Cursor
-  worker only. See [Reviewing outside PRs](#reviewing-outside-prs).
+- `factory.config.json` → `review` — `enabled` (default false), `maxPerTick` (default 3),
+  and `maxCommitsBehind` (default 100): the phase that reviews PRs the factory did not open
+  and merges or closes them. Cursor worker only. See [Reviewing outside PRs](#reviewing-outside-prs).
 - `factory.config.json` → `selector` — `enabled` (default false): whether an agent ranks
   the groomed issues before each implementer run. Off, the oldest groomed issue is
   implemented next; see [One judge of size](#one-judge-of-size) for why that is the

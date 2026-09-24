@@ -260,6 +260,18 @@ export async function viewPrForReview(repo: string, prUrl: string): Promise<Revi
   return ghJson(['pr', 'view', prUrl, '-R', repo, '--json', `${REVIEW_PR_FIELDS},files`]);
 }
 
+/**
+ * How far a PR is from its base: GitHub's mergeability and how many base
+ * commits its head lacks. The compare API resolves a fork's head by sha,
+ * since the base repo holds every PR's commits under its pull refs.
+ */
+export async function prDrift(repo: string, prUrl: string): Promise<{ mergeable: string; behindBy: number }> {
+  const pr = await ghJson<{ mergeable: string; baseRefName: string; headRefOid: string }>(
+    ['pr', 'view', prUrl, '-R', repo, '--json', 'mergeable,baseRefName,headRefOid']);
+  const behind = await gh(['api', `repos/${repo}/compare/${pr.baseRefName}...${pr.headRefOid}`, '--jq', '.behind_by']);
+  return { mergeable: pr.mergeable, behindBy: Number(behind.trim()) };
+}
+
 /** Close without a comment of gh's own: the factory's stamped comment is posted first. */
 export async function closePrQuietly(repo: string, prUrl: string): Promise<void> {
   await gh(['pr', 'close', prUrl, '-R', repo]);

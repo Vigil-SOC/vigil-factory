@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { authorReplied, coAuthorTrailer, isBot, needsReview, parseReviewReply, reviewComment, reviewFingerprint, reviewQueue, reviewStamp, sameCommit, skipReason, touchesGithub, type ReviewPr } from '../src/review.ts';
+import { authorReplied, coAuthorTrailer, isBot, needsReview, parseReviewReply, reviewComment, reviewFingerprint, reviewQueue, reviewStamp, sameCommit, skipReason, staleReason, staleReport, touchesGithub, type ReviewPr } from '../src/review.ts';
 import { factoryComment } from '../src/groom.ts';
 import { reviewPrompt } from '../src/prompts.ts';
 
@@ -144,15 +144,37 @@ describe('the factory\'s own rules on a merge', () => {
   });
 });
 
+describe('a PR too far from the default branch is closed unreviewed', () => {
+  it('any conflict, or more commits behind than the limit', () => {
+    expect(staleReason({ mergeable: 'CONFLICTING', behindBy: 0 }, 100)).toBe('it conflicts with the default branch');
+    expect(staleReason({ mergeable: 'MERGEABLE', behindBy: 101 }, 100)).toBe('it is 101 commits behind the default branch');
+    expect(staleReason({ mergeable: 'MERGEABLE', behindBy: 100 }, 100)).toBeNull();
+  });
+
+  it('GitHub still computing mergeability is not a conflict', () => {
+    expect(staleReason({ mergeable: 'UNKNOWN', behindBy: 3 }, 100)).toBeNull();
+  });
+
+  it('the report asks for a rebase as a new PR', () => {
+    expect(staleReport('it conflicts with the default branch', 100)).toMatch(/Rebase it onto the default branch and open a new PR/);
+  });
+});
+
 describe('review prompt', () => {
   const p = reviewPrompt({ number: 12, url: 'https://github.com/o/r/pull/12', isCrossRepository: false }, 'PRINCIPLES');
   const fork = reviewPrompt({ number: 12, url: 'https://github.com/o/r/pull/12', isCrossRepository: true }, 'PRINCIPLES');
 
-  it('hands the link and the principles, and holds the PR to the implementer\'s verification', () => {
+  it('hands the link and the principles, and tests live but leaves the suites to CI', () => {
     expect(p).toContain('https://github.com/o/r/pull/12');
     expect(p).toContain('PRINCIPLES');
-    expect(p).toContain('the full suites CI runs');
     expect(p).toContain('agent-browser');
+    expect(p).toContain('do not run those suites here');
+    expect(p).not.toContain('the full suites CI runs');
+  });
+
+  it('asks for no subagent review, and hands a PR that needs catching up back for a rebase', () => {
+    expect(p).not.toMatch(/subagent/);
+    expect(p).toContain('gets a close that asks them to rebase');
   });
 
   it('fixes rather than hands back, closes what is fundamentally wrong, and names the commit on merge', () => {

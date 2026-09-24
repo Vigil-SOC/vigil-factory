@@ -78,8 +78,10 @@ export interface FactoryConfig {
   /** The review phase: PRs the factory did not open, reviewed against the
    *  principles, verified, fixed, and merged or closed by the factory itself.
    *  `maxPerTick` bounds how many one tick reviews. Off by default: it is the
-   *  one phase that merges. */
-  review: { enabled: boolean; maxPerTick: number };
+   *  one phase that merges. A PR more than `maxCommitsBehind` commits behind the
+   *  default branch, or conflicting with it, is closed with a request to rebase,
+   *  before any agent is spent on it. */
+  review: { enabled: boolean; maxPerTick: number; maxCommitsBehind: number };
   /**
    * Whether a phase may act on an issue a human has assigned to themselves.
    * Grooming defaults to true — vetting costs the assignee nothing and the
@@ -147,11 +149,15 @@ export function loadConfig(root: string = projectRoot): FactoryConfig {
   config.labels.blocker ??= 'factory:blocker';
   config.simplify ??= { enabled: true };
   // The one phase that merges is the one a deployment has to ask for.
-  config.review ??= { enabled: false, maxPerTick: 3 };
+  config.review ??= { enabled: false, maxPerTick: 3, maxCommitsBehind: 100 };
   config.review.enabled ??= false;
   config.review.maxPerTick ??= 3;
+  config.review.maxCommitsBehind ??= 100;
   if (!Number.isInteger(config.review.maxPerTick) || config.review.maxPerTick < 1) {
     throw new Error(`review.maxPerTick must be a positive integer, got ${JSON.stringify(config.review.maxPerTick)}`);
+  }
+  if (!Number.isInteger(config.review.maxCommitsBehind) || config.review.maxCommitsBehind < 0) {
+    throw new Error(`review.maxCommitsBehind must be a non-negative integer, got ${JSON.stringify(config.review.maxCommitsBehind)}`);
   }
   config.selector ??= { enabled: false, maxCandidates: 100 };
   config.selector.enabled ??= false;
