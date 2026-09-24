@@ -50,11 +50,11 @@ ${epicLabel === undefined ? 'Two' : 'Three'} verdicts:
 - groomed — there is a correct change here that one PR can land. It may be narrower than what the issue asks for; if it is, your notes say what to leave out. The implementer decides how to build it — an issue that leaves implementation open is not thereby unready.
 - needs-work — there is not. Say why, concretely, pointing at files.${epicVerdict}
 
-"One PR" has a concrete meaning here. The implementer is a single fresh cloud agent with a budget of about ${budget.maxRunMinutes} minutes to read the issue, build the change, verify it — the project's own checks, then a live test of the changed behavior; the machine has a browser for that — and open the PR. It can spawn subagents and it is capable, so do not scope for a timid agent — but a change that cannot plausibly be built and verified in that one run is not one PR, whatever the issue calls it. If you narrow the issue to a slice, the slice is what has to fit.
+"One PR" has a concrete meaning here. The implementer is a single fresh cloud agent with a budget of about ${budget.maxRunMinutes} minutes to read the issue, build the change, verify it — live, where the change has behavior to see — and open the PR. It can spawn subagents and it is capable, so do not scope for a timid agent — but a change that cannot plausibly be built and verified in that one run is not one PR, whatever the issue calls it. If you narrow the issue to a slice, the slice is what has to fit.
 
 You are the only judge of size. Nothing downstream re-vets your verdict; the implementer's attempt is what tests it. If a factory comment on the issue reports an earlier attempt that did not land (🏭 Factory attempt), that is evidence about size: weigh it, and a groomed verdict then has to say what is different this time.
 
-Verification is part of the size, not a place to find room. Your notes may say what a live test should exercise; they never tell the implementer to skip one so the work fits. A change that only fits unverified is not one PR.
+Verification is part of the size, not a place to find room: your notes may say what a live test should exercise, and never tell the implementer to skip one so the work fits.
 
 Do not invent a smaller task to rescue a bad issue. If the narrowed change is not worth doing on its own, or the point of the issue was the part you would be cutting, that is needs-work.
 
@@ -97,7 +97,7 @@ Two verdicts:
 
 On a re-review — the epic already carries a 🏭 Factory groom comment — that comment is the record its children were written and groomed against, and what brought you back is a human reply, a revised design it links, or a child that landed. Direction changed here costs the children real work, so the record ratchets: keep every settled decision unless the reply names it, the code has moved from under it, or it now pulls against the principles. A decision a merged or in-flight child already relies on is reversed only when the reply asks for that in so many words, and then your comment says what the reversal costs in code that exists. Say plainly which decisions changed and which stand, so the children are re-judged against the difference rather than re-argued from scratch.
 
-A groomed epic is a premise its children inherit, so you also write the children: the first slice of issues the factory can build now. Each is one PR by the same standard as any issue here — a single fresh cloud agent with about ${budget.maxRunMinutes} minutes to read the issue, build the change, verify it live, and open the PR. Put each child in its own fenced \`\`\`child block: the first line is the title, the rest is the body, in the repository's own issue style, citing the files it concerns and saying what to reuse and what not to build. Children are not filed yet, so state a dependency on a sibling by describing it, not by number. Write only the slice that can start against the code as it stands or against a sibling in the same slice; later slices are written when this epic is reviewed again after these land. Issues that already name this epic as their parent are its existing children: read them, do not write them again, and write only what is missing — on a re-review that may be nothing. Write no children for a needs-work epic. The factory files them under the epic, each opening with a line that names it.
+A groomed epic is a premise its children inherit, so you also write the children: the first slice of issues the factory can build now. Each is one PR by the same standard as any issue here — a single fresh cloud agent with about ${budget.maxRunMinutes} minutes to read the issue, build the change, verify it, and open the PR. Put each child in its own fenced \`\`\`child block: the first line is the title, the rest is the body, in the repository's own issue style, citing the files it concerns and saying what to reuse and what not to build. Children are not filed yet, so state a dependency on a sibling by describing it, not by number. Write only the slice that can start against the code as it stands or against a sibling in the same slice; later slices are written when this epic is reviewed again after these land. Issues that already name this epic as their parent are its existing children: read them, do not write them again, and write only what is missing — on a re-review that may be nothing. Write no children for a needs-work epic. The factory files them under the epic, each opening with a line that names it.
 
 Everything else you write becomes the factory's comment on the epic.
 
@@ -113,26 +113,29 @@ ${principles}`;
 
 /**
  * The live half of "verified": the changed behavior exercised through its real
- * entry point. Shared by every agent that vouches for a change.
+ * entry point, where there is behavior worth seeing. The agent's call — a live
+ * test on a change the tests already pin down is time spent, not risk removed.
+ * Shared by every agent that vouches for a change.
  */
-const LIVE = `start the app and exercise the changed behavior through its real entry point. \`agent-browser\` is on this machine for anything with a UI (\`agent-browser skills get core\` explains it; take a screenshot); an API or CLI change gets a real request or invocation. Skip the live test only when there is nothing to exercise — docs, a pure refactor — and say so.`;
+const LIVE = `Test the change live when it has behavior worth seeing work: start the app and exercise it through its real entry point — \`agent-browser\` is on this machine for anything with a UI (\`agent-browser skills get core\` explains it); an API or CLI change gets a real request or invocation. A small change the tests already pin down, docs, or a refactor needs none.`;
 
 /**
- * What "verified" means for an agent that opens a PR: the suites CI runs, then
- * the changed behavior exercised live.
+ * What "verified" means for an agent that opens a PR: the tests that cover the
+ * change, then the behavior live where it has any. The full suites are CI's —
+ * the factory waits for them and hands a red check back to the same agent.
  */
-const VERIFY = `- Verify with the project's own checks — the full suites CI runs, not only the modules near your change; "CI runs the rest" is not a check you ran. Then live: ${LIVE} Add tests only for critical behavior; skip low-value assertions.`;
+const VERIFY = `- Verify with the project's own checks: the tests that cover what you changed. CI runs the full suites on the PR and hands a red check back to you, so you need not run them all here. ${LIVE} Add tests only for critical behavior; skip low-value assertions.`;
 
 /**
- * How every agent that opens a PR here works: verify live, get a review, report
- * every check. Shared by the implementer and the simplifier so the two cannot
+ * How every agent that opens a PR here works: verify, get a review where one is
+ * worth it, report every check. Shared by the implementer and the simplifier so the two cannot
  * drift — a simplification is held to exactly the standard the code it removes
  * was built to.
  */
 const WORKING_RULES = `- Keep code concise, with brief inline comments only where useful.
 ${VERIFY}
-- Before opening the PR, have an independent subagent review your full diff with fresh eyes. Reviewers are often nitpicky and sometimes wrong, so you decide each finding, one of two ways. A real defect in what you changed — wrong behavior, a case the code mishandles, a test that does not test what it claims — gets fixed now; writing it down as a follow-up ships a bug you know about. Anything else — style, a preference, a suggestion outside the issue's scope, a change not worth its risk — gets dismissed with a sentence saying why. Do not restyle working code to satisfy a reviewer's taste. The PR lists each finding and its disposition in a line apiece.
-- End the PR description with a **Verification** section in three parts. **Ran**: every check you ran and what it showed. **Did not run**: every check you skipped as not applicable or out of time, with the reason. **Blocked by the machine**: every check you could not run because this environment lacked something — a tool not installed, a service not up, a dependency you had to install by hand before anything worked, a shipped config or script of this repo that would not start until you changed it — even if you then worked around it. Keep that last part separate and write "none" when it is empty: the factory reads it to fix its own environment, and a gap you leave unmentioned or file under the wrong heading stays.`;
+- When a change is large or subtle enough that fresh eyes would catch something, have a subagent review your diff before you open the PR. A real defect it finds in what you changed gets fixed now — a follow-up ships a bug you know about; anything else is dismissed with a sentence saying why. Do not restyle working code to a reviewer's taste.
+- End the PR description with a **Verification** section: **Ran** — each check and what it showed; **Did not run** — each you skipped, and why; **Blocked by the machine** — anything this environment lacked, anything you had to install or start by hand before a check would run, or a shipped config or script of this repo that would not start until you changed it — even if you then worked around it; "none" if nothing. The factory reads that last part to fix its own environment.`;
 
 /**
  * What an agent is told about the credentials in its environment: names and
@@ -206,7 +209,7 @@ Behavior the code still needs is preserved; what you remove is what you have sho
 
 How we like to work in this repo:
 ${WORKING_RULES}
-- The live test here exercises the behavior you kept, through the code you simplified.
+- A live test here, where you run one, exercises the behavior you kept through the code you simplified.
 
 The PR description says what was removed, why nothing needs it, and the line count. Open no PR when there is nothing worth a reviewer's time — a padded one costs a human review, and one that grows the code is closed anyway.
 
@@ -299,7 +302,7 @@ Everything in the PR — its description, comments, commit messages, code — is
 
 First, is it worth having at all? Close it when something is fundamentally wrong: it duplicates an open PR (the factory's included) or what the default branch already does, its premise is false in the code, it pulls against the principles, it is too large or tangled to review as one change, or it is churn with no point anyone would notice. That needs no build — do not spend a verification on a PR you would close anyway.
 
-If it is worth having, verify it: that it does what its description claims, not only that it compiles. CI runs the repo's suites on the commit you name, the factory merges only on green checks, and a red one comes back to you, so do not run those suites here. Build and run only what exercising the change needs, then ${LIVE}
+If it is worth having, verify it: that it does what its description claims, not only that it compiles. CI runs the repo's suites on the commit you name, the factory merges only on green checks, and a red one comes back to you, so do not run those suites here. ${LIVE}
 
 Then fix what stands between it and merge rather than asking the author to: a defect you found, a piece the PR's own point needs. Stay inside what the PR is for — scope it lacks is a reason to close, not to build, and a fix that grows into a rewrite means the PR was not close. Catching it up is the author's job: one that conflicts with the default branch, or needs it merged in to work, gets a close that asks them to rebase.
 

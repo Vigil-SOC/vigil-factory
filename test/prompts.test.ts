@@ -43,11 +43,12 @@ describe('size is judged once', () => {
   });
 });
 
-// The live test is the check the factory was built to get, so no prompt may
-// leave it optional or let another agent scope it away.
-describe('verification is required and reported', () => {
-  it('implementer is told to live-test with agent-browser and to report every check in the PR', () => {
+// Whether a change needs a live test is the implementer's call, but it has the
+// tools for one, reports every check, and no groomer may scope one away.
+describe('verification is the agent\'s call and always reported', () => {
+  it('implementer may live-test with agent-browser and reports every check in the PR', () => {
     const p = implementPrompt(task);
+    expect(p).toContain('Test the change live when it has behavior worth seeing work');
     expect(p).toContain('agent-browser');
     expect(p).toContain('**Verification** section');
     expect(p).toContain('**Did not run**');
@@ -56,8 +57,9 @@ describe('verification is required and reported', () => {
     expect(p).toMatch(/even if you then worked around it/);
   });
 
-  it('implementer triages review findings: fix or dismiss with a reason, never a follow-up', () => {
+  it('implementer triages review findings, when it asks for a review: fix or dismiss with a reason, never a follow-up', () => {
     const p = implementPrompt(task);
+    expect(p).toContain('When a change is large or subtle enough');
     expect(p).toContain('gets fixed now');
     expect(p).toContain('dismissed with a sentence saying why');
     expect(p).not.toMatch(/react to what it finds/);
@@ -186,8 +188,10 @@ describe('environment agent judges against CI and sees its own history', () => {
 // CI is the repo's own verdict. The factory relays a red check to the agent
 // that wrote the code rather than to a human, and the agent judges whose it is.
 describe('red checks go back to the implementer', () => {
-  it('working rules ask for the suites CI runs, not the ones near the change', () => {
-    expect(implementPrompt(task)).toContain('the full suites CI runs');
+  it('working rules leave the full suites to CI, which hands a red check back', () => {
+    const p = implementPrompt(task);
+    expect(p).toContain('the tests that cover what you changed');
+    expect(p).toContain('hands a red check back to you');
   });
 
   it('fix prompt hands links to the failing jobs and forbids a new PR or a skipped check', () => {

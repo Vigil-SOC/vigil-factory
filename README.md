@@ -33,11 +33,13 @@ Plenty of tools point an agent at a backlog. This one takes positions:
   implement — it cannot tell "assigned and untouched" from "assigned and half-written
   locally", and guessing wrong wastes a person's work, not an agent's. It will still
   groom it, because a verdict costs the assignee nothing and may be useful to them.
-- **Every change is tested live, and every PR says what was checked.** Unit tests stand
-  in for nothing: the implementer starts the app and exercises the change through its real
-  entry point, with `agent-browser` for anything that has a UI, and ends its PR with a
-  Verification section listing each check it ran and each it did not, with the reason.
-  The groomer budgets for that and may not scope it away to make an issue fit.
+- **Every PR says what was checked.** The implementer runs the tests that cover its
+  change — CI runs the full suites and hands a red check back — and, when the change has
+  behavior worth seeing work, starts the app and exercises it through its real entry point,
+  with `agent-browser` for anything that has a UI. That call is the agent's: a live test
+  on a change the tests already pin down is spend, not safety. The PR ends with a
+  Verification section listing each check it ran and each it did not, with the reason, and
+  the groomer may not scope a live test away to make an issue fit.
 - **CI's verdict goes back to the agent, not to the reviewer.** A PR with a failing check
   is not finished work. The factory waits for the checks and, if one is red, hands the
   failing jobs back to the implementer that wrote the code — same agent, same branch —
@@ -484,7 +486,7 @@ complexity most likely is — and told what to look for: abstractions with one c
 legacy and fallback paths nothing reaches, two implementations of one idea, features
 nobody asked for, and hand-rolled versions of what the framework provides. It has the
 same run budget as an implementer, so the PR can be substantial, and it works to the same
-rules: verify live, get a subagent review, report every check in the PR.
+rules: verify, get a subagent review where one is worth it, report every check in the PR.
 
 **The one rule the factory enforces itself is that the PR must remove more lines than it
 adds**, as GitHub counts them over the whole diff. This is enforced mechanically, not
@@ -523,7 +525,7 @@ the same standard grooming holds issues to — and decides everything itself:
   cheap filter for generated noise. The factory posts the reason and closes the PR, saying
   that if it misread the change, the author should reply.
 - **merge** — the PR is worth having. The agent verified it the way an implementer verifies
-  its own work (the suites CI runs, then the behavior live), fixed what stood between it and
+  its own work (the behavior live, where it has any; CI runs the suites), fixed what stood between it and
   merge — a failing test, a conflict, a defect it found — by pushing to the PR's own branch,
   and names the head commit it verified.
 - **leave** — a decision that needs a person: irreversible, legal or licensing exposure,
