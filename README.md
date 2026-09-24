@@ -549,7 +549,9 @@ a teammate's branch — is simpler: its agent works on the PR's own branch.
 **The merge is the agent's call held to the factory's rules.** The controller merges only:
 - the commit the agent named, and only while it is still the PR's head (`--match-head-commit`)
   — a push nobody verified is not merged; the PR is reviewed again as it stands;
-- once CI is green on it, after at most one fix round by the same agent;
+- once CI is green on it, after at most one fix round by the same agent — a fork's workflow
+  runs held for a maintainer's approval are approved by the factory once the review passes,
+  since that review is the maintainer's read the hold asks for;
 - within the repo's own rules — never `--admin`, though the factory's token could bypass
   them, because a merge that needed to is one the repo said no to;
 - and never a PR that changes anything under `.github/`: workflows run with the repo's

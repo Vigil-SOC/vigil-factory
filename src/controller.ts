@@ -38,7 +38,7 @@ import { Telemetry } from './telemetry.ts';
 import { filterAssigned, filterClaimed, filterEpics, parseSelection, type Selection } from './selector.ts';
 import { BOOT_CHECK_PROMPT, environmentPrompt, fixChecksPrompt, groomEpicPrompt, groomPrompt, implementPrompt, reviewPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
 import { factoryComment, groomState, isBlocker, isEpic, isGroomed, needsGroom, queueOrder, openIssues, parseGroomReply, stampExtrasFor, unaccountedBlockers, verdict, type GroomLabels, type OpenIssues } from './groom.ts';
-import { addPrLabels, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, prDrift, reopenPr, userId, viewPr, viewPrForReview } from './github.ts';
+import { addPrLabels, approveHeldRuns, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, prDrift, reopenPr, userId, viewPr, viewPrForReview } from './github.ts';
 import { ENV_AGENT_MARK, environmentChangedAt, filedIssueBody, parseEnvReport, recentVerdicts, skipReason, unreadFactoryPrs, withOpenedThisTick, workerSkipReason, type UnreadPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
 import { coAuthorTrailer, isBot, parseReviewReply, reviewComment, reviewQueue, reviewStamp, sameCommit, skipReason as reviewSkipReason, staleReason, staleReport, touchesGithub, type ReviewOutcome, type ReviewPr, type ReviewReply } from './review.ts';
@@ -815,14 +815,19 @@ async function mergeVerified(
   });
   if (touchesGithub(before.files).length > 0) return github(touchesGithub(before.files));
 
-  const ci = await greenChecks(config, worker, handle, target);
+  // A fork's runs wait on a maintainer's approval, and the review that just
+  // passed is that maintainer's read of the code; with `.github/` untouched,
+  // the workflows that run are the repo's own.
+  const approved = before.isCrossRepository ? await approveHeldRuns(repo, before.headRefOid) : 0;
+  if (approved > 0) log(`${target}: approved ${approved} workflow run(s) held for a maintainer`);
+  const ci = await greenChecks(config, worker, handle, target, { expectChecks: approved > 0 });
   const after = await viewPrForReview(repo, target);
   // Only the reviewer's own fix round may move the head; anything else is a
   // push nobody verified.
   if (ci.fixRounds === 0 && after.headRefOid !== before.headRefOid) return { ...headMoved(before.headRefOid, after.headRefOid), ci };
   if (touchesGithub(after.files).length > 0) return { ...github(touchesGithub(after.files)), ci };
   if (ci.checks === 'red') return { outcome: 'left', stamped: true, reason: 'checks red', note: 'The review would merge it, but CI is still red after the reviewer\'s fix round.', ci };
-  if (ci.checks === 'none') return { outcome: 'left', stamped: true, reason: 'no checks', note: 'The review would merge it, but no CI has run on it, and the factory merges only on green checks. A fork\'s first workflow run waits for a maintainer to approve it; once CI is green, a human can merge it.', ci };
+  if (ci.checks === 'none') return { outcome: 'left', stamped: true, reason: 'no checks', note: 'The review would merge it, but no CI reported on it, and the factory merges only on green checks.', ci };
   if (ci.checks === 'unsettled') return { outcome: 'left', stamped: true, reason: 'checks unsettled', note: `The review would merge it, but CI had not finished within ${CHECKS_WAIT_MS / 60_000} minutes.`, ci };
 
   try {
@@ -1188,11 +1193,12 @@ async function greenChecks(
   worker: CodingWorker,
   handle: RunHandle,
   prUrl: string,
+  opts: { expectChecks?: boolean } = {},
 ): Promise<{ fixRounds: number; checks: NonNullable<RunRecord['checks']> }> {
   const repo = repoSlug(config);
   const poll = { maxWaitMs: CHECKS_WAIT_MS, pollMs: config.worker.pollIntervalSeconds * 1000, log };
   let fixRounds = 0;
-  let { failed, settled } = await awaitPrChecks(repo, prUrl, poll);
+  let { failed, settled } = await awaitPrChecks(repo, prUrl, { ...poll, expectChecks: opts.expectChecks === true });
   while (failed.length > 0 && fixRounds < FIX_ROUNDS) {
     fixRounds += 1;
     log(`${prUrl}: ${failed.length} failing check(s) — ${failed.map((c) => c.name).join(', ')}; handing them back to the implementer (round ${fixRounds})`);
