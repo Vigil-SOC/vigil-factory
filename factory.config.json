@@ -7,10 +7,10 @@
   "worker": {
     "kind": "cursor",
     "model": {
-      "id": "grok-4.7",
+      "id": "claude-opus-5-5",
       "params": {
-        "context": "500k",
-        "reasoning_effort": "medium",
+        "context": "1m",
+        "effort": "medium",
         "fast": "false"
       }
     },
