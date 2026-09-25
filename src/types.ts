@@ -135,9 +135,10 @@ export interface WorkSource {
   /** File the children a groomed epic's groomer wrote, each linked back to the
    *  epic, and note them on the epic. Returns what was filed. */
   fileChildren(epic: Task, children: { title: string; body: string }[]): Promise<{ number: number; url: string }[]>;
-  /** The epic's groom found the direction delivered: close it as completed,
-   *  and these open children of it, already needs-work, as not planned. */
-  closeEpic(epic: Task, children: number[]): Promise<void>;
+  /** Close these needs-work children of an epic as not planned: its groom let them go. */
+  dropChildren(epic: Task, children: number[]): Promise<void>;
+  /** The epic's groom found the direction delivered: close it as completed. */
+  closeEpic(epic: Task): Promise<void>;
   /** The groomer read an unlabelled issue and found a direction, not a PR: give
    *  it the repo's epic label and say why, so it is groomed as an epic. */
   markEpic(task: Task, reasoning: string): Promise<void>;

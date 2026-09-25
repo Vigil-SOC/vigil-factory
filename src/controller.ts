@@ -221,12 +221,21 @@ async function groomOne(
   // A groomed epic's children are the work; the verdict alone builds nothing.
   // Filed after the verdict is on record so a child always points at an epic
   // that already carries its decisions.
-  // Done is the epic's last verdict: it closes, and takes with it the children
-  // it was found done without.
+  // An epic's groom lets needs-work children go by naming them; a done epic
+  // lets go of all of them. Only its own needs-work children: a groomed child,
+  // or someone else's issue, is not the epic's to close.
+  if (epic && open) {
+    const needsWork = openChildren(task, open).filter((n) => verdict(open.get(n)!, ctx.config.labels) === 'needs-work');
+    const named = new Set(reply.close ?? []);
+    const dropped = reply.verdict === 'done' ? needsWork : needsWork.filter((n) => named.has(n));
+    if (dropped.length > 0) {
+      await ctx.source.dropChildren(task, dropped);
+      log(`epic #${task.issueNumber}: closed needs-work child(ren) ${dropped.map((n) => `#${n}`).join(' ')} as not planned`);
+    }
+  }
   if (reply.verdict === 'done') {
-    const dropped = open ? openChildren(task, open).filter((n) => verdict(open.get(n)!, ctx.config.labels) === 'needs-work') : [];
-    await ctx.source.closeEpic(task, dropped);
-    log(`epic #${task.issueNumber} is done: closed${dropped.length ? `, with needs-work child(ren) ${dropped.map((n) => `#${n}`).join(' ')}` : ''}`);
+    await ctx.source.closeEpic(task);
+    log(`epic #${task.issueNumber} is done: closed`);
   }
 
   let childrenFiled = 0;

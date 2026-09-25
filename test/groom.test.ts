@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   fingerprint, groomComment, groomNotes, groomState, hasLegacyBlock, isEpic, isFactoryComment, isGroomed, needsGroom, openIssues,
-  childrenFiledComment, epicClosedComment, epicRecognizedComment, openChildren, parentEpic, parseGroomReply, premiseOf, readBlocker, readChildren,
+  childDroppedComment, childrenFiledComment, epicRecognizedComment, openChildren, parentEpic, parseGroomReply, premiseOf, readBlocker, readChildren,
   readFingerprint, readPremise, recordFingerprint, stampExtrasFor, stripLegacyBlock, unaccountedBlockers, verdict,
 } from '../src/groom.ts';
 import type { GroomVerdict, IssueComment, Task } from '../src/types.ts';
@@ -466,7 +466,14 @@ describe('children of an epic', () => {
     expect(c).toContain('epic done');
     expect(c).toContain('Reopen it');
     expect(c).not.toContain('reviewed again on a later tick');
-    expect(epicClosedComment(ungroomedEpic)).toContain('closed with #40');
+    expect(childDroppedComment(ungroomedEpic)).toContain('let go by #40');
+  });
+
+  it('parses the needs-work children an epic groom lets go, and keeps them out of the comment', () => {
+    const parsed = parseGroomReply('#834 is the split #837 replaced.\n\nVERDICT: groomed\nCLOSE: #834\nclose: 907\nCLOSE: #834')!;
+    expect(parsed.close).toEqual([834, 907]);
+    expect(parsed.reasoning).not.toContain('CLOSE');
+    expect(parseGroomReply('Clear.\n\nVERDICT: groomed')!.close).toBeUndefined();
   });
 
   it('waits for the epic: a child is not groomed in a tick where its epic still needs one', () => {

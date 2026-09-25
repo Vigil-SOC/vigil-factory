@@ -414,10 +414,10 @@ export function childrenFiledComment(children: { number: number; url: string }[]
   );
 }
 
-/** The factory's note on a needs-work child, closed because its epic was found done without it. */
-export function epicClosedComment(epic: Task): string {
+/** The factory's note on a needs-work child its epic's groom let go: dropped, or left behind by a done epic. */
+export function childDroppedComment(epic: Task): string {
   return factoryComment(
-    `🏭 **Factory epic — closed with #${epic.issueNumber}.** The epic's groom found its direction delivered without this issue, so it is closed as not planned; the epic's last comment says why. Reopen it to have it groomed again on its own.`,
+    `🏭 **Factory epic — let go by #${epic.issueNumber}.** The epic's groom weighed this issue and does not need it for the direction, so it is closed as not planned; the epic's last comment says why. Reopen it to have it groomed again on its own.`,
   );
 }
 
@@ -505,10 +505,13 @@ export interface GroomReply {
   blocked?: number;
   /** Children written for an epic, from fenced ```child blocks. Empty otherwise. */
   children: ChildDraft[];
+  /** Needs-work children an epic's groom lets go, from `CLOSE: #N` lines. */
+  close?: number[];
 }
 
 const VERDICT_RE = /^\s*VERDICT:\s*(groomed|needs[-_ ]?work|epic|done)\s*$/gim;
 const BLOCKED_RE = /^\s*BLOCKED:\s*#?(\d+)\s*$/gim;
+const CLOSE_RE = /^\s*CLOSE:\s*#?(\d+)\s*$/gim;
 const NOTES_RE = /```notes[ \t]*\n([\s\S]*?)```/g;
 const CHILD_RE = /```child[ \t]*\n([\s\S]*?)```/g;
 
@@ -537,7 +540,7 @@ export function parseDraftBlocks(text: string, tag: string): { drafts: ChildDraf
 /**
  * Parse the groom agent's reply: a trailing verdict line, optionally a
  * `BLOCKED: #N` line, a fenced ```notes block, and for epics any number of
- * fenced ```child blocks. Returns null if there is no verdict to act on — a
+ * fenced ```child blocks and `CLOSE: #N` lines. Returns null if there is no verdict to act on — a
  * groom with no verdict is skipped, not guessed at.
  */
 export function parseGroomReply(text: string): GroomReply | null {
@@ -551,6 +554,7 @@ export function parseGroomReply(text: string): GroomReply | null {
   const blockedLine = [...text.matchAll(BLOCKED_RE)].at(-1)?.[1];
   const blocked = blockedLine && verdict === 'needs-work' ? Number(blockedLine) : undefined;
   const children = parseDraftBlocks(text, 'child').drafts;
+  const close = [...new Set([...text.matchAll(CLOSE_RE)].map((m) => Number(m[1])))];
 
   // The reasoning is everything except the machinery, for the issue comment.
   const reasoning = text
@@ -558,7 +562,8 @@ export function parseGroomReply(text: string): GroomReply | null {
     .replace(CHILD_RE, '')
     .replace(VERDICT_RE, '')
     .replace(BLOCKED_RE, '')
+    .replace(CLOSE_RE, '')
     .trim();
 
-  return { verdict, notes, reasoning, ...(blocked !== undefined ? { blocked } : {}), children };
+  return { verdict, notes, reasoning, ...(blocked !== undefined ? { blocked } : {}), children, ...(close.length ? { close } : {}) };
 }

@@ -5,7 +5,7 @@ import {
   addIssueLabels, closeIssue, commentOnIssue, createIssue, editIssueBody, ensureLabel, listOpenIssues, referenceState, removeIssueLabels,
 } from './github.ts';
 import {
-  childrenFiledComment, epicClosedComment, epicRecognizedComment, failedAttemptComment, groomComment, hasLegacyBlock, isEpic, stripLegacyBlock,
+  childDroppedComment, childrenFiledComment, epicRecognizedComment, failedAttemptComment, groomComment, hasLegacyBlock, isEpic, stripLegacyBlock,
   type ChildDraft, type GroomReply, type StampExtras,
 } from './groom.ts';
 
@@ -118,15 +118,18 @@ export class GitHubIssueSource implements WorkSource {
   }
 
   /**
-   * The epic's closing comment is its done verdict, already posted. Each child
-   * closed with it points there; one that fails to close stays needs-work,
-   * which is where it already was.
+   * Each child points at the epic's groom comment, already posted, for why.
+   * One that fails to close stays needs-work, which is where it already was.
    */
-  async closeEpic(epic: Task, children: number[]): Promise<void> {
+  async dropChildren(epic: Task, children: number[]): Promise<void> {
     for (const n of children) {
-      await commentOnIssue(this.repo, n, epicClosedComment(epic)).catch(() => {});
+      await commentOnIssue(this.repo, n, childDroppedComment(epic)).catch(() => {});
       await closeIssue(this.repo, n, 'not planned').catch(() => {});
     }
+  }
+
+  /** The epic's closing comment is its done verdict, already posted. */
+  async closeEpic(epic: Task): Promise<void> {
     await closeIssue(this.repo, epic.issueNumber, 'completed');
   }
 

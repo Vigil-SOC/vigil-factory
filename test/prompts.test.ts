@@ -95,6 +95,7 @@ describe('epics', () => {
     expect(p).toContain('Write no children for a needs-work or done epic');
     expect(p).toContain('VERDICT: done');
     expect(p).toContain('a child groomed needs-work');
+    expect(p).toContain('CLOSE: #<issue number>');
   });
 
   it('ratchets on a re-review: settled decisions stand unless the reply names them', () => {
