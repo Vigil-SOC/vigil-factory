@@ -180,6 +180,10 @@ export async function createIssue(
   return { number: Number(number), url };
 }
 
+export async function closeIssue(repo: string, issue: number, reason: 'completed' | 'not planned'): Promise<void> {
+  await gh(['issue', 'close', String(issue), '-R', repo, '--reason', reason]);
+}
+
 export async function commentOnIssue(repo: string, issue: number, body: string): Promise<void> {
   // Via stdin: groom rationales are longer than argv is worth trusting.
   await ghStdin(['issue', 'comment', String(issue), '-R', repo, '--body-file', '-'], body);

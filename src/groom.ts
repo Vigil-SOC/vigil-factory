@@ -54,10 +54,14 @@
 // one place, on the epic, and the children follow it without anyone having to
 // remember which ones were built against what.
 //
-// The epic's own stamp names its children (`children=#a,#b`, plus whatever the
-// factory files right after). When none of them is open any more the slice has
-// landed, the verdict is stale, and the epic is groomed again — which is when
-// the next slice gets written.
+// The epic's own stamp names its children in flight (`children=#a,#b`, plus
+// whatever the factory files right after). When none of them is open any more,
+// or the ones still open were groomed needs-work, the slice has settled: the
+// verdict is stale, and the epic is groomed again — which is when the next
+// slice gets written, a child's finding against the record is weighed, or the
+// epic is found done and closed. A child still needs-work after that groom is
+// the epic's call, so it is left out of the new stamp and does not bring the
+// epic back again.
 
 import { createHash } from 'node:crypto';
 import type { GroomVerdict, IssueComment, Task } from './types.ts';
@@ -323,16 +327,22 @@ function premiseChanged(premise: Premise, open: OpenIssues): boolean {
 /** What goes into this issue's stamp besides the fingerprint. */
 export function stampExtrasFor(task: Task, labels: GroomLabels, open?: OpenIssues): StampExtras {
   if (!open) return {};
-  return isEpic(task, labels) ? { children: openChildren(task, open) } : { premise: premiseOf(task, labels, open) };
+  if (!isEpic(task, labels)) return { premise: premiseOf(task, labels, open) };
+  // A child already needs-work is one this groom has weighed, not one in flight.
+  return { children: openChildren(task, open).filter((n) => verdict(open.get(n)!, labels) !== 'needs-work') };
 }
 
 /**
- * A groomed epic's slice has landed when every child its record knew about is
- * closed. That is the moment to groom it again and write the next slice.
+ * A groomed epic's slice has settled when every child its record knew about is
+ * closed or was groomed needs-work. That is the moment to groom it again: write
+ * the next slice, answer what a needs-work child found, or close it as done.
  */
-function sliceLanded(epic: Task, open: OpenIssues): boolean {
+function sliceSettled(epic: Task, open: OpenIssues, labels: GroomLabels): boolean {
   const children = readChildren(epic);
-  return children.length > 0 && children.every((n) => !open.has(n));
+  return children.length > 0 && children.every((n) => {
+    const child = open.get(n);
+    return !child || verdict(child, labels) === 'needs-work';
+  });
 }
 
 /**
@@ -348,7 +358,7 @@ export function groomState(task: Task, labels: GroomLabels, open?: OpenIssues): 
   if (open && blocker !== null && blockerCleared(blocker, open, labels)) return 'stale';
   const premise = readPremise(task);
   if (open && premise && premiseChanged(premise, open)) return 'stale';
-  if (open && isEpic(task, labels) && verdict(task, labels) === 'groomed' && sliceLanded(task, open)) return 'stale';
+  if (open && isEpic(task, labels) && verdict(task, labels) === 'groomed' && sliceSettled(task, open, labels)) return 'stale';
   return 'current';
 }
 
@@ -367,7 +377,9 @@ export function groomNotes(task: Task): string | undefined {
  */
 export function groomComment(task: Task, reply: GroomReply, epic = false, extras: StampExtras = {}): string {
   const headline = epic
-    ? reply.verdict === 'groomed'
+    ? reply.verdict === 'done'
+      ? '🏭 **Factory groom — epic done.** The direction is delivered, as recorded below; the factory closes this epic, and any child still open under it as needs-work closes with it.'
+      : reply.verdict === 'groomed'
       ? '🏭 **Factory groom — epic groomed.** The direction is settled, with the decisions below as its record; the factory files the first slice of children under it and builds toward it one PR at a time.'
       : '🏭 **Factory groom — epic needs work.** The factory is not building toward this as written; the decision it needs is named below.'
     : reply.verdict === 'groomed'
@@ -382,7 +394,9 @@ export function groomComment(task: Task, reply: GroomReply, epic = false, extras
   const stamp = `<!-- factory-groom ${attrs.join(' ')} -->`;
   const parts = [
     stamp,
-    `${headline} Edit the description or reply here and it gets reviewed again on a later tick.`,
+    reply.verdict === 'done'
+      ? `${headline} Reopen it to have it reviewed again.`
+      : `${headline} Edit the description or reply here and it gets reviewed again on a later tick.`,
     reply.reasoning.trim(),
   ];
   if (reply.notes) parts.push(`${NOTES_HEADING}\n\n${reply.notes.trim()}`);
@@ -397,6 +411,13 @@ export function childrenFiledComment(children: { number: number; url: string }[]
   const list = children.map((c) => `- ${c.url}`).join('\n');
   return factoryComment(
     `${CHILDREN_FILED} ${children.length} child issue${children.length === 1 ? '' : 's'} filed.** Each is groomed on its own on a later tick, with this epic's decisions as its premise.\n\n${list}`,
+  );
+}
+
+/** The factory's note on a needs-work child, closed because its epic was found done without it. */
+export function epicClosedComment(epic: Task): string {
+  return factoryComment(
+    `🏭 **Factory epic — closed with #${epic.issueNumber}.** The epic's groom found its direction delivered without this issue, so it is closed as not planned; the epic's last comment says why. Reopen it to have it groomed again on its own.`,
   );
 }
 
@@ -486,7 +507,7 @@ export interface GroomReply {
   children: ChildDraft[];
 }
 
-const VERDICT_RE = /^\s*VERDICT:\s*(groomed|needs[-_ ]?work|epic)\s*$/gim;
+const VERDICT_RE = /^\s*VERDICT:\s*(groomed|needs[-_ ]?work|epic|done)\s*$/gim;
 const BLOCKED_RE = /^\s*BLOCKED:\s*#?(\d+)\s*$/gim;
 const NOTES_RE = /```notes[ \t]*\n([\s\S]*?)```/g;
 const CHILD_RE = /```child[ \t]*\n([\s\S]*?)```/g;
@@ -523,7 +544,8 @@ export function parseGroomReply(text: string): GroomReply | null {
   const verdicts = [...text.matchAll(VERDICT_RE)];
   const last = verdicts.at(-1);
   if (!last) return null;
-  const verdict: GroomVerdict = /^groomed$/i.test(last[1]!) ? 'groomed' : /^epic$/i.test(last[1]!) ? 'epic' : 'needs-work';
+  const word = last[1]!.toLowerCase();
+  const verdict: GroomVerdict = word === 'groomed' || word === 'epic' || word === 'done' ? word : 'needs-work';
 
   const notes = [...text.matchAll(NOTES_RE)].at(-1)?.[1]?.trim() || undefined;
   const blockedLine = [...text.matchAll(BLOCKED_RE)].at(-1)?.[1];

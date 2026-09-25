@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   fingerprint, groomComment, groomNotes, groomState, hasLegacyBlock, isEpic, isFactoryComment, isGroomed, needsGroom, openIssues,
-  childrenFiledComment, epicRecognizedComment, openChildren, parentEpic, parseGroomReply, premiseOf, readBlocker, readChildren,
+  childrenFiledComment, epicClosedComment, epicRecognizedComment, openChildren, parentEpic, parseGroomReply, premiseOf, readBlocker, readChildren,
   readFingerprint, readPremise, recordFingerprint, stampExtrasFor, stripLegacyBlock, unaccountedBlockers, verdict,
 } from '../src/groom.ts';
 import type { GroomVerdict, IssueComment, Task } from '../src/types.ts';
@@ -443,6 +443,30 @@ describe('children of an epic', () => {
     const childless = groomComment(ungroomedEpic, { verdict: 'groomed', notes: undefined, reasoning: 'Settled.', children: [] }, true, { children: [] });
     const lone: Task = { ...ungroomedEpic, comments: [{ body: childless }], labels: ['type:epic', LABELS.groomed] };
     expect(groomState(lone, EPIC_LABELS, openIssues([lone]))).toBe('current');
+  });
+
+  it('an epic goes stale when the children still open were groomed needs-work — they are its to weigh', () => {
+    const c = groomComment(ungroomedEpic, { verdict: 'groomed', notes: undefined, reasoning: 'Settled.', children: [] }, true, { children: [41, 44] });
+    const stamped: Task = { ...ungroomedEpic, comments: [{ body: c }], labels: ['type:epic', LABELS.groomed] };
+    const rejected = verdictOn(child, 'needs-work');
+    const sibling = task(44, 'Part of #40\n\nfeat: reconstruction');
+    expect(groomState(stamped, EPIC_LABELS, openIssues([stamped, rejected, sibling]))).toBe('current');
+    expect(groomState(stamped, EPIC_LABELS, openIssues([stamped, rejected]))).toBe('stale');
+
+    // The re-groom leaves the needs-work child out of its stamp, so it does not come back for it.
+    const extras = stampExtrasFor(stamped, EPIC_LABELS, openIssues([stamped, rejected]));
+    expect(extras).toEqual({ children: [] });
+    const regroomed: Task = { ...stamped, comments: [...stamped.comments, { body: groomComment(stamped, { verdict: 'groomed', notes: undefined, reasoning: 'It stays out.', children: [] }, true, extras) }] };
+    expect(groomState(regroomed, EPIC_LABELS, openIssues([regroomed, verdictOn(child, 'needs-work')]))).toBe('current');
+  });
+
+  it('parses and publishes done, the epic delivered', () => {
+    expect(parseGroomReply('Every decision landed.\n\nVERDICT: done')).toMatchObject({ verdict: 'done' });
+    const c = groomComment(ungroomedEpic, { verdict: 'done', notes: undefined, reasoning: 'Every decision landed.', children: [] }, true);
+    expect(c).toContain('epic done');
+    expect(c).toContain('Reopen it');
+    expect(c).not.toContain('reviewed again on a later tick');
+    expect(epicClosedComment(ungroomedEpic)).toContain('closed with #40');
   });
 
   it('waits for the epic: a child is not groomed in a tick where its epic still needs one', () => {

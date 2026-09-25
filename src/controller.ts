@@ -37,7 +37,7 @@ import { FactoryState } from './state.ts';
 import { Telemetry } from './telemetry.ts';
 import { filterAssigned, filterClaimed, filterEpics, parseSelection, type Selection } from './selector.ts';
 import { BOOT_CHECK_PROMPT, environmentPrompt, fixChecksPrompt, groomEpicPrompt, groomPrompt, implementPrompt, reviewPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
-import { factoryComment, groomState, isBlocker, isEpic, isGroomed, needsGroom, queueOrder, openIssues, parseGroomReply, stampExtrasFor, unaccountedBlockers, verdict, type GroomLabels, type OpenIssues } from './groom.ts';
+import { factoryComment, groomState, isBlocker, isEpic, isGroomed, needsGroom, queueOrder, openChildren, openIssues, parseGroomReply, stampExtrasFor, unaccountedBlockers, verdict, type GroomLabels, type OpenIssues } from './groom.ts';
 import { addPrLabels, approveHeldRuns, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, prDrift, reopenPr, userId, viewPr, viewPrForReview } from './github.ts';
 import { ENV_AGENT_MARK, environmentChangedAt, filedIssueBody, parseEnvReport, recentVerdicts, skipReason, unreadFactoryPrs, withOpenedThisTick, workerSkipReason, type UnreadPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
@@ -199,6 +199,9 @@ async function groomOne(
   // Nobody has to label epics by hand for direction to get in: the factory
   // labels it, and grooms it again now — as an epic, with the epic's question —
   // rather than leaving the author to wait a tick for the verdict that matters.
+  if (reply.verdict === 'done' && !epic) {
+    throw new Error(`groom of #${task.issueNumber} answered "done" where that verdict was not offered`);
+  }
   if (reply.verdict === 'epic') {
     const epicLabel = ctx.config.labels.epic;
     if (epic || epicLabel === undefined) {
@@ -218,6 +221,14 @@ async function groomOne(
   // A groomed epic's children are the work; the verdict alone builds nothing.
   // Filed after the verdict is on record so a child always points at an epic
   // that already carries its decisions.
+  // Done is the epic's last verdict: it closes, and takes with it the children
+  // it was found done without.
+  if (reply.verdict === 'done') {
+    const dropped = open ? openChildren(task, open).filter((n) => verdict(open.get(n)!, ctx.config.labels) === 'needs-work') : [];
+    await ctx.source.closeEpic(task, dropped);
+    log(`epic #${task.issueNumber} is done: closed${dropped.length ? `, with needs-work child(ren) ${dropped.map((n) => `#${n}`).join(' ')}` : ''}`);
+  }
+
   let childrenFiled = 0;
   if (epic && reply.verdict === 'groomed') {
     if (reply.children.length === 0) {

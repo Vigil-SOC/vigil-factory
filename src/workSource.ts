@@ -2,10 +2,10 @@ import type { Task, WorkSource } from './types.ts';
 import type { FactoryConfig } from './config.ts';
 import { repoSlug } from './config.ts';
 import {
-  addIssueLabels, commentOnIssue, createIssue, editIssueBody, ensureLabel, listOpenIssues, referenceState, removeIssueLabels,
+  addIssueLabels, closeIssue, commentOnIssue, createIssue, editIssueBody, ensureLabel, listOpenIssues, referenceState, removeIssueLabels,
 } from './github.ts';
 import {
-  childrenFiledComment, epicRecognizedComment, failedAttemptComment, groomComment, hasLegacyBlock, isEpic, stripLegacyBlock,
+  childrenFiledComment, epicClosedComment, epicRecognizedComment, failedAttemptComment, groomComment, hasLegacyBlock, isEpic, stripLegacyBlock,
   type ChildDraft, type GroomReply, type StampExtras,
 } from './groom.ts';
 
@@ -87,7 +87,7 @@ export class GitHubIssueSource implements WorkSource {
     await commentOnIssue(this.repo, task.issueNumber, groomComment(task, reply, isEpic(task, this.config.labels), extras));
 
     const { groomed, needsWork } = this.config.labels;
-    const [add, remove] = reply.verdict === 'groomed' ? [groomed, needsWork] : [needsWork, groomed];
+    const [add, remove] = reply.verdict === 'needs-work' ? [needsWork, groomed] : [groomed, needsWork];
     await ensureLabel(this.repo, groomed, '0E8A16', 'Vetted by the factory; eligible for an agent to implement');
     await ensureLabel(this.repo, needsWork, 'D93F0B', 'Not ready for the factory as written; edit the issue to have it re-reviewed');
     // The label is the verdict of record: remove one by hand and the issue is groomed again.
@@ -115,6 +115,19 @@ export class GitHubIssueSource implements WorkSource {
     if (epicLabel === undefined) throw new Error('no epic label configured');
     await commentOnIssue(this.repo, task.issueNumber, epicRecognizedComment(reasoning, epicLabel));
     await addIssueLabels(this.repo, task.issueNumber, [epicLabel]);
+  }
+
+  /**
+   * The epic's closing comment is its done verdict, already posted. Each child
+   * closed with it points there; one that fails to close stays needs-work,
+   * which is where it already was.
+   */
+  async closeEpic(epic: Task, children: number[]): Promise<void> {
+    for (const n of children) {
+      await commentOnIssue(this.repo, n, epicClosedComment(epic)).catch(() => {});
+      await closeIssue(this.repo, n, 'not planned').catch(() => {});
+    }
+    await closeIssue(this.repo, epic.issueNumber, 'completed');
   }
 
   async fileChildren(epic: Task, children: ChildDraft[]): Promise<{ number: number; url: string }[]> {

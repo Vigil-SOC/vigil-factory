@@ -92,7 +92,9 @@ describe('epics', () => {
   it('writes children in fenced child blocks, sized to the implementer budget', () => {
     expect(p).toContain('```child');
     expect(p).toContain('about 90 minutes');
-    expect(p).toContain('Write no children for a needs-work epic');
+    expect(p).toContain('Write no children for a needs-work or done epic');
+    expect(p).toContain('VERDICT: done');
+    expect(p).toContain('a child groomed needs-work');
   });
 
   it('ratchets on a re-review: settled decisions stand unless the reply names them', () => {
