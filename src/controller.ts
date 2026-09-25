@@ -199,8 +199,8 @@ async function groomOne(
   // Nobody has to label epics by hand for direction to get in: the factory
   // labels it, and grooms it again now — as an epic, with the epic's question —
   // rather than leaving the author to wait a tick for the verdict that matters.
-  if (reply.verdict === 'done' && !epic) {
-    throw new Error(`groom of #${task.issueNumber} answered "done" where that verdict was not offered`);
+  if ((reply.verdict === 'done' && !epic) || (reply.verdict === 'close' && epic)) {
+    throw new Error(`groom of #${task.issueNumber} answered "${reply.verdict}" where that verdict was not offered`);
   }
   if (reply.verdict === 'epic') {
     const epicLabel = ctx.config.labels.epic;
@@ -236,6 +236,10 @@ async function groomOne(
   if (reply.verdict === 'done') {
     await ctx.source.closeEpic(task);
     log(`epic #${task.issueNumber} is done: closed`);
+  }
+  if (reply.verdict === 'close') {
+    await ctx.source.closeTask(task);
+    log(`#${task.issueNumber} has nothing to build: closed as not planned`);
   }
 
   let childrenFiled = 0;

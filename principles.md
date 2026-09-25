@@ -30,11 +30,11 @@ is not thereby wrong; the question is whether Vigil does SOC work better with it
   an outbound connection is opt-in, and the product is whole without it. LogLM
   pairs with Vigil and enriches it; Vigil is complete without LogLM.
 - **Autonomy is the goal.** Vigil is meant to run the SOC, not to assist a
-  person running it. Under the ceiling a human has set it acts without asking,
-  and making an action safe and observable beats putting a person in front of
-  it. Widening that ceiling — what Vigil may do on its own — is the one
-  direction that always goes to a human, so an epic that widens it is
-  needs-work with that decision named.
+  person running it. Under the ceiling its operator has set it acts without
+  asking, and making an action safe and observable beats putting a person in
+  front of it. Where that ceiling sits by default, and how far an operator may
+  raise it, is product direction like any other: weigh it carefully against
+  what Vigil is, and settle it.
 - **Extension is the open standard.** Tools reach agents as MCP servers the
   operator configures. A vendor-specific code path where an MCP server would do
   is the wrong shape.
@@ -146,9 +146,8 @@ settled, and settling them is the groomer's job, not a list of questions handed
 back. Pick the
 default that proves the seam with the least new machinery, say why, and say
 what it would cost to reverse. Hold an epic back only for a decision that
-genuinely needs a person: one that is irreversible, carries legal or licensing
-exposure, or widens what the system may do on its own without a human in
-front of it. A groomed epic's decisions are the premise its children inherit.
+genuinely needs a person: one that is irreversible, or carries legal or
+licensing exposure. A groomed epic's decisions are the premise its children inherit.
 When grooming a child, do not re-ask whether the capability is worth having or
 whether its concepts should exist; judge it on whether it is one correct PR
 toward the epic, against every other principle here, and follow the decisions

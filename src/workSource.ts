@@ -87,7 +87,8 @@ export class GitHubIssueSource implements WorkSource {
     await commentOnIssue(this.repo, task.issueNumber, groomComment(task, reply, isEpic(task, this.config.labels), extras));
 
     const { groomed, needsWork } = this.config.labels;
-    const [add, remove] = reply.verdict === 'needs-work' ? [needsWork, groomed] : [groomed, needsWork];
+    const built = reply.verdict === 'groomed' || reply.verdict === 'done';
+    const [add, remove] = built ? [groomed, needsWork] : [needsWork, groomed];
     await ensureLabel(this.repo, groomed, '0E8A16', 'Vetted by the factory; eligible for an agent to implement');
     await ensureLabel(this.repo, needsWork, 'D93F0B', 'Not ready for the factory as written; edit the issue to have it re-reviewed');
     // The label is the verdict of record: remove one by hand and the issue is groomed again.
@@ -131,6 +132,11 @@ export class GitHubIssueSource implements WorkSource {
   /** The epic's closing comment is its done verdict, already posted. */
   async closeEpic(epic: Task): Promise<void> {
     await closeIssue(this.repo, epic.issueNumber, 'completed');
+  }
+
+  /** The closing comment is the close verdict, already posted. */
+  async closeTask(task: Task): Promise<void> {
+    await closeIssue(this.repo, task.issueNumber, 'not planned');
   }
 
   async fileChildren(epic: Task, children: ChildDraft[]): Promise<{ number: number; url: string }[]> {

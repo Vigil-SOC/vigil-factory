@@ -473,6 +473,13 @@ describe('children of an epic', () => {
     expect(childDroppedComment(ungroomedEpic)).toContain('let go by #40');
   });
 
+  it('parses and publishes close, an issue with nothing to build', () => {
+    expect(parseGroomReply('Already true at core/x.py.\n\nVERDICT: close')).toMatchObject({ verdict: 'close' });
+    const c = groomComment(child, { verdict: 'close', notes: undefined, reasoning: 'Already true.', children: [] });
+    expect(c).toContain('Factory groom — closed.');
+    expect(c).toContain('Reopen it');
+  });
+
   it('parses the needs-work children an epic groom lets go, and keeps them out of the comment', () => {
     const parsed = parseGroomReply('#834 is the split #837 replaced.\n\nVERDICT: groomed\nCLOSE: #834\nclose: 907\nCLOSE: #834')!;
     expect(parsed.close).toEqual([834, 907]);

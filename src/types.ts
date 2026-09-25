@@ -110,9 +110,10 @@ export interface StartOptions {
  * A grooming verdict. An issue is either worth building (with notes appended
  * when there is something the implementer needs to know) or not ready as
  * written. `epic` is the ordinary groom finding a direction instead of a PR;
- * `done` is an epic's groom finding the direction delivered.
+ * `done` is an epic's groom finding the direction delivered; `close` is an
+ * issue's groom finding nothing to build and nothing an edit would rescue.
  */
-export type GroomVerdict = 'groomed' | 'needs-work' | 'epic' | 'done';
+export type GroomVerdict = 'groomed' | 'needs-work' | 'epic' | 'done' | 'close';
 
 /** The work source boundary. V1 implementation: GitHub issues. */
 export interface WorkSource {
@@ -139,6 +140,8 @@ export interface WorkSource {
   dropChildren(epic: Task, children: number[]): Promise<void>;
   /** The epic's groom found the direction delivered: close it as completed. */
   closeEpic(epic: Task): Promise<void>;
+  /** The issue's groom found nothing to build: close it as not planned. */
+  closeTask(task: Task): Promise<void>;
   /** The groomer read an unlabelled issue and found a direction, not a PR: give
    *  it the repo's epic label and say why, so it is groomed as an epic. */
   markEpic(task: Task, reasoning: string): Promise<void>;

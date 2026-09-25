@@ -390,7 +390,9 @@ export function groomComment(task: Task, reply: GroomReply, epic = false, extras
       : reply.verdict === 'groomed'
       ? '🏭 **Factory groom — epic groomed.** The direction is settled, with the decisions below as its record; the factory files the first slice of children under it and builds toward it one PR at a time.'
       : '🏭 **Factory groom — epic needs work.** The factory is not building toward this as written; the decision it needs is named below.'
-    : reply.verdict === 'groomed'
+    : reply.verdict === 'close'
+      ? '🏭 **Factory groom — closed.** There is nothing here to build, for the reason below; the factory closes it as not planned.'
+      : reply.verdict === 'groomed'
       ? '🏭 **Factory groom — groomed.** An agent can pick this up as written.'
       : reply.blocked !== undefined
         ? `🏭 **Factory groom — needs work, blocked on #${reply.blocked}.** The factory reviews this again once that issue closes.`
@@ -403,7 +405,7 @@ export function groomComment(task: Task, reply: GroomReply, epic = false, extras
   const stamp = `<!-- factory-groom ${attrs.join(' ')} -->`;
   const parts = [
     stamp,
-    reply.verdict === 'done'
+    reply.verdict === 'done' || reply.verdict === 'close'
       ? `${headline} Reopen it to have it reviewed again.`
       : `${headline} Edit the description or reply here and it gets reviewed again on a later tick.`,
     reply.reasoning.trim(),
@@ -518,7 +520,7 @@ export interface GroomReply {
   close?: number[];
 }
 
-const VERDICT_RE = /^\s*VERDICT:\s*(groomed|needs[-_ ]?work|epic|done)\s*$/gim;
+const VERDICT_RE = /^\s*VERDICT:\s*(groomed|needs[-_ ]?work|epic|done|close)\s*$/gim;
 const BLOCKED_RE = /^\s*BLOCKED:\s*#?(\d+)\s*$/gim;
 const CLOSE_RE = /^\s*CLOSE:\s*#?(\d+)\s*$/gim;
 const NOTES_RE = /```notes[ \t]*\n([\s\S]*?)```/g;
@@ -557,7 +559,7 @@ export function parseGroomReply(text: string): GroomReply | null {
   const last = verdicts.at(-1);
   if (!last) return null;
   const word = last[1]!.toLowerCase();
-  const verdict: GroomVerdict = word === 'groomed' || word === 'epic' || word === 'done' ? word : 'needs-work';
+  const verdict: GroomVerdict = word === 'groomed' || word === 'epic' || word === 'done' || word === 'close' ? word : 'needs-work';
 
   const notes = [...text.matchAll(NOTES_RE)].at(-1)?.[1]?.trim() || undefined;
   const blockedLine = [...text.matchAll(BLOCKED_RE)].at(-1)?.[1];

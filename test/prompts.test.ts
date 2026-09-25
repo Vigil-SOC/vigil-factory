@@ -96,6 +96,8 @@ describe('epics', () => {
     expect(p).toContain('VERDICT: done');
     expect(p).toContain('a child groomed needs-work');
     expect(p).toContain('CLOSE: #<issue number>');
+    expect(p).toContain('yours to answer');
+    expect(p).not.toContain('may do on its own');
   });
 
   it('ratchets on a re-review: settled decisions stand unless the reply names them', () => {
@@ -113,12 +115,14 @@ describe('epics', () => {
 
   it('the ordinary groom may answer "epic" only when the repo has an epic label', () => {
     const with_ = groomPrompt(task, 'principles', { maxRunMinutes: 90 }, 'type:epic');
-    expect(with_).toContain('Three verdicts');
+    expect(with_).toContain('Four verdicts');
+    expect(with_).toContain('VERDICT: close');
     expect(with_).toContain('VERDICT: epic');
     expect(with_).toContain('`type:epic`');
     expect(with_).toContain('Size alone does not make an epic');
     const without = groomPrompt(task, 'principles', { maxRunMinutes: 90 });
-    expect(without).toContain('Two verdicts');
+    expect(without).toContain('Three verdicts');
+    expect(without).toContain('yours to answer');
     expect(without).not.toContain('VERDICT: epic');
   });
 });
