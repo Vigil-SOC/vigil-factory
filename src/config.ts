@@ -26,6 +26,10 @@ export interface FactoryConfig {
     /** Model for either worker. Written in Cursor's shape — `id` plus
      *  `params` — and translated for Claude Code (see modelArgs). */
     model: ModelSpec | null;
+    /** Alternative models by name. The FACTORY_MODEL environment variable
+     *  names one to run instead of `model` for one run, which is how a
+     *  dispatched tick picks between them. */
+    models: Record<string, ModelSpec>;
     pollIntervalSeconds: number;
     maxRunMinutes: number;
     /** Credentials every agent is handed, by environment variable name. Only
@@ -127,6 +131,16 @@ export function loadConfig(root: string = projectRoot): FactoryConfig {
   // An empty FACTORY_WORKER is "as configured": Actions passes the dispatch
   // input through even when nobody set it.
   config.worker.kind = workerKind(process.env['FACTORY_WORKER']?.trim() || config.worker.kind || 'cursor');
+  config.worker.models ??= {};
+  // Likewise an empty FACTORY_MODEL: the configured model stands.
+  const modelName = process.env['FACTORY_MODEL']?.trim();
+  if (modelName) {
+    const model = config.worker.models[modelName];
+    if (!model) {
+      throw new Error(`FACTORY_MODEL=${modelName} names no model in worker.models (has: ${Object.keys(config.worker.models).join(', ') || 'none'})`);
+    }
+    config.worker.model = model;
+  }
   config.worker.agentEnv ??= [];
   for (const cred of config.worker.agentEnv) {
     // Cursor rejects env var names in its own namespace; the rest is shell.

@@ -31,6 +31,7 @@ Usage:
                                        (cancels the runs if the worker still can).
 
 Environment: FACTORY_WORKER=cursor|claude-code overrides worker.kind for one invocation.
+             FACTORY_MODEL=<name> runs worker.models.<name> instead of worker.model.
 `;
 
 async function groom(opts: { limit?: number; force?: boolean }): Promise<void> {

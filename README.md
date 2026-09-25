@@ -631,6 +631,10 @@ is Claude Code's estimate of what the run would have cost on the API, not a bill
 `worker.kind` for one tick; in Actions, the manual dispatch has a `worker` input that does
 the same. That is the move when the Cursor account is out of usage: nothing else changes.
 
+**Switching models.** `worker.models` holds alternatives to `worker.model` by name, and
+`FACTORY_MODEL=<name>` runs one of them for one tick; the manual dispatch's `model` input
+does the same. Its options are listed in the workflow, so a new name goes in both places.
+
 ## Commands
 
 ```bash

@@ -14,6 +14,24 @@
         "fast": "false"
       }
     },
+    "models": {
+      "opus": {
+        "id": "claude-opus-5-5",
+        "params": {
+          "context": "1m",
+          "effort": "medium",
+          "fast": "false"
+        }
+      },
+      "grok": {
+        "id": "grok-4.7",
+        "params": {
+          "context": "500k",
+          "reasoning_effort": "medium",
+          "fast": "false"
+        }
+      }
+    },
     "pollIntervalSeconds": 30,
     "maxRunMinutes": 90,
     "agentEnv": [
