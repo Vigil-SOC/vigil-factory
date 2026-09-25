@@ -453,11 +453,15 @@ describe('children of an epic', () => {
     expect(groomState(stamped, EPIC_LABELS, openIssues([stamped, rejected, sibling]))).toBe('current');
     expect(groomState(stamped, EPIC_LABELS, openIssues([stamped, rejected]))).toBe('stale');
 
-    // The re-groom leaves the needs-work child out of its stamp, so it does not come back for it.
+    // The re-groom names the needs-work child as weighed: still needs-work, it does not bring the epic back…
     const extras = stampExtrasFor(stamped, EPIC_LABELS, openIssues([stamped, rejected]));
-    expect(extras).toEqual({ children: [] });
-    const regroomed: Task = { ...stamped, comments: [...stamped.comments, { body: groomComment(stamped, { verdict: 'groomed', notes: undefined, reasoning: 'It stays out.', children: [] }, true, extras) }] };
+    expect(extras).toEqual({ children: [41], weighed: [41] });
+    const regroomed: Task = { ...stamped, comments: [...stamped.comments, { body: groomComment(stamped, { verdict: 'groomed', notes: undefined, reasoning: 'Record corrected for #41.', children: [] }, true, extras) }] };
+    expect(regroomed.comments.at(-1)!.body).toContain('children=#41 weighed=#41 -->');
     expect(groomState(regroomed, EPIC_LABELS, openIssues([regroomed, verdictOn(child, 'needs-work')]))).toBe('current');
+    // …re-groomed against the corrected record it is in flight, and when it lands the epic comes back.
+    expect(groomState(regroomed, EPIC_LABELS, openIssues([regroomed, verdictOn(child, 'groomed')]))).toBe('current');
+    expect(groomState(regroomed, EPIC_LABELS, openIssues([regroomed]))).toBe('stale');
   });
 
   it('parses and publishes done, the epic delivered', () => {

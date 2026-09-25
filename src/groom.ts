@@ -54,14 +54,14 @@
 // one place, on the epic, and the children follow it without anyone having to
 // remember which ones were built against what.
 //
-// The epic's own stamp names its children in flight (`children=#a,#b`, plus
+// The epic's own stamp names its open children (`children=#a,#b`, plus
 // whatever the factory files right after). When none of them is open any more,
 // or the ones still open were groomed needs-work, the slice has settled: the
 // verdict is stale, and the epic is groomed again — which is when the next
 // slice gets written, a child's finding against the record is weighed, or the
-// epic is found done and closed. A child still needs-work after that groom is
-// the epic's call, so it is left out of the new stamp and does not bring the
-// epic back again.
+// epic is found done and closed. The children already needs-work when it was
+// groomed are named too (`weighed=#c`): the epic has had its say on them, so
+// one still needs-work does not bring it back again, but one that lands does.
 
 import { createHash } from 'node:crypto';
 import type { GroomVerdict, IssueComment, Task } from './types.ts';
@@ -94,12 +94,15 @@ interface Stamp {
   blocked?: number;
   premise?: Premise;
   children?: number[];
+  weighed?: number[];
 }
 
 /** What a stamp carries beyond the fingerprint: a child's premise, an epic's children. */
 export interface StampExtras {
   premise?: Premise | null;
   children?: number[];
+  /** An epic's children that were already needs-work when it was groomed. */
+  weighed?: number[];
 }
 
 /** The stamp's attributes, in any order. A stamp without `sha` is not one. */
@@ -111,12 +114,15 @@ function parseStamp(body: string): Stamp | null {
   if (!sha) return null;
   const blocked = attrs.get('blocked')?.match(/^#?(\d+)$/)?.[1];
   const premise = attrs.get('premise')?.match(/^#?(\d+)@([0-9a-f]+)$/);
-  const children = attrs.get('children')?.split(',').map((c) => Number(c.replace('#', ''))).filter((n) => n > 0);
+  const list = (key: string) => attrs.get(key)?.split(',').map((c) => Number(c.replace('#', ''))).filter((n) => n > 0);
+  const children = list('children');
+  const weighed = list('weighed');
   return {
     sha,
     ...(blocked ? { blocked: Number(blocked) } : {}),
     ...(premise ? { premise: { epic: Number(premise[1]), sha: premise[2]! } } : {}),
     ...(children?.length ? { children } : {}),
+    ...(weighed?.length ? { weighed } : {}),
   };
 }
 
@@ -328,21 +334,23 @@ function premiseChanged(premise: Premise, open: OpenIssues): boolean {
 export function stampExtrasFor(task: Task, labels: GroomLabels, open?: OpenIssues): StampExtras {
   if (!open) return {};
   if (!isEpic(task, labels)) return { premise: premiseOf(task, labels, open) };
-  // A child already needs-work is one this groom has weighed, not one in flight.
-  return { children: openChildren(task, open).filter((n) => verdict(open.get(n)!, labels) !== 'needs-work') };
+  const children = openChildren(task, open);
+  const weighed = children.filter((n) => verdict(open.get(n)!, labels) === 'needs-work');
+  return { children, ...(weighed.length ? { weighed } : {}) };
 }
 
 /**
  * A groomed epic's slice has settled when every child its record knew about is
- * closed or was groomed needs-work. That is the moment to groom it again: write
- * the next slice, answer what a needs-work child found, or close it as done.
+ * closed or was groomed needs-work, and one of them is news to the record: it
+ * closed, or went needs-work after the epic was groomed. That is the moment to
+ * groom it again: write the next slice, answer what a needs-work child found,
+ * or close it as done.
  */
 function sliceSettled(epic: Task, open: OpenIssues, labels: GroomLabels): boolean {
   const children = readChildren(epic);
-  return children.length > 0 && children.every((n) => {
-    const child = open.get(n);
-    return !child || verdict(child, labels) === 'needs-work';
-  });
+  const weighed = new Set(latestStamp(epic)?.weighed ?? []);
+  const needsWork = (n: number) => verdict(open.get(n)!, labels) === 'needs-work';
+  return children.every((n) => !open.has(n) || needsWork(n)) && children.some((n) => !open.has(n) || !weighed.has(n));
 }
 
 /**
@@ -391,6 +399,7 @@ export function groomComment(task: Task, reply: GroomReply, epic = false, extras
   if (reply.blocked !== undefined && reply.verdict === 'needs-work') attrs.push(`blocked=#${reply.blocked}`);
   if (extras.premise) attrs.push(`premise=#${extras.premise.epic}@${extras.premise.sha}`);
   if (extras.children?.length) attrs.push(`children=${extras.children.map((n) => `#${n}`).join(',')}`);
+  if (extras.weighed?.length) attrs.push(`weighed=${extras.weighed.map((n) => `#${n}`).join(',')}`);
   const stamp = `<!-- factory-groom ${attrs.join(' ')} -->`;
   const parts = [
     stamp,
