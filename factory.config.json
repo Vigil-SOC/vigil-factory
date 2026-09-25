@@ -18,7 +18,7 @@
       "opus": {
         "id": "claude-opus-5-5",
         "params": {
-          "context": "1m",
+          "context": "300k",
           "effort": "medium",
           "fast": "false"
         }
