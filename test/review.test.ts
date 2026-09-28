@@ -114,10 +114,15 @@ describe('the review agent\'s verdict', () => {
     expect(parseReviewReply('no idea')).toBeNull();
   });
 
-  it('the named commit must be the head', () => {
-    expect(sameCommit('0123abcd', '0123abcdef'.padEnd(40, '0'))).toBe(true);
-    expect(sameCommit('0123abce', '0123abcdef'.padEnd(40, '0'))).toBe(false);
-    expect(sameCommit('0123', '0123abcdef'.padEnd(40, '0'))).toBe(false);
+  it('the named commit is the head by its first 7 characters', () => {
+    const head = 'ca0bf7f04141d590b31434508577f814b35cbe0d';
+    expect(sameCommit('ca0bf7f', head)).toBe(true);
+    expect(sameCommit(head, head)).toBe(true);
+    // #1223: the model garbled the full sha it retyped.
+    expect(sameCommit('ca0bf7f0414ad590b31434508577f814b35cbe0d', head)).toBe(true);
+    expect(sameCommit('CA0BF7F', head)).toBe(true);
+    expect(sameCommit('ca0bf7e', head)).toBe(false);
+    expect(sameCommit('ca0bf7', head)).toBe(false);
   });
 });
 
@@ -190,11 +195,12 @@ describe('review prompt', () => {
     expect(p).not.toContain('pull/12/head');
   });
 
-  it('a fork PR is fetched by its pull ref, and fixes become a replacement the agent does not push itself', () => {
+  it('a fork PR is fetched by its pull ref, and fixes become a replacement the agent pushes itself', () => {
     expect(fork).toContain('git fetch origin pull/12/head');
     expect(fork).toContain('replacement PR carrying the author\'s commits');
-    expect(fork).toContain('Do not push or open a PR yourself');
-    expect(fork).toMatch(/commit nothing to your session branch unless the PR needs fixes/);
+    expect(fork).toContain('git push -u origin HEAD');
+    expect(fork).toContain('Do not open a PR yourself');
+    expect(fork).toMatch(/commit and push nothing to your session branch unless the PR needs fixes/);
     expect(fork).not.toContain('You are on the PR\'s own branch');
   });
 

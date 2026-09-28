@@ -540,8 +540,8 @@ review is held to exactly the standard the factory's own code is.
 and the agents' machine can push to neither a fork's branch nor, through Cursor, check one
 out by PR. So a fork PR's agent starts on the default branch and fetches `pull/N/head`
 itself. A PR that is right as it stands is merged as it stands. One that needs fixes gets
-them on the agent's own session branch, on top of the author's commits, and Cursor opens
-that as a replacement PR — the same handoff an implementer's PR comes through. The factory
+them on the agent's own session branch, on top of the author's commits; the agent pushes
+it (Cursor does not), and it opens as a replacement PR. The factory
 labels it `factory:review` (so no queue takes it for an outside PR), puts it through the
 same merge rules below, squash-merges it with a `Co-authored-by` trailer for the author, and
 closes the original with a link. The stamp records that as `superseded`. If the replacement
@@ -550,7 +550,9 @@ a teammate's branch — is simpler: its agent works on the PR's own branch.
 
 **The merge is the agent's call held to the factory's rules.** The controller merges only:
 - the commit the agent named, and only while it is still the PR's head (`--match-head-commit`)
-  — a push nobody verified is not merged; the PR is reviewed again as it stands;
+  — a push nobody verified is not merged; the PR is reviewed again as it stands. The name is
+  matched by its first 7 characters, because a model retyping a sha garbles it, so a fork PR
+  pushed to at all during its review is reviewed again rather than merged;
 - once CI is green on it, after at most one fix round by the same agent — a fork's workflow
   runs held for a maintainer's approval are approved by the factory once the review passes,
   since that review is the maintainer's read the hold asks for;

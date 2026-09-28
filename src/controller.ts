@@ -740,10 +740,10 @@ async function reviewOne(ctx: FactoryContext, worker: CodingWorker, pr: ReviewPr
 }
 
 /**
- * The replacement a fork review's fixes landed in. Cursor pushes the session
- * branch of a review run but does not always open a PR for it — its history is
- * the fork's, not the default branch's — so when it reports a branch and no PR,
- * the factory opens one. No commits on the branch means no fixes: gh refuses,
+ * The replacement a fork review's fixes landed in. The agent pushes its
+ * session branch — nothing else does — and Cursor does not always open a PR
+ * for it, since its history is the fork's, not the default branch's; so when
+ * it reports a branch and no PR, the factory opens one. No commits on the branch means no fixes: gh refuses,
  * and there is no replacement.
  */
 async function replacementPr(config: FactoryConfig, pr: ReviewPr, result: RunResult): Promise<string | null> {
@@ -764,9 +764,10 @@ type ReviewAct = { outcome: ReviewOutcome; stamped: boolean; note?: string; reas
  * What the factory does with a review's verdict. Close and leave are the
  * agent's call alone. Merge is the agent's call held to the factory's rules:
  * the commit it names is the head of what gets merged — the PR itself, or for
- * a fork PR that needed fixes, the replacement Cursor opened — nothing under
- * `.github/` changes, CI is green on it after at most one fix round by the same
- * agent, and GitHub's own rules allow the merge without an admin bypass.
+ * a fork PR that needed fixes, the replacement its session branch became —
+ * nothing under `.github/` changes, CI is green on it after at most one fix
+ * round by the same agent, and GitHub's own rules allow the merge without an
+ * admin bypass.
  */
 async function actOnReview(
   config: FactoryConfig,
@@ -791,15 +792,21 @@ async function actOnReview(
 
   const sha = reply.sha!;
   const before = await viewPrForReview(repo, pr.url);
+  // Nothing here pushes to a fork, so its head the review started on, still
+  // its head now, is the one the review saw.
+  if (pr.isCrossRepository && before.headRefOid !== pr.headRefOid) {
+    await discard('the PR it was replacing was pushed to during the review.');
+    return headMoved(pr.headRefOid, before.headRefOid);
+  }
   if (sameCommit(sha, before.headRefOid)) {
     await discard('the review merged the PR as it stands, without this.');
     return mergeVerified(config, worker, handle, pr.url, before);
   }
-  if (!replacement) return headMoved(sha, before.headRefOid);
+  if (!replacement) return pr.isCrossRepository ? fixesNotPushed(sha) : headMoved(sha, before.headRefOid);
 
   const rep = await viewPrForReview(repo, replacement);
   if (!sameCommit(sha, rep.headRefOid)) {
-    await discard(`its head is ${rep.headRefOid.slice(0, 8)}, not ${sha.slice(0, 8)}, the commit the review verified.`);
+    await discard(`its head is ${rep.headRefOid.slice(0, 12)}, not ${sha.slice(0, 12)}, the commit the review verified.`);
     return headMoved(sha, rep.headRefOid);
   }
   const trailer = coAuthorTrailer(pr.author, await userId(pr.author.login));
@@ -817,7 +824,17 @@ function headMoved(verified: string, head: string): ReviewAct {
     outcome: 'left',
     stamped: false,
     reason: 'head moved',
-    note: `The review verified ${verified.slice(0, 8)}, but the head is now ${head.slice(0, 8)}, so nothing was merged; the factory reviews it again as it stands.`,
+    note: `The review verified ${verified.slice(0, 12)}, but the head is now ${head.slice(0, 12)}, so nothing was merged; the factory reviews it again as it stands.`,
+  };
+}
+
+/** A fork review named its own commit, and no branch on GitHub carries it: the fixes were never pushed. */
+function fixesNotPushed(verified: string): ReviewAct {
+  return {
+    outcome: 'left',
+    stamped: false,
+    reason: 'fixes not pushed',
+    note: `The review verified its fixes at ${verified.slice(0, 12)}, but they never reached a branch on GitHub, so nothing was merged; the factory reviews it again.`,
   };
 }
 

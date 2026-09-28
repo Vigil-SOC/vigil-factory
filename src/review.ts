@@ -33,8 +33,8 @@
 // So the agent starts on the default branch and fetches `pull/N/head` itself.
 // A fork PR that is right as it stands is merged as it stands. One that needs
 // fixes gets them on the agent's own session branch, on top of the author's
-// commits, and Cursor opens that as a replacement PR — the same handoff an
-// implementer's PR comes through. The factory merges the replacement, credits
+// commits; the agent pushes it, and it opens as a replacement PR — the same
+// handoff an implementer's PR comes through. The factory merges the replacement, credits
 // the author as co-author, and closes the original with a link: `superseded`.
 
 import { createHash } from 'node:crypto';
@@ -190,9 +190,14 @@ export function parseReviewReply(text: string): ReviewReply | null {
   return { verdict, ...(verdict === 'merge' && sha ? { sha } : {}), report };
 }
 
-/** Whether the commit the agent named is the PR's head. */
+/**
+ * Whether the commit the agent named is `head`, by its first 7 characters. A
+ * model retyping a sha garbles it (#1223 named ca0bf7f0414ad… for
+ * ca0bf7f04141d…), so the name only picks which head the agent meant; that the
+ * head is the one it saw is the caller's check.
+ */
 export function sameCommit(named: string, head: string): boolean {
-  return named.length >= 7 && head.toLowerCase().startsWith(named.toLowerCase());
+  return named.length >= 7 && head.toLowerCase().startsWith(named.slice(0, 7).toLowerCase());
 }
 
 /** The body of the factory's review comment, below the stamp. */

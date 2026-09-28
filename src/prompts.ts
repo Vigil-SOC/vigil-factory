@@ -292,7 +292,7 @@ ${prUrls.join('\n')}`;
 export function reviewPrompt(pr: { number: number; url: string; isCrossRepository: boolean }, principles: string): string {
   // The agents' machine can push to a branch of this repo but not to a fork.
   const where = pr.isCrossRepository
-    ? `It comes from a fork, which this machine cannot push to, so you start on your own session branch off the default branch. Review the PR's code detached: \`git fetch origin pull/${pr.number}/head && git checkout FETCH_HEAD\`. If it needs fixes, put its commits on your session branch — \`git checkout -B <the branch you started on> FETCH_HEAD\` — and commit the fixes on top; when you finish, that branch becomes a replacement PR carrying the author's commits and yours, which the factory merges in place of this one, crediting the author. Do not push or open a PR yourself, and commit nothing to your session branch unless the PR needs fixes: any commit there opens a PR.`
+    ? `It comes from a fork, which this machine cannot push to, so you start on your own session branch off the default branch. Review the PR's code detached: \`git fetch origin pull/${pr.number}/head && git checkout FETCH_HEAD\`. If it needs fixes, put its commits on your session branch — \`git checkout -B <the branch you started on> FETCH_HEAD\` — commit the fixes on top, and push it: \`git push -u origin HEAD\`. Nothing pushes it for you, and fixes left unpushed are lost with this machine. That branch becomes a replacement PR carrying the author's commits and yours, which the factory merges in place of this one, crediting the author. Do not open a PR yourself, and commit and push nothing to your session branch unless the PR needs fixes: any push there opens a PR.`
     : 'You are on the PR\'s own branch; what you commit and push lands on it.';
   const sha = pr.isCrossRepository
     ? 'the PR\'s own head commit if it needs no change, or your session branch\'s head after your fixes'
@@ -315,7 +315,7 @@ Then fix what stands between it and merge rather than asking the author to: a de
 The factory never merges a PR that changes anything under \`.github/\`: close one of those or leave it for a human, and say which.
 
 End your reply with exactly one line:
-VERDICT: merge <sha> — the PR is worth having and <sha> is correct: ${sha}, exactly what you verified. The factory waits for CI on it, hands a red check back to you once, and squash-merges it. If you could not push a fix it needs, this is not your answer.
+VERDICT: merge <sha> — the PR is worth having and <sha> is correct: ${sha}, exactly what you verified, pasted from \`git rev-parse --short=12 HEAD\` rather than retyped. The factory waits for CI on it, hands a red check back to you once, and squash-merges it. If you could not push a fix it needs, this is not your answer.
 VERDICT: close — something is fundamentally wrong with it, or it needs a rebase, as above.
 VERDICT: leave — only for a decision that needs a person: one that is irreversible, carries legal or licensing exposure, or a fix it needs that you could not push. Name the decision.
 
