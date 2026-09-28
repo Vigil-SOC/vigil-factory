@@ -51,6 +51,10 @@ export interface FactoryConfig {
      *  fixes: the author's commits plus the review's. Merged in the same pass
      *  when it can be; the label keeps it out of every other queue. */
     reviewPr: string;
+    /** The dependency phase's batch PR: every open Dependabot PR carried onto
+     *  one branch with the lockfile regenerated. Keeps it out of every other
+     *  queue, as the others do. */
+    depsPr: string;
     /** The repo's own epic label. An issue carrying it is groomed as a
      *  direction — the groomer settles its open decisions and writes its
      *  children — and is never handed to the selector. Not a factory label:
@@ -86,6 +90,10 @@ export interface FactoryConfig {
    *  default branch, or conflicting with it, is closed with a request to rebase,
    *  before any agent is spent on it. */
   review: { enabled: boolean; maxPerTick: number; maxCommitsBehind: number };
+  /** The dependency phase: Dependabot's open PRs carried onto one branch by one
+   *  agent, the lockfile regenerated, and the batch merged on green CI under
+   *  the review phase's rules. Off by default: it merges. */
+  deps: { enabled: boolean };
   /**
    * Whether a phase may act on an issue a human has assigned to themselves.
    * Grooming defaults to true — vetting costs the assignee nothing and the
@@ -159,12 +167,15 @@ export function loadConfig(root: string = projectRoot): FactoryConfig {
   config.labels.environmentPr ??= 'factory:env';
   config.labels.simplifyPr ??= 'factory:simplify';
   config.labels.reviewPr ??= 'factory:review';
+  config.labels.depsPr ??= 'factory:deps';
   config.labels.epic ??= 'type:epic';
   config.labels.blocker ??= 'factory:blocker';
   config.simplify ??= { enabled: true };
   // The one phase that merges is the one a deployment has to ask for.
   config.review ??= { enabled: false, maxPerTick: 3, maxCommitsBehind: 100 };
   config.review.enabled ??= false;
+  config.deps ??= { enabled: false };
+  config.deps.enabled ??= false;
   config.review.maxPerTick ??= 3;
   config.review.maxCommitsBehind ??= 100;
   if (!Number.isInteger(config.review.maxPerTick) || config.review.maxPerTick < 1) {

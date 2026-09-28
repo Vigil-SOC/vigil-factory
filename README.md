@@ -94,6 +94,11 @@ reconcile with GitHub: record the verdict on every factory PR that has closed, r
    closes it if something is fundamentally wrong, otherwise tests it live (the suites are
    CI's), pushes the fixes it needs to its branch, and answers merge; the factory waits for
    CI on that commit, hands a red check back once, and squash-merges it
+→ DEPENDENCY agent, alongside too (deps.enabled): every open Dependabot PR not yet
+   batched at its current head, except Actions bumps under .github/, is carried onto one
+   branch with whatever the repo installs from regenerated, as one PR labelled
+   factory:deps. CI runs once, on the versions that ship; the factory merges it on green
+   under the review phase's rules and closes the Dependabot PRs it carried. One open at a time
 count the jobs already in flight (open factory PRs + running pipelines)
    → no free slot under maxConcurrentJobs? stop here
 for each free slot:
@@ -578,15 +583,47 @@ reopened and reviewed again with the reply in view; one somebody reopened by han
 reviewed again whether or not they said anything.
 
 **Which PRs.** Every open, non-draft PR not carrying a factory label (`factory`,
-`factory:env`, `factory:simplify` — the factory opens PRs under a person's account, so the
+`factory:env`, `factory:simplify`, `factory:deps` — the factory opens PRs under a person's account, so the
 author says nothing) and not opened by a bot. Dependabot and release-please are someone
-else's automation and are left alone. Red checks are included on purpose: they are often
+else's automation and are left out; Dependabot's PRs go to the [dependency batch](#dependabot) instead. Red checks are included on purpose: they are often
 exactly what stands between a good PR and a merge. Drift is not: a PR that conflicts with
 the default branch, or is more than `review.maxCommitsBehind` commits behind it, is closed
 before any agent starts, asking its author to rebase and open a new one. Catching a PR up
 and re-verifying it is an implementer's run on someone else's code. Reviews do not count
 against `maxConcurrentJobs`; `review.maxPerTick` bounds how many run in one tick. The phase
 is off unless `review.enabled` is set, since it is the one that merges.
+
+## Dependabot
+
+Dependabot opens a handful of version bumps a week, and a human merging them one by one
+reads nothing: they go in on a green check. That check is often not about the bump. A repo
+that installs from a lockfile tests the lockfile, and Dependabot's pip updates move the
+ranges in `requirements.txt` without touching it — CI passes on the versions the repo
+already had, and the new ones are first installed whenever someone next regenerates the
+lock by hand. So the dependency phase does not merge Dependabot's PRs at all.
+
+**One batch, one CI run.** One agent is handed the links to every open Dependabot PR, brings
+their changes onto its own branch, regenerates what the repo actually installs from (its own
+script, where it has one), and opens one PR labelled `factory:deps`. It runs no suites and no
+live test — the batch exists so that a week of bumps costs one agent and one CI run, not one
+of each per bump. The PR carries a `Supersedes #N` line per Dependabot PR it took. A bump
+that conflicts, or needs more than a small fix to the code, is dropped with a line saying
+why, and that includes one that turns CI red in the agent's one fix round.
+
+**The merge is the review phase's.** The factory merges the batch under exactly the rules
+in [Reviewing outside PRs](#reviewing-outside-prs): CI green after at most one fix round,
+`--match-head-commit`, no admin bypass, nothing under `.github/`. That last rule is why
+Actions bumps are never offered to a batch; they stay open for a human. Once it merges,
+the factory closes each Dependabot PR on a `Supersedes` line with a link, and comments on
+the ones it left. A batch it could not merge stays open for a human, and no new batch
+starts until it is gone.
+
+**State lives on the Dependabot PRs.** Every PR a batch concluded on gets a factory comment
+over `<!-- factory-deps head=… -->`, and is not offered again until its head moves:
+Dependabot rebasing it, or moving it to a newer release. A batch that errored stamps
+nothing and is retried next tick. Like reviews, the agent gets no `worker.agentEnv`
+credentials and runs only on the Cursor worker, because resolving and installing new
+releases runs their code. The phase is off unless `deps.enabled` is set, since it merges.
 
 ## Deploying
 

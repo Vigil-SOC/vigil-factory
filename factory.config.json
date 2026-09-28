@@ -49,6 +49,7 @@
     "environmentPr": "factory:env",
     "simplifyPr": "factory:simplify",
     "reviewPr": "factory:review",
+    "depsPr": "factory:deps",
     "epic": "type:epic",
     "blocker": "factory:blocker"
   },
@@ -71,6 +72,9 @@
     "enabled": true,
     "maxPerTick": 3,
     "maxCommitsBehind": 100
+  },
+  "deps": {
+    "enabled": true
   },
   "assignedIssues": {
     "groom": true,

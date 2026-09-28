@@ -270,7 +270,25 @@ export interface ReviewRecord extends AgentPass {
   checks?: RunRecord['checks'];
 }
 
-export type TelemetryRecord = RunRecord | GroomRecord | OutcomeRecord | EnvRecord | SimplifyRecord | ReviewRecord;
+/**
+ * One dependency batch. `offered` is the Dependabot PRs the agent was handed,
+ * `carried` the ones its PR said it superseded. `merged`: the factory merged
+ * the batch and closed what it carried. `left`: a rule of the factory's held
+ * the merge back — `reason` says which — and the batch awaits a human.
+ * `no-pr`: the agent carried nothing.
+ */
+export interface DepsRecord extends AgentPass {
+  type: 'deps';
+  offered: string[];
+  carried: string[];
+  outcome: 'merged' | 'left' | 'no-pr' | 'failed';
+  prUrl: string | null;
+  reason?: string;
+  fixRounds?: number;
+  checks?: RunRecord['checks'];
+}
+
+export type TelemetryRecord = RunRecord | GroomRecord | OutcomeRecord | EnvRecord | SimplifyRecord | ReviewRecord | DepsRecord;
 
 // --- Pipeline state for crash detection ---
 

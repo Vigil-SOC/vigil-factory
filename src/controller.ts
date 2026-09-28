@@ -14,12 +14,13 @@
 // once, and so one tick starts at most that many pipelines. Default 1 keeps the
 // strict one-at-a-time factory.
 //
-// Grooming, the environment phase, the simplification phase, and the review of
-// PRs the factory did not open all run outside the capacity gate on purpose: a
-// PR sitting in review is no reason to stop vetting the backlog, to leave the
-// agents' machine broken, to let the code keep accreting, or to leave someone
-// else's PR waiting. Environment and simplification PRs are each their own
-// one-deep queue and never spend an implementer's slot. The environment phase
+// Grooming, the environment phase, the simplification phase, the review of
+// PRs the factory did not open, and the Dependabot batch all run outside the
+// capacity gate on purpose: a PR sitting in review is no reason to stop vetting
+// the backlog, to leave the agents' machine broken, to let the code keep
+// accreting, or to leave someone else's PR — or a week of bumps — waiting.
+// Environment, simplification, and dependency PRs are each their own one-deep
+// queue and never spend an implementer's slot. The environment phase
 // runs last, after the implementers, so the PRs it reads include this tick's.
 //
 // Every judgment call (is this worth building, which issue, how to
@@ -27,7 +28,7 @@
 // the handoffs and keeps the capacity gate.
 
 import { resolve } from 'node:path';
-import type { CodingWorker, CurrentRun, EnvRecord, GroomRecord, ReviewRecord, RunHandle, RunRecord, RunResult, SimplifyRecord, Task, TokenUsage } from './types.ts';
+import type { CodingWorker, CurrentRun, DepsRecord, EnvRecord, GroomRecord, ReviewRecord, RunHandle, RunRecord, RunResult, SimplifyRecord, Task, TokenUsage } from './types.ts';
 import { agentCredentials, claudeBin, githubTokenForAgents, loadConfig, loadDotEnv, loadPrinciples, projectRoot, repoSlug, requireCursorApiKey, type FactoryConfig } from './config.ts';
 import { RunBudgetExceeded } from './types.ts';
 import { CursorWorker } from './worker.ts';
@@ -36,11 +37,12 @@ import { GitHubIssueSource } from './workSource.ts';
 import { FactoryState } from './state.ts';
 import { Telemetry } from './telemetry.ts';
 import { filterAssigned, filterClaimed, filterEpics, parseSelection, type Selection } from './selector.ts';
-import { BOOT_CHECK_PROMPT, environmentPrompt, fixChecksPrompt, groomEpicPrompt, groomPrompt, implementPrompt, reviewPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
+import { BOOT_CHECK_PROMPT, depsPrompt, environmentPrompt, fixChecksPrompt, groomEpicPrompt, groomPrompt, implementPrompt, reviewPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
 import { factoryComment, groomState, isBlocker, isEpic, isGroomed, needsGroom, queueOrder, openChildren, openIssues, parseGroomReply, stampExtrasFor, unaccountedBlockers, verdict, type GroomLabels, type OpenIssues } from './groom.ts';
-import { addPrLabels, approveHeldRuns, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, prDrift, reopenPr, userId, viewPr, viewPrForReview } from './github.ts';
+import { addPrLabels, approveHeldRuns, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, listDependabotPrs, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, prDrift, reopenPr, userId, viewPr, viewPrForReview } from './github.ts';
 import { ENV_AGENT_MARK, environmentChangedAt, filedIssueBody, parseEnvReport, recentVerdicts, skipReason, unreadFactoryPrs, withOpenedThisTick, workerSkipReason, type UnreadPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
+import { carried, depsQueue, depsStamp, skipReason as depsSkipReason, type DepsPr } from './deps.ts';
 import { coAuthorTrailer, isBot, parseReviewReply, reviewComment, reviewQueue, reviewStamp, sameCommit, skipReason as reviewSkipReason, staleReason, staleReport, touchesGithub, type ReviewOutcome, type ReviewPr, type ReviewReply } from './review.ts';
 
 export function log(msg: string): void {
@@ -594,7 +596,7 @@ export async function runSimplifyPhase(ctx: FactoryContext, worker: CodingWorker
 
 /** The labels that mark a PR as the factory's own, whoever GitHub says opened it. */
 function factoryPrLabels(config: FactoryConfig): string[] {
-  return [config.labels.factoryPr, config.labels.environmentPr, config.labels.simplifyPr, config.labels.reviewPr];
+  return [config.labels.factoryPr, config.labels.environmentPr, config.labels.simplifyPr, config.labels.reviewPr, config.labels.depsPr];
 }
 
 /**
@@ -838,7 +840,7 @@ function fixesNotPushed(verified: string): ReviewAct {
   };
 }
 
-/** Merge `target` at the head the review verified, if the factory's rules allow. */
+/** Merge `target` at the head the agent verified, if the factory's rules allow. */
 async function mergeVerified(
   config: FactoryConfig,
   worker: CodingWorker,
@@ -852,7 +854,7 @@ async function mergeVerified(
     outcome: 'left',
     stamped: true,
     reason: 'touches .github',
-    note: `The review would merge it, but it changes ${paths.map((p) => `\`${p}\``).join(', ')}, and the factory does not merge changes under \`.github/\`: they run with the repo's secrets.`,
+    note: `The factory would merge it, but it changes ${paths.map((p) => `\`${p}\``).join(', ')}, and the factory does not merge changes under \`.github/\`: they run with the repo's secrets.`,
   });
   if (touchesGithub(before.files).length > 0) return github(touchesGithub(before.files));
 
@@ -867,17 +869,127 @@ async function mergeVerified(
   // push nobody verified.
   if (ci.fixRounds === 0 && after.headRefOid !== before.headRefOid) return { ...headMoved(before.headRefOid, after.headRefOid), ci };
   if (touchesGithub(after.files).length > 0) return { ...github(touchesGithub(after.files)), ci };
-  if (ci.checks === 'red') return { outcome: 'left', stamped: true, reason: 'checks red', note: 'The review would merge it, but CI is still red after the reviewer\'s fix round.', ci };
-  if (ci.checks === 'none') return { outcome: 'left', stamped: true, reason: 'no checks', note: 'The review would merge it, but no CI reported on it, and the factory merges only on green checks.', ci };
-  if (ci.checks === 'unsettled') return { outcome: 'left', stamped: true, reason: 'checks unsettled', note: `The review would merge it, but CI had not finished within ${CHECKS_WAIT_MS / 60_000} minutes.`, ci };
+  if (ci.checks === 'red') return { outcome: 'left', stamped: true, reason: 'checks red', note: 'The factory would merge it, but CI is still red after the agent\'s fix round.', ci };
+  if (ci.checks === 'none') return { outcome: 'left', stamped: true, reason: 'no checks', note: 'The factory would merge it, but no CI reported on it, and the factory merges only on green checks.', ci };
+  if (ci.checks === 'unsettled') return { outcome: 'left', stamped: true, reason: 'checks unsettled', note: `The factory would merge it, but CI had not finished within ${CHECKS_WAIT_MS / 60_000} minutes.`, ci };
 
   try {
     await mergePr(repo, target, after.headRefOid, body);
   } catch (err) {
     const msg = (err as Error).message.slice(0, 500);
-    return { outcome: 'left', stamped: true, reason: `merge refused: ${msg}`, note: `The review would merge it, but GitHub refused: ${msg}`, ci };
+    return { outcome: 'left', stamped: true, reason: `merge refused: ${msg}`, note: `The factory would merge it, but GitHub refused: ${msg}`, ci };
   }
   return { outcome: 'merged', stamped: true, ci };
+}
+
+/**
+ * What the dependency phase would batch, read from GitHub in one place so the
+ * tick, the dry run, and `factory status` agree.
+ */
+export async function depsInputs(config: FactoryConfig): Promise<{ skip: string | null; offered: DepsPr[] }> {
+  const gate = depsSkipReason(config.deps.enabled, config.worker.kind);
+  if (gate) return { skip: gate, offered: [] };
+  const repo = repoSlug(config);
+  const [open, batches] = await Promise.all([listDependabotPrs(repo), listPrsByLabel(repo, config.labels.depsPr, 'open')]);
+  const skip = depsSkipReason(true, config.worker.kind, batches);
+  if (skip) return { skip, offered: [] };
+  const offered = depsQueue(open);
+  return { skip: offered.length === 0 ? 'no Dependabot PR is new or changed since the last batch' : null, offered };
+}
+
+/**
+ * The dependency phase: one agent carries every due Dependabot PR onto one
+ * branch and regenerates what the repo installs from; the factory merges the
+ * batch on green CI under the review phase's rules and closes what it carried.
+ * See deps.ts for why the bumps are not merged one by one.
+ *
+ * Returns the record it wrote, or null when the pass did not run.
+ */
+export async function runDepsPhase(ctx: FactoryContext, worker: CodingWorker): Promise<DepsRecord | null> {
+  const { config } = ctx;
+  const repo = repoSlug(config);
+  const { skip, offered } = await depsInputs(config);
+  if (skip) {
+    log(`deps: skipped — ${skip}.`);
+    return null;
+  }
+
+  log(`deps: batching ${offered.length} Dependabot PR(s): ${offered.map((p) => `#${p.number}`).join(' ')}`);
+  const startedAt = new Date().toISOString();
+  // No credentials: it installs releases nobody here has read.
+  const handle = await worker.start(depsPrompt(offered.map((p) => p.url)), { autoCreatePR: true, withholdCredentials: true, name: 'factory-deps' });
+
+  const record = async (over: Partial<DepsRecord> & { outcome: DepsRecord['outcome'] }): Promise<DepsRecord> => {
+    const full: DepsRecord = {
+      type: 'deps',
+      offered: offered.map((p) => p.url),
+      carried: [],
+      prUrl: null,
+      worker: config.worker.kind,
+      model: config.worker.model,
+      agentId: handle.agentId,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      usage: (await worker.usage(handle.agentId)) ?? null,
+      durationMs: Date.now() - Date.parse(startedAt),
+      ...over,
+    };
+    ctx.telemetry.append(full);
+    return full;
+  };
+  // Stamped at the head the batch was offered, so a rebase since brings it back.
+  const conclude = async (prs: DepsPr[], body: string, close: boolean) => {
+    for (const p of prs) {
+      try {
+        await commentOnPr(repo, p.url, factoryComment(`${depsStamp(p)}\n${body}`));
+        if (close) await closePrQuietly(repo, p.url);
+      } catch (err) {
+        log(`deps: could not conclude on ${p.url}: ${(err as Error).message}`);
+      }
+    }
+  };
+
+  // A batch that reached no conclusion stamps nothing, so the next tick tries again.
+  const result = await worker.awaitResult(handle).catch((err: Error) => err);
+  if (result instanceof Error || result.status !== 'FINISHED') {
+    const reason = result instanceof Error ? result.message : `run ended with status ${result.status}: ${result.resultText.slice(0, 300) || worker.opaqueRunNote(handle)}`;
+    log(`deps: batch failed — ${reason}`);
+    return record({ outcome: 'failed', reason });
+  }
+
+  const prUrl = await openedPr(config, result);
+  if (!prUrl) {
+    log(`deps: the agent carried none of them. Its report:\n${result.resultText.trim() || '_(no report)_'}`);
+    await conclude(offered, `🏭 **Factory dependency batch — left for a human.** The factory's batch agent could not carry any of the open Dependabot PRs. Its report:\n\n${result.resultText.trim() || '_(no report)_'}`, false);
+    return record({ outcome: 'no-pr' });
+  }
+  // Labelled at once, so the review phase never takes it for someone else's.
+  await ensureLabel(repo, config.labels.depsPr, '0366D6', 'Dependabot PRs batched by the software factory, lockfile regenerated');
+  await addPrLabels(repo, prUrl, [config.labels.depsPr]);
+
+  const act = await mergeVerified(config, worker, handle, prUrl, await viewPrForReview(repo, prUrl)).catch((err: Error): ReviewAct =>
+    ({ outcome: 'left', stamped: true, reason: err.message.slice(0, 500), note: `The factory could not merge it: ${err.message.slice(0, 500)}` }));
+  const numbers = carried((await viewPr(repo, prUrl)).body, offered.map((p) => p.number));
+  const took = offered.filter((p) => numbers.includes(p.number));
+  const dropped = offered.filter((p) => !numbers.includes(p.number));
+  const merged = act.outcome === 'merged';
+
+  if (!merged) {
+    await commentOnPr(repo, prUrl, factoryComment(`🏭 **Factory dependency batch — left for a human.** ${act.note ?? ''}`.trim())).catch(() => {});
+  }
+  await conclude(took, merged
+    ? `🏭 **Factory dependency batch — merged.** This bump landed in ${prUrl}, with the lockfile regenerated from it, on green CI; closing this one.`
+    : `🏭 **Factory dependency batch.** This bump is carried in ${prUrl}, which the factory could not merge and has left for a human.`, merged);
+  await conclude(dropped, `🏭 **Factory dependency batch — left for a human.** ${prUrl} batched the open Dependabot PRs and left this one out; its description says why.`, false);
+
+  log(`deps: ${prUrl} carries ${took.length} of ${offered.length}; ${merged ? 'merged' : `left (${act.reason})`}${dropped.length ? `; left open: ${dropped.map((p) => `#${p.number}`).join(' ')}` : ''}`);
+  return record({
+    outcome: merged ? 'merged' : 'left',
+    prUrl,
+    carried: took.map((p) => p.url),
+    ...(act.reason ? { reason: act.reason } : {}),
+    ...(act.ci ?? {}),
+  });
 }
 
 export async function tick(opts: { dryRun: boolean }): Promise<void> {
@@ -910,7 +1022,8 @@ export async function tick(opts: { dryRun: boolean }): Promise<void> {
   //    build today, and the tick that notices is the idle one. Concurrent with
   //    the implementers because it touches no issue and takes no slot.
   //    Reviews of PRs from outside the factory run alongside too: they take
-  //    no slot and touch no issue, and their PRs are not the factory's.
+  //    no slot and touch no issue, and their PRs are not the factory's. So
+  //    does the dependency batch, for the same reasons.
   const [, openedThisTick] = await Promise.all([
     runSimplifyPhase(ctx, worker).catch((err: Error) => {
       log(`simplify phase error: ${err.message}`);
@@ -920,6 +1033,10 @@ export async function tick(opts: { dryRun: boolean }): Promise<void> {
     runReviewPhase(ctx, worker).catch((err: Error) => {
       log(`review phase error: ${err.message}`);
       return [];
+    }),
+    runDepsPhase(ctx, worker).catch((err: Error) => {
+      log(`deps phase error: ${err.message}`);
+      return null;
     }),
   ]);
 
@@ -1120,6 +1237,14 @@ async function dryRun(ctx: FactoryContext, allCandidates: Task[]): Promise<void>
     const due = [...review.reopen, ...review.open];
     log(`review: would review ${Math.min(due.length, config.review.maxPerTick)} of ${due.length} PR(s) from outside the factory — ${due.map((p) => `#${p.number}${review.reopen.includes(p) ? ' (reopen)' : ''}`).join(' ')}. Prompt for #${due[0]!.number}:`);
     console.log(`\n${reviewPrompt(due[0]!, '<principles.md>')}\n`);
+  }
+
+  const deps = await depsInputs(config);
+  if (deps.skip) {
+    log(`deps: would skip — ${deps.skip}.`);
+  } else {
+    log(`deps: would batch ${deps.offered.length} Dependabot PR(s). Its prompt would be:`);
+    console.log(`\n${depsPrompt(deps.offered.map((p) => p.url))}\n`);
   }
 
   const { sha } = await defaultBranchHead(repoSlug(config));

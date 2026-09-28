@@ -97,7 +97,7 @@ export function reviewStamp(pr: Pick<ReviewPr, 'headRefOid' | 'body' | 'comments
   return `<!-- factory-review sha=${reviewFingerprint(pr)} outcome=${outcome} -->`;
 }
 
-/** Bots are someone else's automation: dependabot, release-please. Not reviewed here. */
+/** Bots are someone else's automation: release-please, and Dependabot, whose PRs the dependency batch takes (deps.ts). Not reviewed here. */
 export function isBot(pr: Pick<ReviewPr, 'author'>): boolean {
   return pr.author.is_bot === true || pr.author.login.startsWith('app/') || pr.author.login.endsWith('[bot]');
 }

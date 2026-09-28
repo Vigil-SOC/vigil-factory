@@ -2,7 +2,7 @@
 // factory CLI — the daily trigger runs `factory run`; everything else is
 // for humans operating the factory.
 
-import { admissible, buildContext, buildWorker, candidateTasks, environmentInputs, log, openSet, reviewInputs, runEnvironmentPhase, runGroomPhase, runReviewPhase, runSelector, runSimplifyPhase, simplifySkip, tick } from './controller.ts';
+import { admissible, buildContext, buildWorker, candidateTasks, depsInputs, environmentInputs, log, openSet, reviewInputs, runEnvironmentPhase, runDepsPhase, runGroomPhase, runReviewPhase, runSelector, runSimplifyPhase, simplifySkip, tick } from './controller.ts';
 import { repoSlug } from './config.ts';
 import { isEpic, isGroomed, needsGroom, verdict } from './groom.ts';
 import { defaultBranchHead } from './github.ts';
@@ -26,6 +26,9 @@ Usage:
   npm run factory -- review [--pr N]   Run just the review phase: an agent per PR the factory did not open (bots and drafts
                                        aside) reviews it against principles.md, verifies it, pushes fixes to its branch, and the
                                        factory merges or closes it. --pr reviews that one PR whether or not it is due.
+  npm run factory -- deps              Run just the dependency phase: one agent carries every open Dependabot PR onto one branch,
+                                       regenerates what the repo installs from, and the factory merges the batch on green CI and
+                                       closes the Dependabot PRs it carried.
   npm run factory -- status            Show grooming progress, capacity, in-flight jobs, pending PRs, and recent telemetry.
   npm run factory -- abort [--issue N] Abandon stuck local pipelines — all of them, or just issue N's
                                        (cancels the runs if the worker still can).
@@ -115,6 +118,11 @@ async function status(): Promise<void> {
     log(`  ${r.startedAt} #${r.prNumber} (${r.author}) → ${r.verdict ?? 'no verdict'}; ${r.outcome}${r.reason ? ` (${r.reason})` : ''}`);
   }
 
+  const deps = await depsInputs(ctx.config);
+  log(`deps: ${deps.skip ?? `next pass batches ${deps.offered.length} Dependabot PR(s): ${deps.offered.map((p) => `#${p.number}`).join(' ')}`}.`);
+  const lastDeps = ctx.telemetry.depsPasses().at(-1);
+  if (lastDeps) log(`  last batch: ${lastDeps.startedAt} → ${lastDeps.outcome}${lastDeps.prUrl ? ` ${lastDeps.prUrl}` : ''} (carried ${lastDeps.carried.length} of ${lastDeps.offered.length})${lastDeps.reason ? ` (${lastDeps.reason})` : ''}`);
+
   const { sha } = await defaultBranchHead(repoSlug(ctx.config));
   const simplifySkipped = await simplifySkip(ctx, sha);
   log(`simplify: ${simplifySkipped ?? `next tick looks for one simplification at ${sha.slice(0, 8)}`}.`);
@@ -139,6 +147,13 @@ async function review(opts: { only?: number }): Promise<void> {
   for (const r of records) {
     log(`  #${r.prNumber} (${r.author}) → ${r.verdict ?? 'no verdict'}; ${r.outcome}${r.reason ? ` (${r.reason})` : ''}`);
   }
+}
+
+async function deps(): Promise<void> {
+  const ctx = buildContext();
+  const record = await runDepsPhase(ctx, await buildWorker(ctx.config));
+  if (!record) return;
+  log(`dependency batch → ${record.outcome}${record.prUrl ? ` ${record.prUrl}` : ''} (carried ${record.carried.length} of ${record.offered.length})${record.reason ? ` (${record.reason})` : ''}`);
 }
 
 async function env(): Promise<void> {
@@ -251,6 +266,9 @@ async function main(): Promise<void> {
       break;
     case 'simplify':
       await simplify();
+      break;
+    case 'deps':
+      await deps();
       break;
     case 'review':
       await review({ ...(only !== undefined ? { only } : {}) });

@@ -4,6 +4,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { ReviewPr } from './review.ts';
+import type { DepsPr } from './deps.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -276,6 +277,12 @@ export async function listPrsForReview(repo: string, state: 'open' | 'closed', l
 
 export async function viewPrForReview(repo: string, prUrl: string): Promise<ReviewPr & { files: { path: string }[] }> {
   return ghJson(['pr', 'view', prUrl, '-R', repo, '--json', `${REVIEW_PR_FIELDS},files`]);
+}
+
+/** Dependabot's open PRs: the dependency phase's candidates. */
+export async function listDependabotPrs(repo: string): Promise<DepsPr[]> {
+  return ghJson<DepsPr[]>(['pr', 'list', '-R', repo, '--author', 'app/dependabot', '--state', 'open', '--limit', '50',
+    '--json', 'number,url,title,isDraft,headRefName,headRefOid,files,comments']);
 }
 
 /**
