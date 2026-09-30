@@ -8,6 +8,19 @@ import {
 
 const BASE_URL = 'https://api.cursor.com';
 const TERMINAL: RunStatus[] = ['FINISHED', 'ERROR', 'CANCELLED', 'EXPIRED'];
+/** The backoff Cursor's API docs recommend. */
+const RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000];
+
+/** `status` is unset when the request never got an answer. */
+class CursorApiError extends Error {
+  constructor(message: string, readonly status: number | undefined) {
+    super(message);
+  }
+
+  get transient(): boolean {
+    return this.status === undefined || this.status === 429 || this.status >= 500;
+  }
+}
 
 /**
  * Cursor reports neither a run's context size nor its compactions, only token
@@ -66,7 +79,28 @@ export class CursorWorker implements CodingWorker {
     this.opts.log?.(msg);
   }
 
+  /**
+   * A GET that fails in transit, is rate-limited, or meets a 5xx is asked
+   * again: on 2026-09-30 single dropped polls killed seven runs in four ticks,
+   * each already doing or done with its work. A POST is retried only on 429,
+   * the one answer that says nothing was created: the same day, two launches
+   * whose response never came back had each started an agent anyway.
+   */
   private async api<T>(method: string, path: string, body?: unknown): Promise<T> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.request<T>(method, path, body);
+      } catch (err) {
+        const delay = RETRY_DELAYS_MS[attempt];
+        const retryable = err instanceof CursorApiError && (err.status === 429 || (method === 'GET' && err.transient));
+        if (!retryable || delay === undefined) throw err;
+        this.log(`${err.message}; retrying in ${delay / 1000}s`);
+        await new Promise((r) => setTimeout(r, delay));
+      }
+    }
+  }
+
+  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
     const res = await fetch(`${BASE_URL}${path}`, {
       method,
       headers: {
@@ -74,10 +108,15 @@ export class CursorWorker implements CodingWorker {
         'Content-Type': 'application/json',
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    }).catch((err: Error) => {
+      // Node's fetch says only "fetch failed"; what failed is in the cause.
+      const cause = err.cause as { code?: string; message?: string } | undefined;
+      const why = cause ? ` (${[cause.code, cause.message].filter(Boolean).join(': ')})` : '';
+      throw new CursorApiError(`Cursor API ${method} ${path}: ${err.message}${why}`, undefined);
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      throw new Error(`Cursor API ${method} ${path} → ${res.status}: ${text.slice(0, 500)}`);
+      throw new CursorApiError(`Cursor API ${method} ${path} → ${res.status}: ${text.slice(0, 500)}`, res.status);
     }
     return (await res.json()) as T;
   }
