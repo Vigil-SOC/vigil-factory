@@ -36,7 +36,7 @@
     "maxPrsPerPass": 3
   },
   "simplify": {
-    "enabled": true
+    "enabled": false
   },
   "review": {
     "enabled": false,

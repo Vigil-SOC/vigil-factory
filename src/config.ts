@@ -170,7 +170,7 @@ export function loadConfig(root: string = projectRoot): FactoryConfig {
   config.labels.depsPr ??= 'factory:deps';
   config.labels.epic ??= 'type:epic';
   config.labels.blocker ??= 'factory:blocker';
-  config.simplify ??= { enabled: true };
+  config.simplify ??= { enabled: false };
   // The one phase that merges is the one a deployment has to ask for.
   config.review ??= { enabled: false, maxPerTick: 3, maxCommitsBehind: 100 };
   config.review.enabled ??= false;

@@ -1,8 +1,8 @@
 name: factory-tick
 
+# Manual dispatch only: the tick runs locally under launchd. To schedule it
+# here again, add `schedule: [{ cron: '0 14 * * 1-5' }]` (14:00 UTC weekdays).
 on:
-  schedule:
-    - cron: '0 14 * * 1-5' # 14:00 UTC weekdays; the tick is idempotent, so cadence is a policy knob
   workflow_dispatch:
     inputs:
       worker:

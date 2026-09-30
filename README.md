@@ -511,7 +511,12 @@ time. A pass that reached a conclusion on a commit — opened a PR, found nothin
 the code — is not repeated until the default branch moves, so an idle repo does not buy a
 fresh 90-minute search every day. A simplification a human closes unmerged is recorded
 like any other rejected PR, and the next pass is handed its link and told not to propose
-it again. Set `simplify.enabled` to `false` to turn the phase off.
+it again.
+
+The phase is off by default: set `simplify.enabled` to `true` to turn it on. During a
+period of heavy implementation the code it would take out is still being built on, so
+simplifying then fights the implementers; it earns its keep once the codebase reaches a
+steadier state.
 
 ## Reviewing outside PRs
 
@@ -698,8 +703,8 @@ Two options; both just invoke the idempotent tick.
 **Local (launchd, macOS):** copy `contrib/com.deeptempo.factory.plist` to
 `~/Library/LaunchAgents/`, adjust paths, then `launchctl load` it.
 
-**GitHub Actions:** `.github/workflows/factory.yml` (daily cron + manual
-dispatch). Requires `FACTORY_GH_TOKEN` (a PAT with `repo` scope on the target
+**GitHub Actions:** `.github/workflows/factory.yml` (manual dispatch only; its
+daily cron is disabled — add a `schedule` trigger back to run it on a timer). Requires `FACTORY_GH_TOKEN` (a PAT with `repo` scope on the target
 repo — the default `GITHUB_TOKEN` is scoped to this repo and cannot touch the
 target repo; the `claude-code` worker's agents push with it too) plus the
 worker's own secret: `CURSOR_API_KEY` for `cursor`, `CLAUDE_CODE_OAUTH_TOKEN`
@@ -735,8 +740,8 @@ committed.
 - `factory.config.json` → `environment` — `enabled` (default true) and `maxPrsPerPass`
   (default 3): the phase that owns the cloud-agent environment. Off means the factory
   keeps opening PRs whose verification was blocked and never fixes the cause.
-- `factory.config.json` → `simplify` — `enabled` (default true): the phase that removes
-  code. Off means the factory only ever adds.
+- `factory.config.json` → `simplify` — `enabled` (default false): the phase that removes
+  code. Off means the factory only ever adds; turn it on once heavy implementation settles.
 - `factory.config.json` → `labels.reviewPr` — (default `factory:review`) the replacement PR
   the review phase opens for a fork PR that needed fixes.
 - `factory.config.json` → `review` — `enabled` (default false), `maxPerTick` (default 3),
