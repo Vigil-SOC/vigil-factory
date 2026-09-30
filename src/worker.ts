@@ -9,6 +9,18 @@ import {
 const BASE_URL = 'https://api.cursor.com';
 const TERMINAL: RunStatus[] = ['FINISHED', 'ERROR', 'CANCELLED', 'EXPIRED'];
 
+/**
+ * Cursor reports neither a run's context size nor its compactions, only token
+ * totals. Under Anthropic prompt caching every token enters the context once,
+ * as uncached input or a cache write, so those two over the run track its peak
+ * context: 0.90–0.96 of it across seven Claude Code transcripts that recorded
+ * both. Other providers' cache accounting does not hold to that, so no estimate.
+ */
+export function peakContextEstimate(model: ModelSpec | null, run: TokenUsage): number | undefined {
+  if (!model?.id.startsWith('claude-')) return undefined;
+  return Math.round((run.inputTokens + run.cacheWriteTokens) / 0.93);
+}
+
 export interface CursorWorkerOptions {
   apiKey: string;
   repoUrl: string;
@@ -155,11 +167,17 @@ export class CursorWorker implements CodingWorker {
 
   async usage(agentId: string): Promise<TokenUsage | undefined> {
     try {
-      const json = await this.api<{ totalUsage: TokenUsage; cost?: { chargedCents?: number } }>(
+      const json = await this.api<{ totalUsage: TokenUsage; cost?: { chargedCents?: number }; runs?: { usage: TokenUsage }[] }>(
         'GET', `/v1/agents/${agentId}/usage`,
       );
       const costCents = json.cost?.chargedCents;
-      return { ...json.totalUsage, ...(costCents !== undefined ? { costCents } : {}) };
+      const firstRun = json.runs?.[0]?.usage;
+      const peakContextTokens = firstRun ? peakContextEstimate(this.opts.model, firstRun) : undefined;
+      return {
+        ...json.totalUsage,
+        ...(costCents !== undefined ? { costCents } : {}),
+        ...(peakContextTokens !== undefined ? { peakContextTokens } : {}),
+      };
     } catch {
       return undefined; // usage is telemetry-only; never fail the pipeline on it
     }

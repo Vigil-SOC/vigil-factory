@@ -67,6 +67,9 @@ export interface TokenUsage {
   cacheReadTokens: number;
   totalTokens: number;
   costCents?: number;
+  /** Estimated peak context of the agent's first run; above the model's
+   *  window means it compacted. See `peakContextEstimate`. */
+  peakContextTokens?: number;
 }
 
 /**

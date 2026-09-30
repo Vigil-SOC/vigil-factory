@@ -41,6 +41,14 @@ describe('size is judged once', () => {
   it('groomer is told the real run budget', () => {
     expect(groomPrompt(task, 'principles', { maxRunMinutes: 90 })).toContain('about 90 minutes');
   });
+
+  // Reading and verifying dominate a run, so a slice that shares that ground
+  // with the rest is a second agent re-learning it.
+  it('groomer sizes by what the agent reads and runs, and keeps shared ground in one PR', () => {
+    const p = groomPrompt(task, 'principles', { maxRunMinutes: 90 });
+    expect(p).toContain('room to use, not only a limit');
+    expect(p).toContain('not by the lines it will write');
+  });
 });
 
 // Whether a change needs a live test is the implementer's call, but it has the
@@ -91,6 +99,8 @@ describe('epics', () => {
 
   it('writes children in fenced child blocks, sized to the implementer budget', () => {
     expect(p).toContain('```child');
+    expect(p).toContain('Write as few children as that standard allows');
+    expect(p).toContain('Do not join unrelated work');
     expect(p).toContain('about 90 minutes');
     expect(p).toContain('Write no children for a needs-work or done epic');
     expect(p).toContain('VERDICT: done');
