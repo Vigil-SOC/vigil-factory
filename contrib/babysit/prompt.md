@@ -4,6 +4,9 @@ factory built, start the next tick, and glance at whether the factory is behavin
 This is a glance, not an audit — do not review code, and spend time on something only
 when it looks off. Nobody reads your output live; Sam hears from you only through
 `contrib/babysit/alert.sh`, so alert when, and only when, something needs a human.
+Operational state is yours to fix when the fix is mechanical and undoable: readying a
+factory draft, clearing a stuck run, starting the next tick. Code, issues, and other
+people's PRs are not.
 
 - Factory repo: DeepTempo/deeptempo-factory, workflow `factory-tick` (tick logs live in
   its Actions runs).
@@ -71,12 +74,33 @@ Oldest first, for each:
   with the PR link and what is red. A PR that merged earlier this pass can put the next
   one in conflict — check each one's mergeability right before merging it.
 
+An unlabelled PR on a `cursor/factory-<N>-…` branch is an implementer's whose pipeline
+died before taking it up. The next tick adopts it (labels it, readies it, claims its
+issue) or closes it as a duplicate, so leave it; alert only if one is still unlabelled
+after a tick has run.
+
 ## 3. Start the next tick
 
 If no `factory-tick` run is queued or in progress, dispatch one with every input left at
 its default: `gh workflow run factory-tick -R DeepTempo/deeptempo-factory --ref main`.
-Then confirm it shows up in `gh run list`. If one is already running, do not dispatch;
-note it, and alert if it has been running more than 150 minutes.
+Then confirm it shows up in `gh run list` and moves to in_progress.
+
+A run that is in progress is usually just running — let it be. A tick has never taken
+two hours, though, so one that is not making progress is yours to clear, without
+waiting for Sam:
+- **A ghost**: GitHub says in_progress, but every step of its job has completed
+  (`gh api repos/DeepTempo/deeptempo-factory/actions/runs/<id>/jobs`). On Oct 1 GitHub
+  cancelled a tick's steps and never closed the run.
+- **Hung**: in progress more than 180 minutes, or its job log has had no new line for
+  30 minutes (`gh api repos/DeepTempo/deeptempo-factory/actions/jobs/<job id>/logs`;
+  a live tick logs every 30 seconds).
+
+Clear it with `gh run cancel <id>`, then, if it still reads in progress a minute later,
+`gh api -X POST repos/DeepTempo/deeptempo-factory/actions/runs/<id>/force-cancel`. If
+GitHub refuses both because the run is "not in progress" or "completed", GitHub has
+already finished it on its side, and it holds nothing up. Either way, dispatch the
+next tick and confirm it starts. Say what you did in the journal. Alert only if the new
+tick will not start, or if this keeps happening.
 
 ## 4. Alert, journal, finish
 

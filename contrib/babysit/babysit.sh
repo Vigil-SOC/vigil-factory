@@ -20,11 +20,23 @@ echo $$ > "$LOCK/pid"
 trap 'rm -rf "$LOCK"' EXIT
 
 # A tick still running would make this pass skip its merge and dispatch, and the
-# next chance is 90 minutes out. Wait up to 90 minutes for it instead.
+# next chance is 90 minutes out. Wait up to 90 minutes for it instead — but not
+# for a ghost: on 2026-10-01 GitHub cancelled a tick's steps and never closed
+# the run, which then read in_progress forever and stalled every pass behind
+# it. A run is live while it is queued or one of its jobs still has work left.
+live_ticks() {
+  local id
+  gh run list -R DeepTempo/deeptempo-factory -w factory-tick -L 5 --json databaseId,status \
+    -q '.[] | select(.status != "completed") | "\(.databaseId) \(.status)"' 2>/dev/null |
+  while read -r id run_status; do
+    if [[ "$run_status" != in_progress ]]; then echo "$id"; continue; fi
+    gh api "repos/DeepTempo/deeptempo-factory/actions/runs/$id/jobs" --jq \
+      '[.jobs[] | select(.status != "completed") | select((.steps | length) == 0 or any(.steps[]; .status != "completed"))] | length' \
+      2>/dev/null | grep -qv '^0$' && echo "$id"
+  done
+}
 for _ in {1..45}; do
-  busy=$(gh run list -R DeepTempo/deeptempo-factory -w factory-tick -L 5 --json status \
-    -q '[.[] | select(.status != "completed")] | length' 2>/dev/null)
-  [[ "$busy" == 0 ]] && break
+  [[ -z "$(live_ticks)" ]] && break
   sleep 120
 done
 
