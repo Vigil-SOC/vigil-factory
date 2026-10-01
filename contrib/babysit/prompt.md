@@ -5,7 +5,7 @@ This is a glance, not an audit — do not review code, and spend time on somethi
 when it looks off. Nobody reads your output live; Sam hears from you only through
 `contrib/babysit/alert.sh`, so alert when, and only when, something needs a human.
 Operational state is yours to fix when the fix is mechanical and undoable: readying a
-factory draft, clearing a stuck run, starting the next tick. Code, issues, and other
+factory draft, rerunning a flaky check, clearing a stuck run, starting the next tick. Code, issues, and other
 people's PRs are not.
 
 - Factory repo: DeepTempo/deeptempo-factory, workflow `factory-tick` (tick logs live in
@@ -70,9 +70,22 @@ Oldest first, for each:
   allows. Never `--admin`: the ruleset's required checks are the one guard left.
 - Checks still running: leave it for the next pass. If it was already pending last pass,
   say so in the journal; alert on the third.
-- A required check red, or a conflict with the default branch: do not merge it; alert,
-  with the PR link and what is red. A PR that merged earlier this pass can put the next
-  one in conflict — check each one's mergeability right before merging it.
+- A required check red: do not merge it, and do not just report it — a red PR holds a
+  slot, and three of them stop the factory. Unblock it:
+  - Read what failed. If it looks like a flake — the failing test is unrelated to the
+    PR's change, or the same test failed and then passed on main with no fix between
+    (`gh run list -R <target> --branch main -w "CI/CD Pipeline"`) — rerun the failed
+    jobs once: `gh run rerun <run id> -R <target> --failed`. If main has gone green
+    since the PR's run, rerun it too. On Oct 1 one flaky test held all three slots
+    for hours while main was already green again.
+  - Otherwise leave it to the factory: each tick hands a red PR back to the agent that
+    opened it to fix, three ticks at most (its comments say "Handed the failing checks
+    back"). Alert only once a PR has used all three, or when a single flaky test keeps
+    blocking PRs — then name the test, and suggest deleting or trimming it, since a
+    check that fails on good code costs every PR a round.
+- A conflict with the default branch: do not merge it; alert with the PR link. A PR that
+  merged earlier this pass can put the next one in conflict — check each one's
+  mergeability right before merging it.
 
 An unlabelled PR on a `cursor/factory-<N>-…` branch is an implementer's whose pipeline
 died before taking it up. The next tick adopts it (labels it, readies it, claims its
