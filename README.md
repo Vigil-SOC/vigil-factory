@@ -71,7 +71,9 @@ Plenty of tools point an agent at a backlog. This one takes positions:
 
 ```
 reconcile with GitHub: record the verdict on every factory PR that has closed, release the
-   in-progress label on every issue nothing is working on any more
+   in-progress label on every issue nothing is working on any more, take any factory PR
+   out of draft, and adopt the PRs a dead pipeline opened but never labelled (a
+   cursor/factory-N-… branch closing #N), or close one another PR already answers
 → GROOM agents (up to groom.maxPerTick, in parallel; epics, then blockers, then oldest
    first): vet issues against
    principles.md — "groomed" or "needs-work", recorded as a label, alongside a comment

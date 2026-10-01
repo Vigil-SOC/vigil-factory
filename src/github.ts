@@ -108,6 +108,11 @@ export async function listPrsByLabel(repo: string, label: string, state: 'open' 
   ]);
 }
 
+/** Every open PR, whoever opened it, with its labels. */
+export async function listOpenPrs(repo: string): Promise<(PrData & { labels: { name: string }[] })[]> {
+  return ghJson(['pr', 'list', '-R', repo, '--state', 'open', '--limit', '100', '--json', `${PR_FIELDS},labels`]);
+}
+
 export async function findPrByBranch(repo: string, branch: string): Promise<PrData | null> {
   const prs = await ghJson<PrData[]>([
     'pr', 'list', '-R', repo, '--head', branch, '--state', 'all',
