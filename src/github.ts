@@ -290,9 +290,24 @@ export async function listDependabotPrs(repo: string): Promise<DepsPr[]> {
     '--json', 'number,url,title,isDraft,headRefName,headRefOid,files,comments']);
 }
 
-/** Whether a PR merges cleanly into its base; `UNKNOWN` while GitHub is still working it out. */
-export async function prMergeable(repo: string, prUrl: string): Promise<{ mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'; baseRefName: string }> {
-  return ghJson(['pr', 'view', prUrl, '-R', repo, '--json', 'mergeable,baseRefName']);
+/**
+ * Whether a PR merges cleanly into its base. GitHub works this out lazily: after
+ * a merge to the base it answers `UNKNOWN` until asked, then computes it in a
+ * few seconds. That is exactly when a conflict appears — the babysitter merges
+ * and then starts the tick — so ask again for up to ~30s before settling for it.
+ */
+export async function prMergeable(
+  repo: string,
+  prUrl: string,
+  opts: { attempts?: number; delayMs?: number } = {},
+): Promise<{ mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'; baseRefName: string }> {
+  const { attempts = 10, delayMs = 3_000 } = opts;
+  for (let i = 1; ; i++) {
+    const pr = await ghJson<{ mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'; baseRefName: string }>(
+      ['pr', 'view', prUrl, '-R', repo, '--json', 'mergeable,baseRefName']);
+    if (pr.mergeable !== 'UNKNOWN' || i >= attempts) return pr;
+    await new Promise((r) => setTimeout(r, delayMs));
+  }
 }
 
 /**
