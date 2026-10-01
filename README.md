@@ -75,8 +75,8 @@ reconcile with GitHub: record the verdict on every factory PR that has closed, r
    in-progress label on every issue nothing is working on any more, take any factory PR
    out of draft, and adopt the PRs a dead pipeline opened but never labelled (a
    cursor/factory-N-… branch closing #N), or close one another PR already answers
-→ hand every open factory PR whose checks are red back to the agent that opened it, to fix
-   them (Cursor worker; three ticks per PR at most)
+→ hand every open factory PR that cannot merge back to the agent that opened it: merge
+   conflicts to resolve, else red checks to fix (Cursor worker; three ticks per PR for each)
 → GROOM agents (up to groom.maxPerTick, in parallel; epics, then blockers, then oldest
    first): vet issues against
    principles.md — "groomed" or "needs-work", recorded as a label, alongside a comment

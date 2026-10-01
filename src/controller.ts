@@ -37,9 +37,9 @@ import { GitHubIssueSource } from './workSource.ts';
 import { FactoryState } from './state.ts';
 import { Telemetry } from './telemetry.ts';
 import { filterAssigned, filterClaimed, filterEpics, parseSelection, type Selection } from './selector.ts';
-import { BOOT_CHECK_PROMPT, depsPrompt, environmentPrompt, fixChecksPrompt, groomEpicPrompt, groomPrompt, implementPrompt, reviewPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
+import { BOOT_CHECK_PROMPT, depsPrompt, environmentPrompt, fixChecksPrompt, resolveConflictsPrompt, groomEpicPrompt, groomPrompt, implementPrompt, reviewPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
 import { factoryComment, isFactoryComment, groomState, isBlocker, isEpic, isGroomed, needsGroom, queueOrder, openChildren, openIssues, parseGroomReply, stampExtrasFor, unaccountedBlockers, verdict, type GroomLabels, type OpenIssues } from './groom.ts';
-import { type PrCheck, addPrLabels, approveHeldRuns, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, listDependabotPrs, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, prDrift, reopenPr, userId, viewPr, viewPrForReview } from './github.ts';
+import { type PrCheck, addPrLabels, approveHeldRuns, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, listDependabotPrs, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, prMergeable, prDrift, reopenPr, userId, viewPr, viewPrForReview } from './github.ts';
 import { ENV_AGENT_MARK, environmentChangedAt, filedIssueBody, parseEnvReport, recentVerdicts, skipReason, unreadFactoryPrs, withOpenedThisTick, workerSkipReason, type UnreadPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
 import { carried, depsQueue, depsStamp, skipReason as depsSkipReason, type DepsPr } from './deps.ts';
@@ -1008,7 +1008,7 @@ export async function tick(opts: { dryRun: boolean }): Promise<void> {
   }
 
   const worker = await buildWorker(config);
-  await handBackRedPrs(ctx, worker);
+  await handBackStuckPrs(ctx, worker);
 
   // 2. Grooming: vet part of the backlog. Deliberately ahead of the
   //    capacity gate — it produces no code, so it cannot collide.
@@ -1344,12 +1344,13 @@ const CHECKS_WAIT_MS = 30 * 60_000;
  * green. A red PR fills a slot until a human acts, and three of them stall the
  * factory: on Oct 1 one flaky test held every slot while each agent, after its
  * one round, reported it as not theirs. A PR still red when its pipeline ends
- * is handed back again by later ticks (`handBackRedPrs`).
+ * is handed back again by later ticks (`handBackStuckPrs`).
  */
 const FIX_ROUNDS = 3;
-/** Ticks that hand one PR's red checks back before it is left to a human. */
+/** Ticks that hand one PR's red checks, or its conflicts, back before it is left to a human. */
 const MAX_HANDBACKS = 3;
 const HANDBACK_NOTE = 'Handed the failing checks back to the agent that opened this';
+const CONFLICT_NOTE = 'Handed the merge conflicts back to the agent that opened this';
 
 /**
  * Whether a PR's checks are red and settled: something failed and nothing is
@@ -1362,19 +1363,22 @@ export function redChecks(checks: PrCheck[]): PrCheck[] | null {
   return failed.length > 0 ? failed : null;
 }
 
-/** How many ticks have already handed this PR's checks back. */
-export function handbacksSent(comments: { body: string }[]): number {
-  return comments.filter((c) => isFactoryComment(c.body) && c.body.includes(HANDBACK_NOTE)).length;
+/** How many ticks have already handed this PR back for one reason, from its own comments. */
+export function handbacksSent(comments: { body: string }[], note = HANDBACK_NOTE): number {
+  return comments.filter((c) => isFactoryComment(c.body) && c.body.includes(note)).length;
 }
 
 /**
- * Every open factory PR that is red, at the start of a tick, goes back to the
- * agent that opened it: its pipeline ran out of rounds, died, or the failure
- * came from main after it finished. Fire and forget — the agent pushes, CI
- * runs, and the PR is merged green or handed back again next tick, up to
- * MAX_HANDBACKS. Workers whose agents do not outlive the tick skip this.
+ * Every open factory PR that cannot merge, at the start of a tick, goes back to
+ * the agent that opened it. Conflicts first: parallel work merged ahead of it,
+ * and GitHub runs no CI on a PR that conflicts, so its checks mean nothing
+ * until they are resolved. Otherwise red checks: its pipeline ran out of
+ * rounds, died, or the failure came from main after it finished. Either fills
+ * a slot until someone acts. Fire and forget — the agent pushes, CI runs, and
+ * the PR is merged green or handed back again next tick, up to MAX_HANDBACKS
+ * per reason. Workers whose agents do not outlive the tick skip this.
  */
-async function handBackRedPrs(ctx: FactoryContext, worker: CodingWorker): Promise<void> {
+async function handBackStuckPrs(ctx: FactoryContext, worker: CodingWorker): Promise<void> {
   if (!worker.agentForPr) return;
   const { config } = ctx;
   const repo = repoSlug(config);
@@ -1382,24 +1386,30 @@ async function handBackRedPrs(ctx: FactoryContext, worker: CodingWorker): Promis
     .map((label) => listPrsByLabel(repo, label, 'open')))).flat();
   for (const pr of open) {
     try {
-      const failed = redChecks(await prChecks(repo, pr.url));
-      if (!failed) continue;
-      const sent = handbacksSent(pr.comments);
+      const { mergeable, baseRefName } = await prMergeable(repo, pr.url);
+      const stuck = mergeable === 'CONFLICTING'
+        ? { note: CONFLICT_NOTE, what: `merge conflicts with ${baseRefName}`, prompt: resolveConflictsPrompt(pr.url, baseRefName) }
+        : await (async () => {
+          const failed = redChecks(await prChecks(repo, pr.url));
+          const names = failed?.map((c) => c.name).join(', ');
+          return failed ? { note: HANDBACK_NOTE, what: `failing check(s) ${names}`, prompt: fixChecksPrompt(pr.url, failed) } : null;
+        })();
+      if (!stuck) continue;
+      const sent = handbacksSent(pr.comments, stuck.note);
       if (sent >= MAX_HANDBACKS) {
-        log(`${pr.url}: still red after ${sent} handback(s); leaving it to a human`);
+        log(`${pr.url}: ${stuck.what} still, after ${sent} handback(s); leaving it to a human`);
         continue;
       }
       const agent = await worker.agentForPr(pr.url);
       if (!agent) {
-        log(`${pr.url}: red, but no agent to hand it back to`);
+        log(`${pr.url}: ${stuck.what}, but no agent to hand it back to`);
         continue;
       }
-      await worker.continueRun(agent, fixChecksPrompt(pr.url, failed));
-      await commentOnPr(repo, pr.url, factoryComment(
-        `🏭 ${HANDBACK_NOTE} (${sent + 1} of ${MAX_HANDBACKS}): ${failed.map((c) => c.name).join(', ')}.`));
-      log(`${pr.url}: handed ${failed.length} failing check(s) back to its agent — ${failed.map((c) => c.name).join(', ')}`);
+      await worker.continueRun(agent, stuck.prompt);
+      await commentOnPr(repo, pr.url, factoryComment(`🏭 ${stuck.note} (${sent + 1} of ${MAX_HANDBACKS}): ${stuck.what}.`));
+      log(`${pr.url}: handed ${stuck.what} back to its agent`);
     } catch (err) {
-      log(`${pr.url}: could not hand red checks back — ${(err as Error).message}`);
+      log(`${pr.url}: could not hand it back — ${(err as Error).message}`);
     }
   }
 }

@@ -83,9 +83,12 @@ Oldest first, for each:
     back"). Alert only once a PR has used all three, or when a single flaky test keeps
     blocking PRs — then name the test, and suggest deleting or trimming it, since a
     check that fails on good code costs every PR a round.
-- A conflict with the default branch: do not merge it; alert with the PR link. A PR that
-  merged earlier this pass can put the next one in conflict — check each one's
-  mergeability right before merging it.
+- A conflict with the default branch: do not merge it, and do not alert — parallel work
+  causes these, and the tick you are about to start hands it back to the agent that
+  opened it to resolve, three ticks at most (its comments say "Handed the merge
+  conflicts back"). Alert only once a PR has used all three. A PR that merged earlier
+  this pass can put the next one in conflict, so check each one's mergeability right
+  before merging it.
 
 An unlabelled PR on a `cursor/factory-<N>-…` branch is an implementer's whose pipeline
 died before taking it up. The next tick adopts it (labels it, readies it, claims its

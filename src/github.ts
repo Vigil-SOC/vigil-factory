@@ -290,6 +290,11 @@ export async function listDependabotPrs(repo: string): Promise<DepsPr[]> {
     '--json', 'number,url,title,isDraft,headRefName,headRefOid,files,comments']);
 }
 
+/** Whether a PR merges cleanly into its base; `UNKNOWN` while GitHub is still working it out. */
+export async function prMergeable(repo: string, prUrl: string): Promise<{ mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'; baseRefName: string }> {
+  return ghJson(['pr', 'view', prUrl, '-R', repo, '--json', 'mergeable,baseRefName']);
+}
+
 /**
  * How far a PR is from its base: GitHub's mergeability and how many base
  * commits its head lacks. The compare API resolves a fork's head by sha,

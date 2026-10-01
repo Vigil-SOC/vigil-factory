@@ -187,6 +187,11 @@ export function fixChecksPrompt(prUrl: string, failed: { name: string; link: str
   return `Fix the failing CI checks on ${prUrl}:\n\n${list}`;
 }
 
+/** The follow-up for a PR that parallel work has put in conflict with its base. */
+export function resolveConflictsPrompt(prUrl: string, base: string): string {
+  return `${prUrl} has merge conflicts with ${base}. Resolve them and push.`;
+}
+
 /**
  * The simplification agent: the counterweight to everything else the factory
  * launches. It is handed no issue — the work is to find the accretion, not to
