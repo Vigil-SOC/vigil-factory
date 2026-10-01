@@ -211,14 +211,11 @@ describe('red checks go back to the implementer', () => {
     expect(p).toContain('hands a red check back to you');
   });
 
-  it('fix prompt hands links to the failing jobs and forbids a new PR or a skipped check', () => {
+  it('fix prompt says only to fix the failing checks, with links to their jobs', () => {
     const p = fixChecksPrompt('https://github.com/o/r/pull/959', [
       { name: 'Unit Tests - Backend', link: 'https://github.com/o/r/actions/runs/1/job/2' },
     ]);
-    expect(p).toContain('https://github.com/o/r/pull/959');
-    expect(p).toContain('- Unit Tests - Backend: https://github.com/o/r/actions/runs/1/job/2');
-    expect(p).toContain('fails the same way on the default branch');
-    expect(p).toContain('Do not open a new PR');
+    expect(p).toBe('Fix the failing CI checks on https://github.com/o/r/pull/959:\n\n- Unit Tests - Backend: https://github.com/o/r/actions/runs/1/job/2');
   });
 });
 

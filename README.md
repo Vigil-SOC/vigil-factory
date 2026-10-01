@@ -43,9 +43,10 @@ Plenty of tools point an agent at a backlog. This one takes positions:
 - **CI's verdict goes back to the agent, not to the reviewer.** A PR with a failing check
   is not finished work. The factory waits for the checks and, if one is red, hands the
   failing jobs back to the implementer that wrote the code — same agent, same branch —
-  for one fix round. It judges whether the failure is its own; one that is red on main
-  too is reported on the PR and left. Only then does a human see the PR, and the issue
-  comment says if it is still red. This is not a review gate: the check is the repo's
+  with one instruction: fix them. Red is red whoever caused it; a failure main shares
+  still holds the PR, and every slot like it. Up to three rounds in its pipeline, then
+  once a tick, three more times, for a PR still red when a later tick starts. Only then
+  is it left to a human, and the issue comment says if it is still red. This is not a review gate: the check is the repo's
   own, and the factory only relays it.
 - **The factory owns the machine it builds on.** When an agent cannot verify its own
   change because the sandbox lacks something, that is the factory's bug, not the
@@ -74,6 +75,8 @@ reconcile with GitHub: record the verdict on every factory PR that has closed, r
    in-progress label on every issue nothing is working on any more, take any factory PR
    out of draft, and adopt the PRs a dead pipeline opened but never labelled (a
    cursor/factory-N-… branch closing #N), or close one another PR already answers
+→ hand every open factory PR whose checks are red back to the agent that opened it, to fix
+   them (Cursor worker; three ticks per PR at most)
 → GROOM agents (up to groom.maxPerTick, in parallel; epics, then blockers, then oldest
    first): vet issues against
    principles.md — "groomed" or "needs-work", recorded as a label, alongside a comment
@@ -114,8 +117,9 @@ for each free slot:
 → handoff to a FRESH implementer agent per pick, running concurrently, each with a
    short workflow prompt and the issue LINK (not its text — the agent reads the
    issue itself, notes and all)
-wait for each PR's checks. A red check goes back to the SAME implementer, once, with
-   the failing jobs' links: fix it if it is yours, say so on the PR if it is not
+wait for each PR's checks. A red check goes back to the SAME implementer, up to three
+   rounds, with the failing jobs' links and the one instruction to fix them; a factory PR
+   still red at the start of a later tick is handed back to its agent then, three ticks at most
 label the resulting PRs `factory`, comment on the issues, record telemetry
    → a run that ends with NO PR, or runs out of worker.maxRunMinutes, retracts the
       groom verdict: the issue is relabelled needs-work with the agent's report

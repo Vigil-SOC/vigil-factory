@@ -94,6 +94,9 @@ export interface CodingWorker {
   cancel(handle: RunHandle): Promise<void>;
   /** What the log says when a run ends with no text: where a human looks next. */
   opaqueRunNote(handle: RunHandle): string;
+  /** The agent that opened a PR, found again in a later tick; absent where an
+   *  agent does not outlive the process that ran it. */
+  agentForPr?(prUrl: string): Promise<RunHandle | null>;
 }
 
 export interface StartOptions {

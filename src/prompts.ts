@@ -176,19 +176,15 @@ Read the issue at that URL, comments included — do not work from the title alo
 }
 
 /**
- * The follow-up an implementer gets when CI went red on the PR it just opened,
- * or a reviewer on the PR it is about to have merged. Same agent, same branch: it has the context a fresh one would spend its
- * budget rebuilding. The checks are the repo's own, so the factory is relaying
- * a verdict rather than making one, and the agent judges whether the failure is
- * the PR's — a check that is red on the default branch too is not.
+ * The follow-up an implementer gets when CI went red on its PR, or a reviewer
+ * on the PR it is about to have merged. Same agent, same branch: it has the
+ * context a fresh one would spend its budget rebuilding, and needs nothing but
+ * the checks. Red is red whoever caused it — a failure that is main's too still
+ * holds the PR, and every other one, until somebody fixes it.
  */
 export function fixChecksPrompt(prUrl: string, failed: { name: string; link: string }[]): string {
   const list = failed.map((c) => `- ${c.name}: ${c.link}`).join('\n');
-  return `CI failed on ${prUrl}, the PR you just worked on. The failing checks:
-
-${list}
-
-Read each failing job's log at its link. If the PR's change caused the failure, fix it, run the check the way CI runs it before pushing, push to the same branch, and update the PR's Verification section to say what you ran. If a failure is not yours — it fails the same way on the default branch — say so in a comment on the PR, with what you checked, and leave it. Do not open a new PR and do not disable or skip the check.`;
+  return `Fix the failing CI checks on ${prUrl}:\n\n${list}`;
 }
 
 /**

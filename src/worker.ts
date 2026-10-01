@@ -161,6 +161,14 @@ export class CursorWorker implements CodingWorker {
     return { agentId: handle.agentId, runId };
   }
 
+  async agentForPr(prUrl: string): Promise<RunHandle | null> {
+    const json = await this.api<{ items: { id: string; latestRunId?: string }[] }>(
+      'GET', `/v1/agents?prUrl=${encodeURIComponent(prUrl)}&limit=1`,
+    );
+    const agent = json.items[0];
+    return agent?.latestRunId ? { agentId: agent.id, runId: agent.latestRunId } : null;
+  }
+
   async awaitResult(handle: RunHandle): Promise<RunResult> {
     const deadline = Date.now() + this.opts.maxRunMinutes * 60_000;
     const intervalMs = this.opts.pollIntervalSeconds * 1000;

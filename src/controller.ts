@@ -38,8 +38,8 @@ import { FactoryState } from './state.ts';
 import { Telemetry } from './telemetry.ts';
 import { filterAssigned, filterClaimed, filterEpics, parseSelection, type Selection } from './selector.ts';
 import { BOOT_CHECK_PROMPT, depsPrompt, environmentPrompt, fixChecksPrompt, groomEpicPrompt, groomPrompt, implementPrompt, reviewPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
-import { factoryComment, groomState, isBlocker, isEpic, isGroomed, needsGroom, queueOrder, openChildren, openIssues, parseGroomReply, stampExtrasFor, unaccountedBlockers, verdict, type GroomLabels, type OpenIssues } from './groom.ts';
-import { addPrLabels, approveHeldRuns, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, listDependabotPrs, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, prDrift, reopenPr, userId, viewPr, viewPrForReview } from './github.ts';
+import { factoryComment, isFactoryComment, groomState, isBlocker, isEpic, isGroomed, needsGroom, queueOrder, openChildren, openIssues, parseGroomReply, stampExtrasFor, unaccountedBlockers, verdict, type GroomLabels, type OpenIssues } from './groom.ts';
+import { type PrCheck, addPrLabels, approveHeldRuns, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, listDependabotPrs, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, prDrift, reopenPr, userId, viewPr, viewPrForReview } from './github.ts';
 import { ENV_AGENT_MARK, environmentChangedAt, filedIssueBody, parseEnvReport, recentVerdicts, skipReason, unreadFactoryPrs, withOpenedThisTick, workerSkipReason, type UnreadPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
 import { carried, depsQueue, depsStamp, skipReason as depsSkipReason, type DepsPr } from './deps.ts';
@@ -1008,6 +1008,7 @@ export async function tick(opts: { dryRun: boolean }): Promise<void> {
   }
 
   const worker = await buildWorker(config);
+  await handBackRedPrs(ctx, worker);
 
   // 2. Grooming: vet part of the backlog. Deliberately ahead of the
   //    capacity gate — it produces no code, so it cannot collide.
@@ -1339,11 +1340,69 @@ async function runPipeline(
 /** How long the pipeline waits for a PR's CI before treating it as unsettled. */
 const CHECKS_WAIT_MS = 30 * 60_000;
 /**
- * Follow-up rounds an implementer gets to turn red CI green. One: the first
- * failure is usually a suite the agent did not run, and a second round on the
- * same failure is the agent guessing. After that the human sees the red X.
+ * Follow-up rounds an implementer gets, within its own pipeline, to turn red CI
+ * green. A red PR fills a slot until a human acts, and three of them stall the
+ * factory: on Oct 1 one flaky test held every slot while each agent, after its
+ * one round, reported it as not theirs. A PR still red when its pipeline ends
+ * is handed back again by later ticks (`handBackRedPrs`).
  */
-const FIX_ROUNDS = 1;
+const FIX_ROUNDS = 3;
+/** Ticks that hand one PR's red checks back before it is left to a human. */
+const MAX_HANDBACKS = 3;
+const HANDBACK_NOTE = 'Handed the failing checks back to the agent that opened this';
+
+/**
+ * Whether a PR's checks are red and settled: something failed and nothing is
+ * still running, so a push from a handback already sent is not mistaken for
+ * a new failure. Null when there is nothing to hand back.
+ */
+export function redChecks(checks: PrCheck[]): PrCheck[] | null {
+  if (checks.some((c) => c.bucket === 'pending')) return null;
+  const failed = checks.filter((c) => c.bucket === 'fail');
+  return failed.length > 0 ? failed : null;
+}
+
+/** How many ticks have already handed this PR's checks back. */
+export function handbacksSent(comments: { body: string }[]): number {
+  return comments.filter((c) => isFactoryComment(c.body) && c.body.includes(HANDBACK_NOTE)).length;
+}
+
+/**
+ * Every open factory PR that is red, at the start of a tick, goes back to the
+ * agent that opened it: its pipeline ran out of rounds, died, or the failure
+ * came from main after it finished. Fire and forget — the agent pushes, CI
+ * runs, and the PR is merged green or handed back again next tick, up to
+ * MAX_HANDBACKS. Workers whose agents do not outlive the tick skip this.
+ */
+async function handBackRedPrs(ctx: FactoryContext, worker: CodingWorker): Promise<void> {
+  if (!worker.agentForPr) return;
+  const { config } = ctx;
+  const repo = repoSlug(config);
+  const open = (await Promise.all([config.labels.factoryPr, config.labels.environmentPr, config.labels.simplifyPr]
+    .map((label) => listPrsByLabel(repo, label, 'open')))).flat();
+  for (const pr of open) {
+    try {
+      const failed = redChecks(await prChecks(repo, pr.url));
+      if (!failed) continue;
+      const sent = handbacksSent(pr.comments);
+      if (sent >= MAX_HANDBACKS) {
+        log(`${pr.url}: still red after ${sent} handback(s); leaving it to a human`);
+        continue;
+      }
+      const agent = await worker.agentForPr(pr.url);
+      if (!agent) {
+        log(`${pr.url}: red, but no agent to hand it back to`);
+        continue;
+      }
+      await worker.continueRun(agent, fixChecksPrompt(pr.url, failed));
+      await commentOnPr(repo, pr.url, factoryComment(
+        `🏭 ${HANDBACK_NOTE} (${sent + 1} of ${MAX_HANDBACKS}): ${failed.map((c) => c.name).join(', ')}.`));
+      log(`${pr.url}: handed ${failed.length} failing check(s) back to its agent — ${failed.map((c) => c.name).join(', ')}`);
+    } catch (err) {
+      log(`${pr.url}: could not hand red checks back — ${(err as Error).message}`);
+    }
+  }
+}
 
 /**
  * A PR with a failing check should not reach a human as the factory's finished
