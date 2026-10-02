@@ -7,14 +7,20 @@
   "worker": {
     "kind": "cursor",
     "model": {
-      "id": "grok-4.7",
+      "id": "claude-sonnet-5-5",
       "params": {
-        "context": "500k",
-        "reasoning_effort": "medium",
-        "fast": "false"
+        "context": "300k",
+        "reasoning_effort": "high"
       }
     },
     "models": {
+      "sonnet": {
+        "id": "claude-sonnet-5-5",
+        "params": {
+          "context": "300k",
+          "reasoning_effort": "high"
+        }
+      },
       "opus": {
         "id": "claude-opus-5-5",
         "params": {
