@@ -99,7 +99,9 @@ describe('epics', () => {
 
   it('writes children in fenced child blocks, sized to the implementer budget', () => {
     expect(p).toContain('```child');
-    expect(p).toContain('Write as few children as that standard allows');
+    expect(p).toContain('Make each child as large as that standard allows');
+    expect(p).toContain('however many children that is');
+    expect(p).toContain('WAITING: #<issue or PR number>');
     expect(p).toContain('Do not join unrelated work');
     expect(p).toContain('about 90 minutes');
     expect(p).toContain('Write no children for a needs-work or done epic');

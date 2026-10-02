@@ -218,7 +218,7 @@ async function groomOne(
   // A child's verdict names the epic record it was judged against; an epic's
   // names its children. Either way the verdict says what would make it stale.
   await ctx.source.recordGroom(task, reply, stampExtrasFor(task, ctx.config.labels, open));
-  log(`groomed #${task.issueNumber}${epic ? ' (epic)' : ''} → ${reply.verdict}${reply.notes ? ' (+notes)' : ''}${reply.blocked !== undefined ? ` (blocked on #${reply.blocked})` : ''}`);
+  log(`groomed #${task.issueNumber}${epic ? ' (epic)' : ''} → ${reply.verdict}${reply.notes ? ' (+notes)' : ''}${reply.blocked !== undefined ? ` (blocked on #${reply.blocked})` : ''}${epic && reply.waiting ? ` (waiting on ${reply.waiting.map((n) => `#${n}`).join(' ')})` : ''}`);
 
   // A groomed epic's children are the work; the verdict alone builds nothing.
   // Filed after the verdict is on record so a child always points at an epic

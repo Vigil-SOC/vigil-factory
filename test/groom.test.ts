@@ -479,6 +479,31 @@ describe('children of an epic', () => {
     expect(groomState(stamped, EPIC_LABELS, openIssues([stamped, verdictOn(child, 'needs-work')]))).toBe('stale');
   });
 
+  it('an epic holding work back for something outside its slice comes back when that closes', () => {
+    const reply = parseGroomReply('Settled. The tour waits on the Home route.\n\nVERDICT: groomed\nWAITING: #50\nwaiting: 51\nWAITING: #50')!;
+    expect(reply.waiting).toEqual([50, 51]);
+    expect(reply.reasoning).not.toContain('WAITING');
+    const c = groomComment(ungroomedEpic, reply, true, { children: [41] });
+    expect(c).toContain('children=#41 waiting=#50,#51 -->');
+    const stamped: Task = { ...ungroomedEpic, comments: [{ body: c }], labels: ['type:epic', LABELS.groomed] };
+    const home = task(50, 'feat: Home route');
+    const pr = 51;
+    // While the slice is in flight and both waits are open, nothing to do.
+    expect(groomState(stamped, EPIC_LABELS, openIssues([stamped, child, home], [pr]))).toBe('current');
+    // A PR not among the open issues is looked up, not read as closed.
+    expect(unaccountedBlockers([stamped], openIssues([stamped, child, home]))).toEqual([51]);
+    // Either one closing brings the epic back, even with its own slice still open.
+    expect(groomState(stamped, EPIC_LABELS, openIssues([stamped, child], [pr]))).toBe('stale');
+    expect(groomState(stamped, EPIC_LABELS, openIssues([stamped, child, home]))).toBe('stale');
+  });
+
+  it('only a groomed epic waits: the line is ignored on a child or a needs-work epic', () => {
+    const reply = parseGroomReply('Blocked.\n\nVERDICT: needs-work\nWAITING: #50')!;
+    expect(groomComment(ungroomedEpic, reply, true)).not.toContain('waiting=');
+    const groomed = parseGroomReply('One PR.\n\nVERDICT: groomed\nWAITING: #50')!;
+    expect(groomComment(child, groomed)).not.toContain('waiting=');
+  });
+
   it('parses and publishes done, the epic delivered', () => {
     expect(parseGroomReply('Every decision landed.\n\nVERDICT: done')).toMatchObject({ verdict: 'done' });
     const c = groomComment(ungroomedEpic, { verdict: 'done', notes: undefined, reasoning: 'Every decision landed.', children: [] }, true);

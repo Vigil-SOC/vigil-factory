@@ -282,8 +282,8 @@ or licensing exposure, or anything that widens what the system may do on its own
 the way every verdict here is vetoed: reply on the epic, and it is groomed again with the
 reply in view. Nothing waits for an approval nobody asked for.
 
-**A groomed epic's children are the work.** The groomer writes the first slice — the issues
-that can start against the code as it stands or against a sibling in the same slice — each
+**A groomed epic's children are the work.** The groomer writes the slice — every issue that
+can start against the code as it stands or against a sibling in the same slice, uncapped — each
 one PR by the usual standard, in fenced ```` ```child ```` blocks. The factory files them
 under the epic, each opening with a `Part of #N` line, inheriting the epic's labels minus
 the factory's own. Each child is then groomed on a later tick like any issue, with one
@@ -325,7 +325,11 @@ verdict knew about — `children=#a,#b`, plus the ones the factory filed for it 
 verdict goes stale once none of them is open. That re-groom is where the next slice of
 children gets written, so a capability keeps moving without anyone remembering to ask. A
 child a human closes as rejected counts as landed for this purpose, which is what you want:
-the groomer sees the closure and writes around it.
+the groomer sees the closure and writes around it. Work the groomer holds back for something
+outside the slice — a page another epic is building, a PR in flight — is named in a
+`WAITING: #N` line, carried into the stamp as `waiting=#N`, and the verdict goes stale once
+any of those closes, so held-back work is written when it can be rather than whenever a
+child happens to land.
 
 **Direction changes in one place, and it ratchets.** A revised design document is not a
 change of direction. A reply on the epic is — one that links the revision and names the

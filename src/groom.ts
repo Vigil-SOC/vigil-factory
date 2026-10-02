@@ -62,6 +62,11 @@
 // epic is found done and closed. The children already needs-work when it was
 // groomed are named too (`weighed=#c`): the epic has had its say on them, so
 // one still needs-work does not bring it back again, but one that lands does.
+//
+// Work an epic holds back for something outside its slice — a page another
+// epic is building, a PR in flight — has no child to land, so the stamp names
+// what it waits on (`waiting=#d,#e`), and the verdict goes stale once any of
+// them closes. That re-groom writes what the wait was holding back.
 
 import { createHash } from 'node:crypto';
 import type { GroomVerdict, IssueComment, Task } from './types.ts';
@@ -95,6 +100,7 @@ interface Stamp {
   premise?: Premise;
   children?: number[];
   weighed?: number[];
+  waiting?: number[];
 }
 
 /** What a stamp carries beyond the fingerprint: a child's premise, an epic's children. */
@@ -117,12 +123,14 @@ function parseStamp(body: string): Stamp | null {
   const list = (key: string) => attrs.get(key)?.split(',').map((c) => Number(c.replace('#', ''))).filter((n) => n > 0);
   const children = list('children');
   const weighed = list('weighed');
+  const waiting = list('waiting');
   return {
     sha,
     ...(blocked ? { blocked: Number(blocked) } : {}),
     ...(premise ? { premise: { epic: Number(premise[1]), sha: premise[2]! } } : {}),
     ...(children?.length ? { children } : {}),
     ...(weighed?.length ? { weighed } : {}),
+    ...(waiting?.length ? { waiting } : {}),
   };
 }
 
@@ -222,6 +230,11 @@ export function readBlocker(task: Task): number | null {
   return latestStamp(task)?.blocked ?? null;
 }
 
+/** What a groomed epic's held-back work waits on outside its slice. */
+export function readWaiting(task: Task): number[] {
+  return latestStamp(task)?.waiting ?? [];
+}
+
 /** The epic record the current verdict was judged against, if it named one. */
 export function readPremise(task: Task): Premise | null {
   return latestStamp(task)?.premise ?? null;
@@ -285,12 +298,12 @@ export function openIssues(tasks: Task[], heldOpen: Iterable<number> = []): Open
 }
 
 /**
- * The blockers current verdicts name that the open issues do not account for.
- * Each is either closed — and the verdict waiting on it is stale — or open
- * somewhere the issue list does not reach; only a lookup can tell which.
+ * The blockers and waits current verdicts name that the open issues do not
+ * account for. Each is either closed — and the verdict waiting on it is stale —
+ * or open somewhere the issue list does not reach; only a lookup can tell which.
  */
 export function unaccountedBlockers(tasks: Task[], open: OpenIssues): number[] {
-  const named = tasks.map((t) => readBlocker(t)).filter((n): n is number => n !== null && !open.has(n));
+  const named = tasks.flatMap((t) => [readBlocker(t), ...readWaiting(t)]).filter((n): n is number => n !== null && !open.has(n));
   return [...new Set(named)].sort((a, b) => a - b);
 }
 
@@ -376,7 +389,10 @@ export function groomState(task: Task, labels: GroomLabels, open?: OpenIssues): 
   if (open && blocker !== null && blockerCleared(blocker, open, labels)) return 'stale';
   const premise = readPremise(task);
   if (open && premise && premiseChanged(premise, open)) return 'stale';
-  if (open && isEpic(task, labels) && verdict(task, labels) === 'groomed' && sliceSettled(task, open, labels)) return 'stale';
+  if (open && isEpic(task, labels) && verdict(task, labels) === 'groomed') {
+    if (sliceSettled(task, open, labels)) return 'stale';
+    if (readWaiting(task).some((n) => !open.has(n) && !open.heldOpen.has(n))) return 'stale';
+  }
   return 'current';
 }
 
@@ -412,6 +428,7 @@ export function groomComment(task: Task, reply: GroomReply, epic = false, extras
   if (extras.premise) attrs.push(`premise=#${extras.premise.epic}@${extras.premise.sha}`);
   if (extras.children?.length) attrs.push(`children=${extras.children.map((n) => `#${n}`).join(',')}`);
   if (extras.weighed?.length) attrs.push(`weighed=${extras.weighed.map((n) => `#${n}`).join(',')}`);
+  if (epic && reply.verdict === 'groomed' && reply.waiting?.length) attrs.push(`waiting=${reply.waiting.map((n) => `#${n}`).join(',')}`);
   const stamp = `<!-- factory-groom ${attrs.join(' ')} -->`;
   const parts = [
     stamp,
@@ -528,11 +545,14 @@ export interface GroomReply {
   children: ChildDraft[];
   /** Needs-work children an epic's groom lets go, from `CLOSE: #N` lines. */
   close?: number[];
+  /** What a groomed epic's held-back work waits on, from `WAITING: #N` lines. */
+  waiting?: number[];
 }
 
 const VERDICT_RE = /^\s*VERDICT:\s*(groomed|needs[-_ ]?work|epic|done|close)\s*$/gim;
 const BLOCKED_RE = /^\s*BLOCKED:\s*#?(\d+)\s*$/gim;
 const CLOSE_RE = /^\s*CLOSE:\s*#?(\d+)\s*$/gim;
+const WAITING_RE = /^\s*WAITING:\s*#?(\d+)\s*$/gim;
 const NOTES_RE = /```notes[ \t]*\n([\s\S]*?)```/g;
 const CHILD_RE = /```child[ \t]*\n([\s\S]*?)```/g;
 
@@ -561,7 +581,7 @@ export function parseDraftBlocks(text: string, tag: string): { drafts: ChildDraf
 /**
  * Parse the groom agent's reply: a trailing verdict line, optionally a
  * `BLOCKED: #N` line, a fenced ```notes block, and for epics any number of
- * fenced ```child blocks and `CLOSE: #N` lines. Returns null if there is no verdict to act on — a
+ * fenced ```child blocks, `CLOSE: #N` and `WAITING: #N` lines. Returns null if there is no verdict to act on — a
  * groom with no verdict is skipped, not guessed at.
  */
 export function parseGroomReply(text: string): GroomReply | null {
@@ -576,6 +596,7 @@ export function parseGroomReply(text: string): GroomReply | null {
   const blocked = blockedLine && verdict === 'needs-work' ? Number(blockedLine) : undefined;
   const children = parseDraftBlocks(text, 'child').drafts;
   const close = [...new Set([...text.matchAll(CLOSE_RE)].map((m) => Number(m[1])))];
+  const waiting = [...new Set([...text.matchAll(WAITING_RE)].map((m) => Number(m[1])))];
 
   // The reasoning is everything except the machinery, for the issue comment.
   const reasoning = text
@@ -584,7 +605,8 @@ export function parseGroomReply(text: string): GroomReply | null {
     .replace(VERDICT_RE, '')
     .replace(BLOCKED_RE, '')
     .replace(CLOSE_RE, '')
+    .replace(WAITING_RE, '')
     .trim();
 
-  return { verdict, notes, reasoning, ...(blocked !== undefined ? { blocked } : {}), children, ...(close.length ? { close } : {}) };
+  return { verdict, notes, reasoning, ...(blocked !== undefined ? { blocked } : {}), children, ...(close.length ? { close } : {}), ...(waiting.length ? { waiting } : {}) };
 }
