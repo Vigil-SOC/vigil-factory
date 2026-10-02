@@ -37,7 +37,7 @@ describe('which PRs the review phase takes up', () => {
   it('not drafts, bots, or the factory\'s own — known by label, since it opens PRs under a person\'s account', () => {
     expect(needsReview(pr(1, { isDraft: true }), FACTORY)).toBe(false);
     expect(needsReview(pr(1, { author: { login: 'app/dependabot', is_bot: true } }), FACTORY)).toBe(false);
-    expect(needsReview(pr(1, { author: { login: 'app/vigil-release-please' } }), FACTORY)).toBe(false);
+    expect(needsReview(pr(1, { author: { login: 'app/release-please' } }), FACTORY)).toBe(false);
     for (const label of FACTORY) expect(needsReview(pr(1, { labels: [{ name: label }] }), FACTORY)).toBe(false);
   });
 
