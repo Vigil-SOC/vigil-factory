@@ -210,7 +210,7 @@ export interface OutcomeRecord {
   prUrl: string;
   /** Which pipeline opened it. Absent on records written before env passes
    *  existed, which were all implementer PRs. */
-  source?: 'implementer' | 'environment' | 'simplify';
+  source?: 'implementer' | 'environment' | 'simplify' | 'security';
   issueNumber: number | null;
   merged: boolean;
   closedAt: string;
@@ -294,7 +294,24 @@ export interface DepsRecord extends AgentPass {
   checks?: RunRecord['checks'];
 }
 
-export type TelemetryRecord = RunRecord | GroomRecord | OutcomeRecord | EnvRecord | SimplifyRecord | ReviewRecord | DepsRecord;
+/**
+ * One security fix. `offered` is the alerts the agent was handed, `fixed` the
+ * ones its PR claims, `dismissed` the code scanning findings the factory
+ * dismissed as false positives on its word. `no-pr`: it fixed nothing.
+ */
+export interface SecurityRecord extends AgentPass {
+  type: 'security';
+  offered: string[];
+  fixed: string[];
+  dismissed: string[];
+  outcome: 'pr-opened' | 'no-pr' | 'failed';
+  prUrl: string | null;
+  fixRounds?: number;
+  checks?: RunRecord['checks'];
+  failureReason?: string;
+}
+
+export type TelemetryRecord = RunRecord | GroomRecord | OutcomeRecord | EnvRecord | SimplifyRecord | ReviewRecord | DepsRecord | SecurityRecord;
 
 // --- Pipeline state for crash detection ---
 

@@ -104,6 +104,12 @@ reconcile with GitHub: record the verdict on every factory PR that has closed, r
    branch with whatever the repo installs from regenerated, as one PR labelled
    factory:deps. CI runs once, on the versions that ship; the factory merges it on green
    under the review phase's rules and closes the Dependabot PRs it carried. One open at a time
+→ SECURITY agent, alongside too (security.enabled, on by default; Cursor worker only): every
+   open Dependabot and code scanning alert at security.minSeverity or above that no factory
+   PR claims is handed to one agent, which fixes the most severe group one PR can and opens
+   it, labelled factory:security — no issue, no groom. The factory claims the alerts on the
+   PR, hands a red check back, and leaves it for a human. No alerts due, or three security
+   PRs already awaiting a merge, no agent
 count the jobs already in flight (open factory PRs + running pipelines)
    → no free slot under maxConcurrentJobs? stop here
 for each free slot:
@@ -640,6 +646,54 @@ nothing and is retried next tick. Like reviews, the agent gets no `worker.agentE
 credentials and runs only on the Cursor worker, because resolving and installing new
 releases runs their code. The phase is off unless `deps.enabled` is set, since it merges.
 
+## Security alerts
+
+A repo's security tab fills faster than anyone reads it: one dependency's advisories appear
+once per advisory per lockfile, and one CodeQL rule fires on every call site of the helper it
+flags. Fixed one alert at a time, a few hundred of them are a few hundred PRs. No rule groups
+them well — the right group is *what one change fixes*, and only reading the code says what
+that is — so the grouping is an agent's judgment.
+
+**Straight to a PR.** Each tick, every open Dependabot and code scanning alert at or above
+`security.minSeverity` (default `high`, so high and critical) that no factory PR claims is
+handed to one agent, most severe first. It reads the code — how each affected dependency is
+actually used, where each flagged input actually comes from — takes the most severe group one
+PR can fix, fixes it, verifies it to the implementer's standard, and opens the PR, labelled
+`factory:security`. Nothing else is prescribed, with one exception: a dependency nothing
+imports, a tool nothing runs, or code nothing calls is removed rather than patched. There is no
+issue and no groom in between. An alert is already a finished report, and on a public repo an
+issue or a groom comment describing one would publish an unfixed hole; the PR is the first
+public trace, and it arrives with the fix.
+
+The PR is then the factory's like any implementer's: a red check goes back to the agent, up to
+three rounds and then three ticks, a conflict likewise, and a human merges it. It takes no
+implementer slot; instead no new one starts while three are awaiting a merge, since each
+waits on a person.
+
+**GitHub's rescan is the check.** GitHub closes an alert itself once the default branch no
+longer has it. The agent ends its reply with the alerts its PR fixes, and the factory comments
+them onto the PR over an invisible line — `<!-- factory-security
+alerts=dependabot#102,code-scanning#45 -->`. An alert is not offered again while an open PR
+claims it, or once a PR claiming it closed unmerged (declined: it is a human's from there). A
+merged PR gives GitHub a day to rescan; an alert still open after that is offered again, naming
+the PR that did not fix it, and after two such PRs it is left for a human.
+
+**False positives are dismissed, on the record.** A code scanning finding the agent shows is a
+false positive — the flagged input is never attacker-controlled, the path is never reached —
+is named on a `FALSE POSITIVE:` line with its reason, and the factory dismisses the alert with
+that reason on it. That is reversible from the security tab, and it is the one way the factory
+touches an alert. A dependency alert is never dismissed: upgrading or removing it is always
+possible.
+
+The alerts reach the agent in its prompt, every field the tick read, rather than as links: an
+alert page is behind a permission the agents' GitHub access does not carry, and the prompt is
+private where an issue would not be. The tick reads them with its own `gh` login (in Actions,
+`FACTORY_GH_TOKEN`; on a private repo it needs `security_events`, and dismissing needs write).
+A source it cannot read — Dependabot alerts off, code scanning never run — is left out with a
+log line; with neither readable, or nothing due, no agent starts. Like the dependency batch, the
+phase runs only on the Cursor worker and gets no `worker.agentEnv` credentials, because
+upgrading a dependency runs a release nobody here has read.
+
 ## Deploying
 
 This repo is a deployment: the engine plus the policy that points it at the
@@ -700,6 +754,7 @@ npm run factory -- env             # run just the environment phase over the unr
 npm run factory -- simplify        # run just the simplification phase: one PR that removes more than it adds
 npm run factory -- review          # run just the review phase over the outside PRs that are due
 npm run factory -- review --pr 42  # ...or review PR #42 now, due or not
+npm run factory -- security        # run just the security phase: one PR fixing the most severe group of open alerts
 npm run factory -- status          # grooming progress, capacity, in-flight jobs, recent telemetry
 npm run factory -- abort           # abandon every stuck pipeline (cancels the runs where the worker can)
 npm run factory -- abort --issue 42  # ...or just the one working issue #42
@@ -742,6 +797,11 @@ committed.
   blocks the agents' own verification. Groomed and implemented ahead of the rest of the
   backlog; the environment pass applies it to the repo defects it files, and a human may
   apply or remove it. Ordering only: the groomer still judges the issue.
+- `factory.config.json` → `security` — `enabled` (default true) and `minSeverity` (default
+  `high`; `low`, `medium` — or `moderate` — `high`, `critical`): the phase that fixes the
+  repo's open Dependabot and code scanning alerts, a group per PR. It merges nothing itself,
+  and starts no agent while no alert is due. `labels.securityPr` (default `factory:security`)
+  marks its PRs; see [Security alerts](#security-alerts).
 - `factory.config.json` → `assignedIssues` — whether each phase may act on an issue a
   human has assigned to themselves. Defaults to `{ "groom": true, "implement": false }`:
   vetting an assigned issue costs its assignee nothing, implementing one collides with
@@ -761,8 +821,8 @@ committed.
   the groomed issues before each implementer run. Off, the oldest groomed issue is
   implemented next; see [One judge of size](#one-judge-of-size) for why that is the
   default. `maxCandidates` (default 100) bounds the open-issue fetch either way.
-- `src/prompts.ts` — all six prompts (groom / selector / implementer / environment /
-  simplify / review), each a few lines. The implementer and simplifier share one block of working
+- `src/prompts.ts` — all eight prompts (groom / selector / implementer / environment /
+  simplify / review / deps / security), each a few lines. The implementer and simplifier share one block of working
   rules so a simplification is held to exactly the standard the code it removes was built to. Add lines only for specific opinions where the model's default behavior isn't
   what you want. **Widening autonomy later = widening this policy, not adding
   machinery.**
@@ -823,9 +883,11 @@ Its rows:
   (`merged` / `superseded` / `closed` / `left` / `failed`) and why, when a rule of its own
   held a merge back; the replacement PR for a fork, fix rounds, checks, agent id, token usage,
   duration.
+- `security` records: the alerts the fixer was handed, the ones its PR claims, the false
+  positives it dismissed, the PR, fix rounds, checks, agent id, token usage, duration.
 - `outcome` records: per PR — merged or rejected, human change requests, human
   comment count, time to close, and which pipeline opened it (`implementer`,
-  `environment`, or `simplify`).
+  `environment`, `simplify`, or `security`).
 
 Joining `groom` to `outcome` is the question worth measuring: do issues that carried
 grooming notes get merged with fewer human change requests than ones that passed clean?
@@ -850,13 +912,15 @@ src/groom.ts       verdict labels + fingerprint, backlog filters, VERDICT parsin
 src/environment.ts unread-PR bookkeeping + report freshness for the environment phase
 src/simplify.ts    the shrink rule, what to point the simplifier at, when not to run it
 src/review.ts      which outside PRs are due, the review stamp, VERDICT parsing, merge rules
+src/deps.ts        which Dependabot PRs a batch is offered, its stamp, what it carried
+src/security.ts    which alerts are due, the claim stamp, ALERTS / FALSE POSITIVE parsing
 src/selector.ts    wip + assignee filters, SELECTED-line parsing (mechanical only)
 src/prompts.ts     groom + selector + implementer + environment + simplify + review prompts  ← factory policy
 src/state.ts       capacity gate (open PRs + in-flight runs), outcome reconciliation
 src/controller.ts  the tick
 src/github.ts      thin `gh` CLI wrapper
 src/telemetry.ts   JSONL groom/run/outcome log
-src/cli.ts         run / groom / select / env / simplify / review / status / abort
+src/cli.ts         run / groom / select / env / simplify / review / deps / security / status / abort
 ```
 
 Non-goals (V1, on purpose): custom agent runtime, custom sandboxes, multi-agent

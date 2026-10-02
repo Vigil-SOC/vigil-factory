@@ -21,7 +21,8 @@
     "reviewPr": "factory:review",
     "depsPr": "factory:deps",
     "epic": "type:epic",
-    "blocker": "factory:blocker"
+    "blocker": "factory:blocker",
+    "securityPr": "factory:security"
   },
   "groom": {
     "maxPerTick": 5,
@@ -45,6 +46,10 @@
   },
   "deps": {
     "enabled": false
+  },
+  "security": {
+    "enabled": true,
+    "minSeverity": "high"
   },
   "assignedIssues": {
     "groom": true,

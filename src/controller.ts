@@ -15,11 +15,12 @@
 // strict one-at-a-time factory.
 //
 // Grooming, the environment phase, the simplification phase, the review of
-// PRs the factory did not open, and the Dependabot batch all run outside the
-// capacity gate on purpose: a PR sitting in review is no reason to stop vetting
-// the backlog, to leave the agents' machine broken, to let the code keep
-// accreting, or to leave someone else's PR — or a week of bumps — waiting.
-// Environment, simplification, and dependency PRs are each their own one-deep
+// PRs the factory did not open, the Dependabot batch, and the security fix
+// all run outside the capacity gate on purpose: a PR sitting in review is no
+// reason to stop vetting the backlog, to leave the agents' machine broken, to
+// let the code keep accreting, or to leave someone else's PR — or a week of
+// bumps, or an open alert — waiting.
+// Environment, simplification, dependency, and security PRs are each their own
 // queue and never spend an implementer's slot. The environment phase
 // runs last, after the implementers, so the PRs it reads include this tick's.
 //
@@ -28,7 +29,7 @@
 // the handoffs and keeps the capacity gate.
 
 import { resolve } from 'node:path';
-import type { CodingWorker, CurrentRun, DepsRecord, EnvRecord, GroomRecord, ReviewRecord, RunHandle, RunRecord, RunResult, SimplifyRecord, Task, TokenUsage } from './types.ts';
+import type { CodingWorker, CurrentRun, DepsRecord, EnvRecord, GroomRecord, ReviewRecord, RunHandle, RunRecord, RunResult, SecurityRecord, SimplifyRecord, Task, TokenUsage } from './types.ts';
 import { agentCredentials, claudeBin, githubTokenForAgents, loadConfig, loadDotEnv, loadPrinciples, projectRoot, repoSlug, requireCursorApiKey, type FactoryConfig } from './config.ts';
 import { RunBudgetExceeded } from './types.ts';
 import { CursorWorker } from './worker.ts';
@@ -37,12 +38,13 @@ import { GitHubIssueSource } from './workSource.ts';
 import { FactoryState } from './state.ts';
 import { Telemetry } from './telemetry.ts';
 import { filterAssigned, filterClaimed, filterEpics, parseSelection, type Selection } from './selector.ts';
-import { BOOT_CHECK_PROMPT, depsPrompt, environmentPrompt, fixChecksPrompt, resolveConflictsPrompt, groomEpicPrompt, groomPrompt, implementPrompt, reviewPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
+import { BOOT_CHECK_PROMPT, depsPrompt, environmentPrompt, fixChecksPrompt, resolveConflictsPrompt, groomEpicPrompt, groomPrompt, implementPrompt, reviewPrompt, securityPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
 import { factoryComment, isFactoryComment, groomState, isBlocker, isEpic, isGroomed, needsGroom, queueOrder, openChildren, openIssues, parseGroomReply, stampExtrasFor, unaccountedBlockers, verdict, type GroomLabels, type OpenIssues } from './groom.ts';
-import { type PrCheck, addPrLabels, approveHeldRuns, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, listDependabotPrs, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, prMergeable, prDrift, reopenPr, userId, viewPr, viewPrForReview } from './github.ts';
+import { type PrCheck, addPrLabels, approveHeldRuns, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, dismissCodeScanningAlert, listCodeScanningAlerts, listDependabotAlerts, listDependabotPrs, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, prMergeable, prDrift, reopenPr, userId, viewPr, viewPrForReview } from './github.ts';
 import { ENV_AGENT_MARK, environmentChangedAt, filedIssueBody, parseEnvReport, recentVerdicts, skipReason, unreadFactoryPrs, withOpenedThisTick, workerSkipReason, type UnreadPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
 import { carried, depsQueue, depsStamp, skipReason as depsSkipReason, type DepsPr } from './deps.ts';
+import { alertKey, keysIn, offeredLine, parseFixReply, securityQueue, securityStamp, skipReason as securitySkipReason, type OfferedAlert, type SecurityAlert } from './security.ts';
 import { coAuthorTrailer, isBot, parseReviewReply, reviewComment, reviewQueue, reviewStamp, sameCommit, skipReason as reviewSkipReason, staleReason, staleReport, touchesGithub, type ReviewOutcome, type ReviewPr, type ReviewReply } from './review.ts';
 
 export function log(msg: string): void {
@@ -596,7 +598,7 @@ export async function runSimplifyPhase(ctx: FactoryContext, worker: CodingWorker
 
 /** The labels that mark a PR as the factory's own, whoever GitHub says opened it. */
 function factoryPrLabels(config: FactoryConfig): string[] {
-  return [config.labels.factoryPr, config.labels.environmentPr, config.labels.simplifyPr, config.labels.reviewPr, config.labels.depsPr];
+  return [config.labels.factoryPr, config.labels.environmentPr, config.labels.simplifyPr, config.labels.reviewPr, config.labels.depsPr, config.labels.securityPr];
 }
 
 /**
@@ -992,6 +994,129 @@ export async function runDepsPhase(ctx: FactoryContext, worker: CodingWorker): P
   });
 }
 
+/**
+ * What the security phase would fix, read from GitHub in one place so the
+ * tick, the dry run, and `factory status` agree. An alert source the tick
+ * cannot read — off for this repo, or a token without security access — is
+ * left out and named; with neither readable there is nothing to fix.
+ */
+export async function securityInputs(config: FactoryConfig): Promise<{ skip: string | null; offered: OfferedAlert[]; openPrs: string[] }> {
+  const { enabled, minSeverity } = config.security;
+  const gate = securitySkipReason(enabled, config.worker.kind);
+  if (gate) return { skip: gate, offered: [], openPrs: [] };
+  const repo = repoSlug(config);
+  const unreadable: string[] = [];
+  const read = (what: string, list: Promise<SecurityAlert[]>) => list.catch((err: Error) => {
+    unreadable.push(`${what} (${err.message.split('\n')[0]!.slice(0, 200)})`);
+    return [];
+  });
+  const [dependabot, codeScanning, prs] = await Promise.all([
+    read('Dependabot alerts', listDependabotAlerts(repo)),
+    read('code scanning alerts', listCodeScanningAlerts(repo)),
+    listPrsByLabel(repo, config.labels.securityPr, 'all', 500),
+  ]);
+  if (unreadable.length === 2) return { skip: `cannot read the repo's alerts: ${unreadable.join('; ')}`, offered: [], openPrs: [] };
+  if (unreadable.length) log(`security: leaving out ${unreadable[0]}`);
+  const open = prs.filter((p) => p.state === 'OPEN');
+  const { offered, held } = securityQueue([...dependabot, ...codeScanning], prs, minSeverity);
+  return {
+    skip: securitySkipReason(true, config.worker.kind, open, { offered: offered.length, held }),
+    offered,
+    openPrs: open.map((p) => p.url),
+  };
+}
+
+function securityPromptFor(config: FactoryConfig, inputs: { offered: OfferedAlert[]; openPrs: string[] }): string {
+  return securityPrompt({ alerts: inputs.offered.map(offeredLine), openPrs: inputs.openPrs, budget: { maxRunMinutes: config.worker.maxRunMinutes } });
+}
+
+/**
+ * The security phase: one agent takes the most severe group of open alerts no
+ * factory PR claims that one PR can fix, and opens that PR. The factory claims
+ * the alerts on it, hands a red check back, and leaves it for a human, like an
+ * implementer's. See security.ts for why there is no issue in between.
+ *
+ * Returns the record it wrote, or null when the pass did not run.
+ */
+export async function runSecurityPhase(ctx: FactoryContext, worker: CodingWorker): Promise<SecurityRecord | null> {
+  const { config } = ctx;
+  const repo = repoSlug(config);
+  const inputs = await securityInputs(config);
+  if (inputs.skip) {
+    log(`security: skipped — ${inputs.skip}.`);
+    return null;
+  }
+  const { offered } = inputs;
+  const keys = offered.map((o) => alertKey(o.alert));
+  log(`security: handing ${offered.length} open alert(s) at ${config.security.minSeverity} or above to a fixer`);
+  const startedAt = new Date().toISOString();
+  // No credentials: upgrading a dependency runs a release nobody here has read.
+  const handle = await worker.start(securityPromptFor(config, inputs), { autoCreatePR: true, withholdCredentials: true, name: 'factory-security' });
+
+  const record = async (over: Partial<SecurityRecord> & { outcome: SecurityRecord['outcome'] }): Promise<SecurityRecord> => {
+    const full: SecurityRecord = {
+      type: 'security',
+      offered: keys,
+      fixed: [],
+      dismissed: [],
+      prUrl: null,
+      worker: config.worker.kind,
+      model: config.worker.model,
+      agentId: handle.agentId,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      usage: (await worker.usage(handle.agentId)) ?? null,
+      durationMs: Date.now() - Date.parse(startedAt),
+      ...over,
+    };
+    ctx.telemetry.append(full);
+    return full;
+  };
+
+  const result = await worker.awaitResult(handle).catch((err: Error) => err);
+  if (result instanceof Error || result.status !== 'FINISHED') {
+    const reason = result instanceof Error ? result.message : `run ended with status ${result.status}: ${result.resultText.slice(0, 300) || worker.opaqueRunNote(handle)}`;
+    log(`security: fix failed — ${reason}`);
+    return record({ outcome: 'failed', failureReason: reason });
+  }
+
+  const reply = parseFixReply(result.resultText, keys);
+  const dismissed: string[] = [];
+  for (const { key, reason } of reply.dismiss) {
+    try {
+      await dismissCodeScanningAlert(repo, Number(key.split('#')[1]), `Factory security agent: ${reason}`);
+      dismissed.push(key);
+      log(`security: dismissed ${key} as a false positive — ${reason}`);
+    } catch (err) {
+      log(`security: could not dismiss ${key}: ${(err as Error).message}`);
+    }
+  }
+
+  const prUrl = await openedPr(config, result);
+  if (!prUrl) {
+    log(`security: no PR. The agent's report:\n${result.resultText.trim() || '_(no report)_'}`);
+    return record({ outcome: 'no-pr', dismissed });
+  }
+  // Labelled and claimed before the CI wait: an unlabelled PR is one the review
+  // phase would take for someone else's, and an unclaimed alert is one the
+  // next pass would fix again.
+  await ensureLabel(repo, config.labels.securityPr, 'D93F0B', 'Fixes open security alerts; opened by the software factory');
+  await addPrLabels(repo, prUrl, [config.labels.securityPr]);
+  // An agent that forgot its ALERTS line still named them in its PR, most likely.
+  const fixed = reply.fixed.length > 0
+    ? reply.fixed
+    : keysIn((await viewPr(repo, prUrl)).body).filter((k, i, all) => keys.includes(k) && !dismissed.includes(k) && all.indexOf(k) === i);
+  const url = new Map(offered.map((o) => [alertKey(o.alert), o.alert.url]));
+  if (fixed.length > 0) {
+    await commentOnPr(repo, prUrl, factoryComment(`${securityStamp(fixed)}\n🏭 **Factory security fix** for ${fixed.map((k) => `[${k}](${url.get(k)})`).join(', ')}. GitHub closes each once this reaches the default branch; one still open a day after the merge is offered to the factory again.`));
+  } else {
+    log(`security: ${prUrl} names none of the alerts it was handed; nothing is claimed, so the next pass is offered them again`);
+  }
+  const ci = await greenChecks(config, worker, handle, prUrl);
+  log(`security: ${prUrl} fixes ${fixed.length} of ${offered.length} alert(s) (checks ${ci.checks}); it awaits a human${dismissed.length ? `; dismissed ${dismissed.join(' ')}` : ''}.`);
+  return record({ outcome: 'pr-opened', prUrl, fixed, dismissed, ...ci });
+}
+
 export async function tick(opts: { dryRun: boolean }): Promise<void> {
   const ctx = buildContext();
   const { config } = ctx;
@@ -1024,7 +1149,8 @@ export async function tick(opts: { dryRun: boolean }): Promise<void> {
   //    the implementers because it touches no issue and takes no slot.
   //    Reviews of PRs from outside the factory run alongside too: they take
   //    no slot and touch no issue, and their PRs are not the factory's. So
-  //    does the dependency batch, for the same reasons.
+  //    does the dependency batch, for the same reasons, and the security
+  //    fix, whose PR is its own queue as theirs are.
   const [, openedThisTick] = await Promise.all([
     runSimplifyPhase(ctx, worker).catch((err: Error) => {
       log(`simplify phase error: ${err.message}`);
@@ -1037,6 +1163,10 @@ export async function tick(opts: { dryRun: boolean }): Promise<void> {
     }),
     runDepsPhase(ctx, worker).catch((err: Error) => {
       log(`deps phase error: ${err.message}`);
+      return null;
+    }),
+    runSecurityPhase(ctx, worker).catch((err: Error) => {
+      log(`security phase error: ${err.message}`);
       return null;
     }),
   ]);
@@ -1248,6 +1378,14 @@ async function dryRun(ctx: FactoryContext, allCandidates: Task[]): Promise<void>
     console.log(`\n${depsPrompt(deps.offered.map((p) => p.url))}\n`);
   }
 
+  const security = await securityInputs(config);
+  if (security.skip) {
+    log(`security: would skip — ${security.skip}.`);
+  } else {
+    log(`security: would hand ${security.offered.length} open alert(s) to a fixer. Its prompt would be:`);
+    console.log(`\n${securityPromptFor(config, security)}\n`);
+  }
+
   const { sha } = await defaultBranchHead(repoSlug(config));
   const simplifySkipped = await simplifySkip(ctx, sha);
   if (simplifySkipped) {
@@ -1382,7 +1520,7 @@ async function handBackStuckPrs(ctx: FactoryContext, worker: CodingWorker): Prom
   if (!worker.agentForPr) return;
   const { config } = ctx;
   const repo = repoSlug(config);
-  const open = (await Promise.all([config.labels.factoryPr, config.labels.environmentPr, config.labels.simplifyPr]
+  const open = (await Promise.all([config.labels.factoryPr, config.labels.environmentPr, config.labels.simplifyPr, config.labels.securityPr]
     .map((label) => listPrsByLabel(repo, label, 'open')))).flat();
   for (const pr of open) {
     try {

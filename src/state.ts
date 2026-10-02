@@ -87,16 +87,18 @@ export class FactoryState {
   async reconcileOutcomes(log: (msg: string) => void): Promise<number> {
     const { labels } = this.config;
     await this.adoptOrphans(log);
-    const [implementer, environment, simplify, claimed] = await Promise.all([
+    const [implementer, environment, simplify, security, claimed] = await Promise.all([
       listPrsByLabel(this.repo, labels.factoryPr, 'all'),
       listPrsByLabel(this.repo, labels.environmentPr, 'all'),
       listPrsByLabel(this.repo, labels.simplifyPr, 'all'),
+      listPrsByLabel(this.repo, labels.securityPr, 'all'),
       listIssuesByLabel(this.repo, labels.issueInProgress),
     ]);
     const prs = [
       ...withSource(implementer, 'implementer'),
       ...withSource(environment, 'environment'),
       ...withSource(simplify, 'simplify'),
+      ...withSource(security, 'security'),
     ];
 
     const recorded = new Set(this.telemetry.outcomes().map((o) => o.prUrl));
@@ -132,7 +134,7 @@ export class FactoryState {
    */
   private async adoptOrphans(log: (msg: string) => void): Promise<void> {
     const { labels } = this.config;
-    const factoryLabels = [labels.factoryPr, labels.environmentPr, labels.simplifyPr, labels.reviewPr, labels.depsPr];
+    const factoryLabels = [labels.factoryPr, labels.environmentPr, labels.simplifyPr, labels.reviewPr, labels.depsPr, labels.securityPr];
     const open = await listOpenPrs(this.repo);
     const answered = new Map<number, string>();
     for (const pr of open) {

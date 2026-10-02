@@ -3,6 +3,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { ModelSpec, WorkerKind } from './types.ts';
+import { parseSeverity, type Severity } from './security.ts';
 
 /**
  * A credential the factory holds and hands to every coding agent: the name of
@@ -66,6 +67,10 @@ export interface FactoryConfig {
      *  every PR opened meanwhile hits it. An ordering claim only: the groomer
      *  still judges it. */
     blocker: string;
+    /** The security phase's fix PRs. Keeps them out of every other queue and
+     *  out of the `maxConcurrentJobs` count, as the other phases' labels do;
+     *  it is also how the phase finds the alerts its PRs already claim. */
+    securityPr: string;
   };
   groom: { maxPerTick: number; principlesFile: string };
   /** How a free slot gets its issue. Off (the default), the oldest groomed
@@ -94,6 +99,12 @@ export interface FactoryConfig {
    *  agent, the lockfile regenerated, and the batch merged on green CI under
    *  the review phase's rules. Off by default: it merges. */
   deps: { enabled: boolean };
+  /** The security phase: each tick one agent takes the most severe group of
+   *  the repo's open Dependabot and code scanning alerts, at or above
+   *  `minSeverity`, that one PR can fix, and opens that PR — no issue, no
+   *  groom. On by default: with no alerts it never starts, and it merges
+   *  nothing itself. */
+  security: { enabled: boolean; minSeverity: Severity };
   /**
    * Whether a phase may act on an issue a human has assigned to themselves.
    * Grooming defaults to true — vetting costs the assignee nothing and the
@@ -170,6 +181,10 @@ export function loadConfig(root: string = projectRoot): FactoryConfig {
   config.labels.depsPr ??= 'factory:deps';
   config.labels.epic ??= 'type:epic';
   config.labels.blocker ??= 'factory:blocker';
+  config.labels.securityPr ??= 'factory:security';
+  config.security ??= { enabled: true, minSeverity: 'high' };
+  config.security.enabled ??= true;
+  config.security.minSeverity = parseSeverity(config.security.minSeverity ?? 'high');
   config.simplify ??= { enabled: false };
   // The one phase that merges is the one a deployment has to ask for.
   config.review ??= { enabled: false, maxPerTick: 3, maxCommitsBehind: 100 };

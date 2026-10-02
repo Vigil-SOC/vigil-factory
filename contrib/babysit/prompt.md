@@ -58,7 +58,7 @@ went green, a run that ended without a PR once.
 ## 2. Merge the factory's open PRs
 
 Open PRs on the target repo carrying any of the labels `factory`, `factory:env`,
-`factory:simplify`, `factory:deps`, `factory:review` are the factory's, and Sam merges
+`factory:simplify`, `factory:deps`, `factory:review`, `factory:security` are the factory's, and Sam merges
 all of them without review. Nothing else is yours: PRs from people, Dependabot, and
 release-please are left alone (the tick's review and deps phases own the first two;
 releasing is Sam's call).

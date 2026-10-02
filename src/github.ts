@@ -5,6 +5,7 @@ import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { ReviewPr } from './review.ts';
 import type { DepsPr } from './deps.ts';
+import type { CodeScanningAlert, DependabotAlert } from './security.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -101,10 +102,10 @@ export interface PrData {
 
 const PR_FIELDS = 'number,url,title,state,isDraft,createdAt,mergedAt,closedAt,body,reviews,comments,headRefName,additions,deletions';
 
-export async function listPrsByLabel(repo: string, label: string, state: 'open' | 'closed' | 'merged' | 'all'): Promise<PrData[]> {
+export async function listPrsByLabel(repo: string, label: string, state: 'open' | 'closed' | 'merged' | 'all', limit = 50): Promise<PrData[]> {
   return ghJson<PrData[]>([
     'pr', 'list', '-R', repo, '--label', label, '--state', state,
-    '--limit', '50', '--json', PR_FIELDS,
+    '--limit', String(limit), '--json', PR_FIELDS,
   ]);
 }
 
@@ -288,6 +289,45 @@ export async function viewPrForReview(repo: string, prUrl: string): Promise<Revi
 export async function listDependabotPrs(repo: string): Promise<DepsPr[]> {
   return ghJson<DepsPr[]>(['pr', 'list', '-R', repo, '--author', 'app/dependabot', '--state', 'open', '--limit', '50',
     '--json', 'number,url,title,isDraft,headRefName,headRefOid,files,comments']);
+}
+
+/** Every page of a list endpoint, one `jq`-shaped object per item. */
+async function ghApiList<T>(path: string, jq: string): Promise<T[]> {
+  const out = await gh(['api', '--paginate', path, '--jq', jq]);
+  return out.split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l) as T);
+}
+
+/** The repo's open Dependabot alerts. Throws when the token cannot read them or they are off. */
+export async function listDependabotAlerts(repo: string): Promise<DependabotAlert[]> {
+  return ghApiList(`repos/${repo}/dependabot/alerts?state=open&per_page=100`, `.[] | {
+    kind: "dependabot", number, severity: .security_advisory.severity, url: .html_url,
+    ecosystem: .dependency.package.ecosystem, package: .dependency.package.name,
+    manifest: .dependency.manifest_path, scope: .dependency.scope,
+    ghsa: .security_advisory.ghsa_id, advisory: .security_advisory.summary,
+    vulnerableRange: .security_vulnerability.vulnerable_version_range,
+    patched: .security_vulnerability.first_patched_version.identifier }`);
+}
+
+/**
+ * The repo's open code scanning alerts that carry a security severity — a
+ * quality finding has none. Throws when the token cannot read them or code
+ * scanning has never run.
+ */
+export async function listCodeScanningAlerts(repo: string): Promise<CodeScanningAlert[]> {
+  return ghApiList(`repos/${repo}/code-scanning/alerts?state=open&per_page=100`, `.[] | select(.rule.security_severity_level != null) | {
+    kind: "code-scanning", number, severity: .rule.security_severity_level, url: .html_url,
+    tool: .tool.name, rule: .rule.id, ruleDescription: .rule.description,
+    path: .most_recent_instance.location.path, line: .most_recent_instance.location.start_line,
+    message: .most_recent_instance.message.text }`);
+}
+
+/**
+ * Dismiss a code scanning alert as a false positive, with the reason on the
+ * alert. Reversible: reopening it in the security tab undoes this.
+ */
+export async function dismissCodeScanningAlert(repo: string, number: number, comment: string): Promise<void> {
+  await gh(['api', '-X', 'PATCH', `repos/${repo}/code-scanning/alerts/${number}`,
+    '-f', 'state=dismissed', '-f', 'dismissed_reason=false positive', '-f', `dismissed_comment=${comment.slice(0, 280)}`]);
 }
 
 /**
