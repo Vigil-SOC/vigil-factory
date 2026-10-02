@@ -464,6 +464,21 @@ describe('children of an epic', () => {
     expect(groomState(regroomed, EPIC_LABELS, openIssues([regroomed]))).toBe('stale');
   });
 
+  it('an epic waits while a needs-work child blocked on a sibling that landed is groomed again on its own', () => {
+    const c = groomComment(ungroomedEpic, { verdict: 'groomed', notes: undefined, reasoning: 'Settled.', children: [] }, true, { children: [41, 44] });
+    const stamped: Task = { ...ungroomedEpic, comments: [{ body: c }], labels: ['type:epic', LABELS.groomed] };
+    const blocked = verdictOn(child, 'needs-work', undefined, 44);
+    const sibling = task(44, 'Part of #40\n\nfeat: reconstruction');
+    expect(groomState(stamped, EPIC_LABELS, openIssues([stamped, blocked, sibling]))).toBe('current');
+    // #44 lands: #41's wait is over, and #41 — not the epic — is what gets groomed.
+    const open = openIssues([stamped, blocked]);
+    expect(groomState(blocked, EPIC_LABELS, open)).toBe('stale');
+    expect(groomState(stamped, EPIC_LABELS, open)).toBe('current');
+    expect(needsGroom([stamped, blocked], EPIC_LABELS, false, open).map((t) => t.issueNumber)).toEqual([41]);
+    // Re-groomed needs-work with nothing left to wait on, it is the epic's to weigh.
+    expect(groomState(stamped, EPIC_LABELS, openIssues([stamped, verdictOn(child, 'needs-work')]))).toBe('stale');
+  });
+
   it('parses and publishes done, the epic delivered', () => {
     expect(parseGroomReply('Every decision landed.\n\nVERDICT: done')).toMatchObject({ verdict: 'done' });
     const c = groomComment(ungroomedEpic, { verdict: 'done', notes: undefined, reasoning: 'Every decision landed.', children: [] }, true);

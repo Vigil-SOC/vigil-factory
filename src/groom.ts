@@ -345,11 +345,21 @@ export function stampExtrasFor(task: Task, labels: GroomLabels, open?: OpenIssue
  * closed, or went needs-work after the epic was groomed. That is the moment to
  * groom it again: write the next slice, answer what a needs-work child found,
  * or close it as done.
+ *
+ * A needs-work child whose blocker has cleared has not settled: it is stale
+ * itself and about to be groomed on its own, so the epic waits for that
+ * verdict. Otherwise a sibling landing re-grooms the epic only to say what the
+ * child's own re-groom is about to find — the wait is over.
  */
 function sliceSettled(epic: Task, open: OpenIssues, labels: GroomLabels): boolean {
   const children = readChildren(epic);
   const weighed = new Set(latestStamp(epic)?.weighed ?? []);
-  const needsWork = (n: number) => verdict(open.get(n)!, labels) === 'needs-work';
+  const needsWork = (n: number) => {
+    const child = open.get(n)!;
+    if (verdict(child, labels) !== 'needs-work') return false;
+    const blocker = readBlocker(child);
+    return blocker === null || !blockerCleared(blocker, open, labels);
+  };
   return children.every((n) => !open.has(n) || needsWork(n)) && children.some((n) => !open.has(n) || !weighed.has(n));
 }
 
