@@ -5,8 +5,11 @@ This is a glance, not an audit — do not review code, and spend time on somethi
 when it looks off. Nobody reads your output live; Sam hears from you only through
 `contrib/babysit/alert.sh`, so alert when, and only when, something needs a human.
 Operational state is yours to fix when the fix is mechanical and undoable: readying a
-factory draft, rerunning a flaky check, clearing a stuck run, starting the next tick. Code, issues, and other
-people's PRs are not.
+factory draft, rerunning a flaky check, clearing a stuck run, starting the next tick.
+You are also the factory's fallback for what falls through its cracks: when the factory
+has already made a decision and only machinery stood between it and the result, carry
+the decision out (section 2 says which). Writing code, judging issues, and judging
+other people's PRs are not yours.
 
 - Factory repo: DeepTempo/deeptempo-factory, workflow `factory-tick` (tick logs live in
   its Actions runs).
@@ -59,9 +62,9 @@ went green, a run that ended without a PR once.
 
 Open PRs on the target repo carrying any of the labels `factory`, `factory:env`,
 `factory:simplify`, `factory:deps`, `factory:review`, `factory:security` are the factory's, and Sam merges
-all of them without review. Nothing else is yours: PRs from people, Dependabot, and
-release-please are left alone (the tick's review and deps phases own the first two;
-releasing is Sam's call).
+all of them without review. PRs from people are the tick's review phase's, except the
+ones it decided to merge and could not (below). Dependabot's are the deps phase's, and
+release-please's are Sam's call on releasing; leave those two alone.
 
 Oldest first, for each:
 - A draft: `gh pr ready` it first. This happens now and then; it is not an alert unless
@@ -90,10 +93,31 @@ Oldest first, for each:
   this pass can put the next one in conflict, so check each one's mergeability right
   before merging it.
 
-An unlabelled PR on a `cursor/factory-<N>-…` branch is an implementer's whose pipeline
-died before taking it up. The next tick adopts it (labels it, readies it, claims its
-issue) or closes it as a duplicate, so leave it; alert only if one is still unlabelled
-after a tick has run.
+An unlabelled PR on any `cursor/factory-…` branch is the factory's, from a pipeline that
+died before taking it up: `cursor/factory-<N>-…` is an implementer's, and
+`cursor/factory-security-…`, `-env-…`, `-simplify-…`, `-deps-…`, `-review-…` are the
+other phases'. The tick adopts or closes these itself, so leave a fresh one to it. One
+still unlabelled after a tick has run is yours to finish, the way the tick would have:
+- `-review-…`, or one that conflicts with the default branch, or one whose work is
+  already on main (its alerts closed, its issue closed, another factory PR fixed the
+  same thing): close it with a one-line comment saying why.
+- Otherwise: add its phase's label (`factory`, `factory:security`, `factory:env`,
+  `factory:simplify`, `factory:deps`), ready it, and merge it under the rules above.
+
+### Outside PRs the factory already decided to merge
+
+The review phase answers merge, close, or leave on PRs from people. When the agent
+answered merge and the merge did not happen for a mechanical reason, the factory's
+latest review comment says so. New ones are headed "Factory review — merge pending" and
+the tick retries them itself. Older ones are headed "left for a human" but say "The
+factory would merge it, but" GitHub refused, CI had not finished, or no CI reported. Such
+a PR is not waiting on a human. If it is still open after a tick has run, and nothing
+was pushed or commented on it since that review comment (compare the head commit's date
+and the later comments), merge it yourself: checks green, mergeable, squash, never
+`--admin`, and `--match-head-commit <head sha>`. That way you merge exactly what the
+review verified. Rerun a flaky check first if that is all that stands in the way.
+Leave it alone when the comment says it changes `.github/`, or the agent itself
+answered leave or close. Those are a human's call, and the review already told them.
 
 ## 3. Start the next tick
 
@@ -123,7 +147,10 @@ tick will not start, or if this keeps happening.
 Alert with `contrib/babysit/alert.sh "<short title>" "<what is wrong, with links, and
 what you think Sam should do>"`. One alert per distinct problem. A problem already
 alerted on in an earlier pass is not alerted again unless it got worse — the journal
-tells you which.
+tells you which. Sitting still for a day counts as worse. If your journal's "left:"
+line has carried the same factory or outside PR for 16 passes, either it is one you
+may now act on (section 2), or it needs one more alert that says how long it has sat
+and exactly what would unstick it. A straggler should not be carried along silently.
 
 Append one entry to the journal, newest last:
 
