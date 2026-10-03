@@ -13,6 +13,9 @@ const addPrLabels = vi.fn(async (_repo: string, _url: string, _labels: string[])
 const addIssueLabels = vi.fn(async (_repo: string, _issue: number, _labels: string[]) => {});
 const closePr = vi.fn(async (_repo: string, _url: string, _comment: string) => {});
 const commentOnIssue = vi.fn(async (_repo: string, _issue: number, _body: string) => {});
+const commentOnPr = vi.fn(async (_repo: string, _url: string, _body: string) => {});
+const ensureLabel = vi.fn(async (..._args: unknown[]) => {});
+const prMergeable = vi.fn(async (_repo: string, _url: string) => ({ mergeable: 'MERGEABLE' as 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN', baseRefName: 'main' }));
 vi.mock('../src/github.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/github.ts')>()),
   listOpenPrs: (...args: unknown[]) => listOpenPrs(...args),
@@ -22,6 +25,9 @@ vi.mock('../src/github.ts', async (importOriginal) => ({
   addIssueLabels: (repo: string, issue: number, labels: string[]) => addIssueLabels(repo, issue, labels),
   closePr: (repo: string, url: string, comment: string) => closePr(repo, url, comment),
   commentOnIssue: (repo: string, issue: number, body: string) => commentOnIssue(repo, issue, body),
+  commentOnPr: (repo: string, url: string, body: string) => commentOnPr(repo, url, body),
+  ensureLabel: (...args: unknown[]) => ensureLabel(...args),
+  prMergeable: (repo: string, url: string) => prMergeable(repo, url),
   listPrsByLabel: (...args: unknown[]) => listPrsByLabel(...args),
   listIssuesByLabel: (...args: unknown[]) => listIssuesByLabel(...args as [string, string]),
   removeIssueLabels: (repo: string, issue: number, labels: string[]) => removeIssueLabels(repo, issue, labels),
@@ -251,7 +257,8 @@ describe('reconcileOutcomes', () => {
 
 describe('reconcileOutcomes: what a dead pipeline left behind', () => {
   beforeEach(() => {
-    for (const m of [listPrsByLabel, listOpenPrs, referenceState, markPrReady, addPrLabels, addIssueLabels, closePr, commentOnIssue]) m.mockClear();
+    for (const m of [listPrsByLabel, listOpenPrs, referenceState, markPrReady, addPrLabels, addIssueLabels, closePr, commentOnIssue, commentOnPr, prMergeable]) m.mockClear();
+    prMergeable.mockResolvedValue({ mergeable: 'MERGEABLE', baseRefName: 'main' });
     listPrsByLabel.mockReset();
     listPrsByLabel.mockResolvedValue([]);
     listOpenPrs.mockResolvedValue([]);
@@ -303,13 +310,47 @@ describe('reconcileOutcomes: what a dead pipeline left behind', () => {
     const { state } = stateFor(3);
     listOpenPrs.mockResolvedValue([
       open(9, { headRefName: 'feat/a-human-branch' }),
-      open(10, { headRefName: 'cursor/factory-simplify-b961', body: 'Closes #42' }),
       open(11, { body: 'Closes #7' }),
+      open(12, { headRefName: 'cursor/factory-security-ab52', labels: [{ name: 'factory:security' }] }),
     ]);
 
     await state.reconcileOutcomes(() => {});
     expect(addPrLabels).not.toHaveBeenCalled();
     expect(closePr).not.toHaveBeenCalled();
+  });
+
+  it('adopts another phase\'s orphan under its own label, and a security one claims the alerts it names', async () => {
+    const { state } = stateFor(3);
+    listOpenPrs.mockResolvedValue([
+      open(20, { headRefName: 'cursor/factory-security-ab52', body: 'Fixes dependabot#95 and code-scanning#4; dependabot#95 again.' }),
+      open(21, { headRefName: 'cursor/factory-simplify-b961', body: 'Closes #42' }),
+    ]);
+
+    await state.reconcileOutcomes(() => {});
+    expect(addPrLabels).toHaveBeenCalledWith('o/r', 'https://github.com/o/r/pull/20', ['factory:security']);
+    expect(addPrLabels).toHaveBeenCalledWith('o/r', 'https://github.com/o/r/pull/21', ['factory:simplify']);
+    expect(markPrReady).toHaveBeenCalledWith('o/r', 'https://github.com/o/r/pull/20');
+    expect(commentOnPr.mock.calls[0]![2]).toContain('<!-- factory-security alerts=dependabot#95,code-scanning#4 -->');
+    expect(commentOnPr.mock.calls[1]![2]).not.toContain('factory-security');
+    // Not mistaken for issue #42's implementer PR.
+    expect(addIssueLabels).not.toHaveBeenCalled();
+    expect(closePr).not.toHaveBeenCalled();
+  });
+
+  it('closes a phase orphan that conflicts, and every review orphan', async () => {
+    const { state } = stateFor(3);
+    prMergeable.mockResolvedValue({ mergeable: 'CONFLICTING', baseRefName: 'main' });
+    listOpenPrs.mockResolvedValue([
+      open(22, { headRefName: 'cursor/factory-security-ab52' }),
+      open(23, { headRefName: 'cursor/factory-review-1493-test-drop-ab06' }),
+    ]);
+
+    await state.reconcileOutcomes(() => {});
+    expect(closePr.mock.calls.map((c) => c[1])).toEqual(['https://github.com/o/r/pull/22', 'https://github.com/o/r/pull/23']);
+    expect(closePr.mock.calls[0]![2]).toContain('conflicts with the default branch');
+    expect(closePr.mock.calls[1]![2]).toContain('reviewed again');
+    expect(prMergeable).toHaveBeenCalledTimes(1);
+    expect(addPrLabels).not.toHaveBeenCalled();
   });
 
   it('takes a labelled factory PR out of draft', async () => {

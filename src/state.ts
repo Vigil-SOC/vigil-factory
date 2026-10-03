@@ -10,9 +10,10 @@ import { resolve } from 'node:path';
 import type { CurrentRun } from './types.ts';
 import type { FactoryConfig } from './config.ts';
 import { repoSlug } from './config.ts';
-import { addIssueLabels, addPrLabels, closePr, commentOnIssue, linkedIssueNumber, listIssuesByLabel, listOpenPrs, listPrsByLabel, markPrReady, referenceState, removeIssueLabels } from './github.ts';
+import { addIssueLabels, addPrLabels, closePr, commentOnIssue, commentOnPr, ensureLabel, linkedIssueNumber, listIssuesByLabel, listOpenPrs, listPrsByLabel, markPrReady, prMergeable, referenceState, removeIssueLabels } from './github.ts';
 import { factoryComment } from './groom.ts';
-import { leakedClaims, orphanedPrs, unrecordedOutcomes, withSource } from './outcomes.ts';
+import { leakedClaims, orphanedPrs, phaseOrphans, unrecordedOutcomes, withSource, type OrphanPhase } from './outcomes.ts';
+import { keysIn, securityStamp } from './security.ts';
 import type { Telemetry } from './telemetry.ts';
 
 export interface Capacity {
@@ -157,6 +158,44 @@ export class FactoryState {
           `🏭 The factory opened ${pr.url} for this issue. The pipeline that started it died before it took the PR up, so nobody watched its CI or handed a red check back; it is awaiting human review as it stands.`));
         answered.set(issue, pr.url);
         log(`adopted orphaned ${pr.url} for #${issue}: its pipeline died before labelling it`);
+      } catch (err) {
+        log(`could not adopt orphaned ${pr.url}: ${(err as Error).message}`);
+      }
+    }
+    await this.adoptPhaseOrphans(open, factoryLabels, log);
+  }
+
+  /**
+   * The other phases' orphans (see `phaseOrphans`). A review's is closed: its
+   * review left no stamp, so the PR it was replacing is reviewed again. One
+   * that conflicts is closed too — its phase works from what is open now, and
+   * a security PR closed without a stamp claims no alert, so they are offered
+   * again. The rest are labelled and readied as their pipeline would have
+   * done, and the babysitter merges them like any factory PR. A security PR's
+   * claim is taken from the alerts its own description names.
+   */
+  private async adoptPhaseOrphans(open: Awaited<ReturnType<typeof listOpenPrs>>, factoryLabels: string[], log: (msg: string) => void): Promise<void> {
+    const { labels } = this.config;
+    const label: Record<Exclude<OrphanPhase, 'review'>, string> = {
+      security: labels.securityPr, env: labels.environmentPr, simplify: labels.simplifyPr, deps: labels.depsPr,
+    };
+    for (const { pr, phase } of phaseOrphans(open, factoryLabels)) {
+      try {
+        const conflicting = phase !== 'review' && (await prMergeable(this.repo, pr.url)).mergeable === 'CONFLICTING';
+        if (phase === 'review' || conflicting) {
+          const why = phase === 'review'
+            ? 'the review that opened this died before it took it up, and the PR it was replacing is reviewed again'
+            : `it conflicts with the default branch, and the ${phase} phase works again from what is open now`;
+          await closePr(this.repo, pr.url, factoryComment(`🏭 Closing: ${why}.`));
+          log(`closed orphaned ${pr.url}: ${why}`);
+          continue;
+        }
+        await ensureLabel(this.repo, label[phase], 'D93F0B', `Opened by the software factory's ${phase} phase`);
+        await addPrLabels(this.repo, pr.url, [label[phase]]);
+        await markPrReady(this.repo, pr.url);
+        const alerts = phase === 'security' ? [...new Set(keysIn(pr.body))] : [];
+        await commentOnPr(this.repo, pr.url, factoryComment(`${alerts.length ? `${securityStamp(alerts)}\n` : ''}🏭 The ${phase} pipeline that opened this died before it took it up, so the factory adopted it as it stands: nobody watched its CI.`));
+        log(`adopted orphaned ${pr.url} for the ${phase} phase: its pipeline died before labelling it`);
       } catch (err) {
         log(`could not adopt orphaned ${pr.url}: ${(err as Error).message}`);
       }

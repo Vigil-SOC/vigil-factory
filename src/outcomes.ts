@@ -70,6 +70,29 @@ export function orphanedPrs<P extends PrData & { labels: { name: string }[] }>(
   return orphans;
 }
 
+/** The phases that open PRs on their own agent's branch, as Cursor names it after the agent (`factory-security` → `cursor/factory-security-…`). */
+export type OrphanPhase = 'security' | 'env' | 'simplify' | 'deps' | 'review';
+
+/**
+ * PRs the other phases' dead pipelines left behind — the same death as
+ * `orphanedPrs`, on a phase's branch instead of an issue's. On Oct 2 a
+ * security fixer's pipeline died on a socket error, its agent opened #1442
+ * anyway, and it sat unlabelled for a day: the merging babysitter takes only
+ * labelled PRs, and the review phase skips a draft.
+ */
+export function phaseOrphans<P extends PrData & { labels: { name: string }[] }>(
+  open: P[],
+  factoryLabels: string[],
+): { pr: P; phase: OrphanPhase }[] {
+  const orphans: { pr: P; phase: OrphanPhase }[] = [];
+  for (const pr of open) {
+    if (pr.labels.some((l) => factoryLabels.includes(l.name))) continue;
+    const m = pr.headRefName.match(/^cursor\/factory-(security|env|simplify|deps|review)-/);
+    if (m) orphans.push({ pr, phase: m[1] as OrphanPhase });
+  }
+  return orphans;
+}
+
 /**
  * Issues still carrying the in-progress label that nothing is working on: no
  * open factory PR links them and no pipeline on this runner has them in
