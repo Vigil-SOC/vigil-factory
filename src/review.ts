@@ -28,6 +28,13 @@
 // makes — the factory reopens it and looks again. A closed PR someone reopened
 // is reviewed again whether or not they said anything.
 //
+// A PR the agent answered merge on and the factory could not merge for a
+// mechanical reason — GitHub refused, CI had not finished, no CI reported —
+// is stamped `outcome=left verdict=merge`. The review's judgment stands while
+// the PR does, so each tick tries the merge again, with no agent, until it
+// lands or the PR changes and is reviewed afresh. A human is not the next
+// step for a PR the factory already decided to merge.
+//
 // A PR from a fork is the common case and the awkward one: the agents' machine
 // cannot push to a contributor's fork, and Cursor cannot check one out by PR.
 // So the agent starts on the default branch and fetches `pull/N/head` itself.
@@ -65,6 +72,8 @@ const STAMP_RE = /<!--\s*factory-review\s+([^>]*?)\s*-->/;
 interface ReviewStamp {
   sha: string;
   outcome: ReviewOutcome | null;
+  /** The agent answered merge and only a mechanical refusal stood in the way. */
+  mergePending: boolean;
 }
 
 function parseStamp(body: string): ReviewStamp | null {
@@ -74,7 +83,11 @@ function parseStamp(body: string): ReviewStamp | null {
   const sha = attrs.get('sha');
   if (!sha) return null;
   const outcome = attrs.get('outcome');
-  return { sha, outcome: outcome === 'merged' || outcome === 'superseded' || outcome === 'closed' || outcome === 'left' ? outcome : null };
+  return {
+    sha,
+    outcome: outcome === 'merged' || outcome === 'superseded' || outcome === 'closed' || outcome === 'left' ? outcome : null,
+    mergePending: outcome === 'left' && attrs.get('verdict') === 'merge',
+  };
 }
 
 /** The index of the factory's latest review comment, or -1. */
@@ -93,8 +106,9 @@ export function reviewFingerprint(pr: Pick<ReviewPr, 'headRefOid' | 'body' | 'co
   return createHash('sha256').update([pr.headRefOid, pr.body.trim(), ...human].join('\n\n')).digest('hex').slice(0, 12);
 }
 
-export function reviewStamp(pr: Pick<ReviewPr, 'headRefOid' | 'body' | 'comments'>, outcome: ReviewOutcome): string {
-  return `<!-- factory-review sha=${reviewFingerprint(pr)} outcome=${outcome} -->`;
+export function reviewStamp(pr: Pick<ReviewPr, 'headRefOid' | 'body' | 'comments'>, outcome: ReviewOutcome, opts: { mergePending?: boolean } = {}): string {
+  const verdict = outcome === 'left' && opts.mergePending ? ' verdict=merge' : '';
+  return `<!-- factory-review sha=${reviewFingerprint(pr)} outcome=${outcome}${verdict} -->`;
 }
 
 /** Bots are someone else's automation: release-please, and Dependabot, whose PRs the dependency batch takes (deps.ts). Not reviewed here. */
@@ -131,12 +145,25 @@ export function authorReplied(pr: ReviewPr): boolean {
   return pr.comments.slice(i + 1).some((c) => c.author?.login === pr.author.login && !isFactoryComment(c.body));
 }
 
+/**
+ * An open PR whose review answered merge, held back only by something
+ * mechanical, and unchanged since: its merge is retried without an agent.
+ * A changed PR is not one of these — `needsReview` takes it instead.
+ */
+export function mergeDue(pr: ReviewPr, factoryLabels: string[]): boolean {
+  if (pr.state !== 'OPEN' || pr.isDraft || isBot(pr)) return false;
+  if (pr.labels.some((l) => factoryLabels.includes(l.name))) return false;
+  const last = latestReview(pr);
+  return last !== null && last.mergePending && last.sha === reviewFingerprint(pr);
+}
+
 /** Oldest first, the same rule both issue queues follow. */
-export function reviewQueue(prs: ReviewPr[], factoryLabels: string[]): { open: ReviewPr[]; reopen: ReviewPr[] } {
+export function reviewQueue(prs: ReviewPr[], factoryLabels: string[]): { open: ReviewPr[]; reopen: ReviewPr[]; merge: ReviewPr[] } {
   const byNumber = (a: ReviewPr, b: ReviewPr) => a.number - b.number;
   return {
     open: prs.filter((p) => needsReview(p, factoryLabels)).sort(byNumber),
     reopen: prs.filter(authorReplied).sort(byNumber),
+    merge: prs.filter((p) => mergeDue(p, factoryLabels)).sort(byNumber),
   };
 }
 
@@ -201,8 +228,9 @@ export function sameCommit(named: string, head: string): boolean {
 }
 
 /** The body of the factory's review comment, below the stamp. */
-export function reviewComment(outcome: ReviewOutcome, report: string, note?: string): string {
-  const heading = {
+export function reviewComment(outcome: ReviewOutcome, report: string, note?: string, opts: { mergePending?: boolean } = {}): string {
+  const pending = outcome === 'left' && opts.mergePending === true;
+  const heading = pending ? '🏭 **Factory review — merge pending.**' : {
     merged: '🏭 **Factory review — merged.**',
     superseded: '🏭 **Factory review — merged with fixes.**',
     closed: '🏭 **Factory review — closed.**',
@@ -210,9 +238,11 @@ export function reviewComment(outcome: ReviewOutcome, report: string, note?: str
   }[outcome];
   const tail = outcome === 'closed'
     ? '\n\nIf this misreads your change, reply here: the factory reopens a PR it closed when its author replies, and reviews it again with your reply in view.'
-    : outcome === 'left'
-      ? '\n\nPush to the branch or reply here and the factory reviews it again.'
-      : '';
+    : pending
+      ? '\n\nThe factory tries the merge again every tick while the PR stands as it is. A push or a reply here sends it back for a fresh review instead.'
+      : outcome === 'left'
+        ? '\n\nPush to the branch or reply here and the factory reviews it again.'
+        : '';
   return `${heading}${note ? ` ${note}` : ''}\n\n${report.trim() || '_(no report)_'}${tail}`;
 }
 

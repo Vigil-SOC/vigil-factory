@@ -116,7 +116,7 @@ async function status(): Promise<void> {
   }
 
   const reviews = await reviewInputs(ctx.config);
-  log(`review: ${reviews.skip ?? `${reviews.open.length + reviews.reopen.length} PR(s) from outside the factory due; next pass reviews ${Math.min(reviews.open.length + reviews.reopen.length, ctx.config.review.maxPerTick)}`}.`);
+  log(`review: ${reviews.skip ?? `${reviews.open.length + reviews.reopen.length} PR(s) from outside the factory due; next pass reviews ${Math.min(reviews.open.length + reviews.reopen.length, ctx.config.review.maxPerTick)}${reviews.merge.length ? ` and retries the merge on ${reviews.merge.map((p) => `#${p.number}`).join(' ')}` : ''}`}.`);
   for (const r of ctx.telemetry.reviews().slice(-5)) {
     log(`  ${r.startedAt} #${r.prNumber} (${r.author}) → ${r.verdict ?? 'no verdict'}; ${r.outcome}${r.reason ? ` (${r.reason})` : ''}`);
   }

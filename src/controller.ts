@@ -607,16 +607,16 @@ function factoryPrLabels(config: FactoryConfig): string[] {
  * closed whose author has replied since; they go first, because the author is
  * waiting on an answer they asked for.
  */
-export async function reviewInputs(config: FactoryConfig): Promise<{ skip: string | null; open: ReviewPr[]; reopen: ReviewPr[] }> {
+export async function reviewInputs(config: FactoryConfig): Promise<{ skip: string | null; open: ReviewPr[]; reopen: ReviewPr[]; merge: ReviewPr[] }> {
   const gate = reviewSkipReason(config.review.enabled, config.worker.kind);
-  if (gate) return { skip: gate, open: [], reopen: [] };
+  if (gate) return { skip: gate, open: [], reopen: [], merge: [] };
   const repo = repoSlug(config);
   const [open, closed] = await Promise.all([
     listPrsForReview(repo, 'open', 100),
     listPrsForReview(repo, 'closed', 50),
   ]);
   const queue = reviewQueue([...open, ...closed], factoryPrLabels(config));
-  const skip = queue.open.length + queue.reopen.length === 0 ? 'no PR from outside the factory is new or changed since the factory last reviewed it' : null;
+  const skip = queue.open.length + queue.reopen.length + queue.merge.length === 0 ? 'no PR from outside the factory is new or changed since the factory last reviewed it, or waiting on a merge it decided' : null;
   return { skip, ...queue };
 }
 
@@ -642,12 +642,17 @@ export async function runReviewPhase(ctx: FactoryContext, worker: CodingWorker, 
     }
     picks = [{ pr, reopened: false }];
   } else {
-    const { skip, open, reopen } = await reviewInputs(config);
+    const { skip, open, reopen, merge } = await reviewInputs(config);
     if (skip) {
       log(`review: skipped — ${skip}.`);
       return [];
     }
+    // No agent and no cap: the judgment was made, only the merge is left.
+    for (const pr of merge) {
+      await retryMerge(config, pr).catch((err: Error) => log(`review: merge retry of #${pr.number} failed: ${err.message}`));
+    }
     picks = [...reopen.map((pr) => ({ pr, reopened: true })), ...open.map((pr) => ({ pr, reopened: false }))].slice(0, config.review.maxPerTick);
+    if (picks.length === 0) return [];
   }
 
   log(`review: ${picks.length} PR(s) from outside the factory: ${picks.map((p) => `#${p.pr.number}${p.reopened ? ' (author replied to a close)' : ''}`).join(' ')}`);
@@ -658,6 +663,42 @@ export async function runReviewPhase(ctx: FactoryContext, worker: CodingWorker, 
       return null;
     })));
   return records.filter((r): r is ReviewRecord => r !== null);
+}
+
+/**
+ * Try again the merge a review decided on and something mechanical refused —
+ * a race with another merge, CI not finished, no CI yet. The PR is unchanged
+ * since the review (`mergeDue`), so its head is the commit the agent verified,
+ * and the rules are the ones `mergeVerified` holds every merge to: nothing
+ * under `.github/`, green checks, no admin bypass. Anything short of a merge
+ * leaves the stamp as it is, and the next tick tries again.
+ */
+async function retryMerge(config: FactoryConfig, pr: ReviewPr): Promise<void> {
+  const repo = repoSlug(config);
+  const view = await viewPrForReview(repo, pr.url);
+  if (touchesGithub(view.files).length > 0) {
+    log(`review: #${pr.number} is pending a merge but changes .github/; the factory does not merge it`);
+    return;
+  }
+  const checks = await prChecks(repo, pr.url);
+  const failed = checks.filter((c) => c.bucket === 'fail');
+  const wait = checks.length === 0
+    ? (view.isCrossRepository && (await approveHeldRuns(repo, view.headRefOid)) > 0 ? 'its held workflow runs were just approved' : 'no CI has reported on it')
+    : checks.some((c) => c.bucket === 'pending') ? 'its checks are still running'
+      : failed.length > 0 ? `${failed.map((c) => c.name).join(', ')} failed on it` : null;
+  if (wait) {
+    log(`review: #${pr.number} is pending a merge, but ${wait}; the next tick tries again`);
+    return;
+  }
+  try {
+    await mergePr(repo, pr.url, view.headRefOid);
+  } catch (err) {
+    log(`review: #${pr.number} is pending a merge; GitHub refused again, so the next tick tries again — ${(err as Error).message.slice(0, 300)}`);
+    return;
+  }
+  const now = await viewPrForReview(repo, pr.url);
+  await commentOnPr(repo, pr.url, factoryComment(`${reviewStamp(now, 'merged')}\n${reviewComment('merged', 'The merge the review above decided on went through on a later tick, at the commit it verified.')}`));
+  log(`review: merged #${pr.number} on retry, at the commit its review verified — ${pr.url}`);
 }
 
 async function reviewOne(ctx: FactoryContext, worker: CodingWorker, pr: ReviewPr, reopened: boolean, principles: string): Promise<ReviewRecord | null> {
@@ -736,8 +777,9 @@ async function reviewOne(ctx: FactoryContext, worker: CodingWorker, pr: ReviewPr
   // Stamped against the PR as it stands now, so a push or a reply after this
   // comment is what brings it back. An unstamped note means "look again".
   const now = await viewPrForReview(repo, pr.url);
-  const body = reviewComment(act.outcome, reply.report, act.note);
-  await commentOnPr(repo, pr.url, factoryComment(act.stamped ? `${reviewStamp(now, act.outcome)}\n${body}` : body));
+  const pending = { mergePending: act.mergePending === true };
+  const body = reviewComment(act.outcome, reply.report, act.note, pending);
+  await commentOnPr(repo, pr.url, factoryComment(act.stamped ? `${reviewStamp(now, act.outcome, pending)}\n${body}` : body));
   if (act.outcome === 'closed' || act.outcome === 'superseded') await closePrQuietly(repo, pr.url);
   log(`review of #${pr.number}: agent answered ${reply.verdict}; ${act.outcome}${act.reason ? ` (${act.reason})` : ''}${replacement ? ` via ${replacement}` : ''} — ${pr.url}`);
   return record({ verdict: reply.verdict, outcome: act.outcome, ...(act.reason ? { reason: act.reason } : {}), ...(act.ci ?? {}), ...(replacement ? { replacementUrl: replacement } : {}) });
@@ -762,7 +804,8 @@ async function replacementPr(config: FactoryConfig, pr: ReviewPr, result: RunRes
   }
 }
 
-type ReviewAct = { outcome: ReviewOutcome; stamped: boolean; note?: string; reason?: string; ci?: { fixRounds: number; checks: NonNullable<RunRecord['checks']> } };
+/** `mergePending`: the agent answered merge, and only something mechanical held it back — the merge is retried each tick (review.ts). */
+type ReviewAct = { outcome: ReviewOutcome; stamped: boolean; mergePending?: boolean; note?: string; reason?: string; ci?: { fixRounds: number; checks: NonNullable<RunRecord['checks']> } };
 
 /**
  * What the factory does with a review's verdict. Close and leave are the
@@ -817,7 +860,8 @@ async function actOnReview(
   const merged = await mergeVerified(config, worker, handle, replacement, rep,
     `Supersedes #${pr.number} by @${pr.author.login}: the author's commits with the factory review's fixes.\n\n${trailer}`);
   if (merged.outcome !== 'merged') {
-    return { ...merged, note: `${merged.note ?? ''} The review's fixes are in ${replacement}, left open.`.trim() };
+    // The replacement carries a factory label, so it is the babysitter's to merge from here.
+    return { ...merged, mergePending: false, note: `${merged.note ?? ''} The review's fixes are in ${replacement}, left open.`.trim() };
   }
   return { ...merged, outcome: 'superseded', note: `Merged as ${replacement}, which carries your commits and the review's fixes; you are credited as co-author on the commit.` };
 }
@@ -872,14 +916,14 @@ async function mergeVerified(
   if (ci.fixRounds === 0 && after.headRefOid !== before.headRefOid) return { ...headMoved(before.headRefOid, after.headRefOid), ci };
   if (touchesGithub(after.files).length > 0) return { ...github(touchesGithub(after.files)), ci };
   if (ci.checks === 'red') return { outcome: 'left', stamped: true, reason: 'checks red', note: 'The factory would merge it, but CI is still red after the agent\'s fix round.', ci };
-  if (ci.checks === 'none') return { outcome: 'left', stamped: true, reason: 'no checks', note: 'The factory would merge it, but no CI reported on it, and the factory merges only on green checks.', ci };
-  if (ci.checks === 'unsettled') return { outcome: 'left', stamped: true, reason: 'checks unsettled', note: `The factory would merge it, but CI had not finished within ${CHECKS_WAIT_MS / 60_000} minutes.`, ci };
+  if (ci.checks === 'none') return { outcome: 'left', stamped: true, mergePending: true, reason: 'no checks', note: 'The factory will merge it, but no CI has reported on it yet, and the factory merges only on green checks.', ci };
+  if (ci.checks === 'unsettled') return { outcome: 'left', stamped: true, mergePending: true, reason: 'checks unsettled', note: `The factory will merge it, but CI had not finished within ${CHECKS_WAIT_MS / 60_000} minutes.`, ci };
 
   try {
     await mergePr(repo, target, after.headRefOid, body);
   } catch (err) {
     const msg = (err as Error).message.slice(0, 500);
-    return { outcome: 'left', stamped: true, reason: `merge refused: ${msg}`, note: `The factory would merge it, but GitHub refused: ${msg}`, ci };
+    return { outcome: 'left', stamped: true, mergePending: true, reason: `merge refused: ${msg}`, note: `The factory will merge it, but GitHub refused this time: ${msg}`, ci };
   }
   return { outcome: 'merged', stamped: true, ci };
 }
@@ -1365,9 +1409,12 @@ async function dryRun(ctx: FactoryContext, allCandidates: Task[]): Promise<void>
   if (review.skip) {
     log(`review: would skip — ${review.skip}.`);
   } else {
+    if (review.merge.length) log(`review: would retry the merge its review decided on for ${review.merge.map((p) => `#${p.number}`).join(' ')}`);
     const due = [...review.reopen, ...review.open];
-    log(`review: would review ${Math.min(due.length, config.review.maxPerTick)} of ${due.length} PR(s) from outside the factory — ${due.map((p) => `#${p.number}${review.reopen.includes(p) ? ' (reopen)' : ''}`).join(' ')}. Prompt for #${due[0]!.number}:`);
-    console.log(`\n${reviewPrompt(due[0]!, '<principles.md>')}\n`);
+    if (due.length) {
+      log(`review: would review ${Math.min(due.length, config.review.maxPerTick)} of ${due.length} PR(s) from outside the factory — ${due.map((p) => `#${p.number}${review.reopen.includes(p) ? ' (reopen)' : ''}`).join(' ')}. Prompt for #${due[0]!.number}:`);
+      console.log(`\n${reviewPrompt(due[0]!, '<principles.md>')}\n`);
+    }
   }
 
   const deps = await depsInputs(config);

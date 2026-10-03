@@ -377,7 +377,18 @@ export async function reopenPr(repo: string, prUrl: string): Promise<void> {
  * needed to is one the repo's rules said no to.
  */
 export async function mergePr(repo: string, prUrl: string, sha: string, body?: string): Promise<void> {
-  await gh(['pr', 'merge', prUrl, '-R', repo, '--squash', '--match-head-commit', sha, ...(body !== undefined ? ['--body', body] : [])]);
+  // Reviews merge in parallel, and two landing in the same second race: GitHub
+  // refuses the loser with "Base branch was modified" (#1415 lost to #1418).
+  // Nothing about the PR is wrong, so the merge is simply tried again.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await gh(['pr', 'merge', prUrl, '-R', repo, '--squash', '--match-head-commit', sha, ...(body !== undefined ? ['--body', body] : [])]);
+      return;
+    } catch (err) {
+      if (attempt >= 4 || !/base branch was modified/i.test((err as Error).message)) throw err;
+      await new Promise((r) => setTimeout(r, attempt * 5_000));
+    }
+  }
 }
 
 /** A GitHub user's numeric id: what a noreply co-author address is built on. */

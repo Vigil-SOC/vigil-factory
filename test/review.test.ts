@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { authorReplied, coAuthorTrailer, isBot, needsReview, parseReviewReply, reviewComment, reviewFingerprint, reviewQueue, reviewStamp, sameCommit, skipReason, staleReason, staleReport, touchesGithub, type ReviewPr } from '../src/review.ts';
+import { authorReplied, coAuthorTrailer, isBot, latestReview, mergeDue, needsReview, parseReviewReply, reviewComment, reviewFingerprint, reviewQueue, reviewStamp, sameCommit, skipReason, staleReason, staleReport, touchesGithub, type ReviewPr } from '../src/review.ts';
 import { factoryComment } from '../src/groom.ts';
 import { reviewPrompt } from '../src/prompts.ts';
 
@@ -67,6 +67,48 @@ describe('which PRs the review phase takes up', () => {
   it('oldest first, and closed PRs are never "open" candidates', () => {
     const queue = reviewQueue([pr(9), pr(3), pr(5, { state: 'CLOSED' })], FACTORY);
     expect(queue.open.map((p) => p.number)).toEqual([3, 9]);
+  });
+});
+
+describe('a merge the review decided on and GitHub refused is retried, not left for a human', () => {
+  const pending = (p: ReviewPr): ReviewPr => ({
+    ...p,
+    comments: [...p.comments, comment('maintainer', factoryComment(`${reviewStamp(p, 'left', { mergePending: true })}\n${reviewComment('left', 'why', 'GitHub refused', { mergePending: true })}`))],
+  });
+
+  it('stamps the merge verdict only on a left review', () => {
+    expect(reviewStamp(pr(1), 'left', { mergePending: true })).toMatch(/outcome=left verdict=merge -->$/);
+    expect(reviewStamp(pr(1), 'merged', { mergePending: true })).not.toContain('verdict');
+    expect(latestReview(pending(pr(1)))?.mergePending).toBe(true);
+    expect(latestReview(reviewed(pr(1), 'left'))?.mergePending).toBe(false);
+  });
+
+  it('is due for a merge, not a review, while it stands as the review saw it', () => {
+    const p = pending(pr(1));
+    expect(mergeDue(p, FACTORY)).toBe(true);
+    expect(needsReview(p, FACTORY)).toBe(false);
+    expect(reviewQueue([p, pr(2)], FACTORY)).toMatchObject({ merge: [p], open: [pr(2)] });
+  });
+
+  it('a push or a reply sends it back for a fresh review instead', () => {
+    const p = pending(pr(1));
+    for (const changed of [{ ...p, headRefOid: 'b'.repeat(40) }, { ...p, comments: [...p.comments, comment('contributor', 'one more thing')] }]) {
+      expect(mergeDue(changed, FACTORY)).toBe(false);
+      expect(needsReview(changed, FACTORY)).toBe(true);
+    }
+  });
+
+  it('not a draft, a closed PR, or a plain left review', () => {
+    expect(mergeDue({ ...pending(pr(1)), isDraft: true }, FACTORY)).toBe(false);
+    expect(mergeDue({ ...pending(pr(1)), state: 'CLOSED' }, FACTORY)).toBe(false);
+    expect(mergeDue(reviewed(pr(1), 'left'), FACTORY)).toBe(false);
+  });
+
+  it('says it is pending, not left for a human', () => {
+    const body = reviewComment('left', 'why', undefined, { mergePending: true });
+    expect(body).toContain('merge pending');
+    expect(body).not.toContain('left for a human');
+    expect(body).toContain('tries the merge again every tick');
   });
 });
 
