@@ -83,6 +83,11 @@ export async function listIssuesByLabel(repo: string, label: string, limit = 100
   ]);
 }
 
+/** Issues of any state carrying a label, with why the closed ones closed. */
+export async function listAllIssuesByLabel(repo: string, label: string, limit = 200): Promise<{ number: number; url: string; state: 'OPEN' | 'CLOSED'; stateReason: string; body: string }[]> {
+  return ghJson(['issue', 'list', '-R', repo, '--state', 'all', '--label', label, '--limit', String(limit), '--json', 'number,url,state,stateReason,body']);
+}
+
 export interface PrData {
   number: number;
   url: string;

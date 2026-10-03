@@ -40,10 +40,10 @@ import { Telemetry } from './telemetry.ts';
 import { filterAssigned, filterClaimed, filterEpics, parseSelection, type Selection } from './selector.ts';
 import { BOOT_CHECK_PROMPT, depsPrompt, environmentPrompt, fixChecksPrompt, resolveConflictsPrompt, groomEpicPrompt, groomPrompt, implementPrompt, reviewPrompt, securityPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
 import { factoryComment, isFactoryComment, groomState, isBlocker, isEpic, isGroomed, needsGroom, queueOrder, openChildren, openIssues, parseGroomReply, stampExtrasFor, unaccountedBlockers, verdict, type GroomLabels, type OpenIssues } from './groom.ts';
-import { type PrCheck, addPrLabels, approveHeldRuns, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, dismissCodeScanningAlert, listCodeScanningAlerts, listDependabotAlerts, listDependabotPrs, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, prMergeable, prDrift, reopenPr, userId, viewPr, viewPrForReview } from './github.ts';
+import { type PrCheck, addPrLabels, approveHeldRuns, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, dismissCodeScanningAlert, listAllIssuesByLabel, listCodeScanningAlerts, listDependabotAlerts, listDependabotPrs, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, prMergeable, prDrift, reopenPr, userId, viewPr, viewPrForReview } from './github.ts';
 import { ENV_AGENT_MARK, environmentChangedAt, filedIssueBody, parseEnvReport, recentVerdicts, skipReason, unreadFactoryPrs, withOpenedThisTick, workerSkipReason, type UnreadPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
-import { carried, depsQueue, depsStamp, skipReason as depsSkipReason, type DepsPr } from './deps.ts';
+import { carried, depsQueue, depsStamp, droppedReasons, skipReason as depsSkipReason, upgradeIssue, upgradeKey, upgradeKeyOf, type DepsPr } from './deps.ts';
 import { alertKey, keysIn, offeredLine, parseFixReply, securityQueue, securityStamp, skipReason as securitySkipReason, type OfferedAlert, type SecurityAlert } from './security.ts';
 import { coAuthorTrailer, isBot, parseReviewReply, reviewComment, reviewQueue, reviewStamp, sameCommit, skipReason as reviewSkipReason, staleReason, staleReport, touchesGithub, type ReviewOutcome, type ReviewPr, type ReviewReply } from './review.ts';
 
@@ -1006,7 +1006,7 @@ export async function runDepsPhase(ctx: FactoryContext, worker: CodingWorker): P
   const prUrl = await openedPr(config, result);
   if (!prUrl) {
     log(`deps: the agent carried none of them. Its report:\n${result.resultText.trim() || '_(no report)_'}`);
-    await conclude(offered, `🏭 **Factory dependency batch — left for a human.** The factory's batch agent could not carry any of the open Dependabot PRs. Its report:\n\n${result.resultText.trim() || '_(no report)_'}`, false);
+    await handDropsToIssues(config, { url: null, text: result.resultText }, offered, conclude);
     return record({ outcome: 'no-pr' });
   }
   // Labelled at once, so the review phase never takes it for someone else's.
@@ -1026,9 +1026,9 @@ export async function runDepsPhase(ctx: FactoryContext, worker: CodingWorker): P
   await conclude(took, merged
     ? `🏭 **Factory dependency batch — merged.** This bump landed in ${prUrl}, with the lockfile regenerated from it, on green CI; closing this one.`
     : `🏭 **Factory dependency batch.** This bump is carried in ${prUrl}, which the factory could not merge and has left for a human.`, merged);
-  await conclude(dropped, `🏭 **Factory dependency batch — left for a human.** ${prUrl} batched the open Dependabot PRs and left this one out; its description says why.`, false);
+  const issues = dropped.length ? await handDropsToIssues(config, { url: prUrl, text: (await viewPr(repo, prUrl)).body }, dropped, conclude) : [];
 
-  log(`deps: ${prUrl} carries ${took.length} of ${offered.length}; ${merged ? 'merged' : `left (${act.reason})`}${dropped.length ? `; left open: ${dropped.map((p) => `#${p.number}`).join(' ')}` : ''}`);
+  log(`deps: ${prUrl} carries ${took.length} of ${offered.length}; ${merged ? 'merged' : `left (${act.reason})`}${dropped.length ? `; dropped ${dropped.map((p, i) => `#${p.number} → ${issues[i] ?? 'left open'}`).join(', ')}` : ''}`);
   return record({
     outcome: merged ? 'merged' : 'left',
     prUrl,
@@ -1036,6 +1036,58 @@ export async function runDepsPhase(ctx: FactoryContext, worker: CodingWorker): P
     ...(act.reason ? { reason: act.reason } : {}),
     ...(act.ci ?? {}),
   });
+}
+
+/**
+ * Each bump the batch dropped becomes an issue the pipeline owns (deps.ts),
+ * and its Dependabot PR is closed in the issue's favour. One package has one
+ * issue: a later bump of it joins the open one, and one closed as not planned
+ * is a decision already made. Returns, per dropped PR, the issue it went to,
+ * or null where filing failed and the PR is left open with the old note.
+ */
+async function handDropsToIssues(
+  config: FactoryConfig,
+  batch: { url: string | null; text: string },
+  dropped: DepsPr[],
+  conclude: (prs: DepsPr[], body: string, close: boolean) => Promise<void>,
+): Promise<(string | null)[]> {
+  const repo = repoSlug(config);
+  // The batch PR's description, or with no PR the agent's report: both carry the `Dropped #N:` lines.
+  const reasons = droppedReasons(batch.text, dropped.map((p) => p.number));
+  const leftOut = batch.url ? `${batch.url} carried the other bumps and left this one out` : 'The dependency batch could not carry this one and opened no PR';
+  const report = batch.text.trim().slice(0, 2000) || '_(no report)_';
+  await ensureLabel(repo, config.labels.depsPr, '0366D6', 'Dependabot PRs batched by the software factory, lockfile regenerated');
+  // Unreadable, the worst case is a second issue for one package — not a reason to leave the PR to a human.
+  const known = await listAllIssuesByLabel(repo, config.labels.depsPr).catch((err: Error): Awaited<ReturnType<typeof listAllIssuesByLabel>> => {
+    log(`deps: could not list earlier upgrade issues: ${err.message}`);
+    return [];
+  });
+  const out: (string | null)[] = [];
+  for (const pr of dropped) {
+    const reason = reasons.get(pr.number) ?? (batch.url ? `${batch.url}'s description says why.` : `the agent's report:\n\n${report}`);
+    const key = upgradeKey(pr);
+    const prior = known.filter((i) => upgradeKeyOf(i.body) === key).sort((a, b) => b.number - a.number)[0];
+    try {
+      if (prior && (prior.state === 'OPEN' || prior.stateReason === 'NOT_PLANNED')) {
+        const declined = prior.state !== 'OPEN';
+        if (!declined) await commentOnIssue(repo, prior.number, factoryComment(`🏭 Dependabot proposed ${pr.url} ("${pr.title}") for the same package, and the dependency batch could not carry it either: ${reason}\n\nClosed in favour of this issue.`));
+        await conclude([pr], `🏭 **Factory dependency batch — ${declined ? 'declined' : 'handed to an issue'}.** ${leftOut}: ${reason}\n\n${declined ? `The factory already decided not to take this upgrade in ${prior.url}; reopen that issue to change that.` : `${prior.url} already owns upgrading this package, so this joins it.`} Closing this one.`, true);
+        out.push(prior.url);
+        continue;
+      }
+      const draft = upgradeIssue(pr, reason, batch.url);
+      const filed = await createIssue(repo, draft.title, draft.body, [config.labels.depsPr]);
+      known.push({ number: filed.number, url: filed.url, state: 'OPEN', stateReason: '', body: draft.body });
+      await conclude([pr], `🏭 **Factory dependency batch — handed to an issue.** ${leftOut}: ${reason}\n\nTaking it needs more than a version bump, so it is now ${filed.url}, which the factory grooms and implements like any issue. Closing this one; the issue owns the upgrade.`, true);
+      log(`deps: filed ${filed.url} for dropped ${pr.url}`);
+      out.push(filed.url);
+    } catch (err) {
+      log(`deps: could not hand ${pr.url} to an issue: ${(err as Error).message}`);
+      await conclude([pr], `🏭 **Factory dependency batch — left for a human.** ${leftOut}, and the factory could not file it as an issue: ${reason}`, false);
+      out.push(null);
+    }
+  }
+  return out;
 }
 
 /**
