@@ -47,6 +47,9 @@ export interface ClaudeCodeWorkerOptions {
   repoUrl: string;
   /** Commit every agent starts from. See CursorWorkerOptions.startingRef. */
   startingRef: string | null;
+  /** `run --local --base`: startingRef is on this local branch, not on origin,
+   *  so each clone fetches it from here first. */
+  base?: { repo: string; branch: string };
   model: ModelSpec | null;
   maxRunMinutes: number;
   /** Where clones live; one subdirectory per session. */
@@ -300,6 +303,9 @@ export class ClaudeCodeWorker implements CodingWorker {
     await this.git(['clone', '--quiet', ...credential, this.opts.repoUrl, workspace]);
     if (this.opts.ghToken) {
       await this.git(['config', 'credential.helper', '!f() { echo username=x-access-token; echo "password=$GH_TOKEN"; }; f'], workspace);
+    }
+    if (this.opts.base) {
+      await this.git(['fetch', '--quiet', this.opts.base.repo, this.opts.base.branch], workspace);
     }
     if (this.opts.startingRef) {
       await this.git(['checkout', '--quiet', '--detach', this.opts.startingRef], workspace);

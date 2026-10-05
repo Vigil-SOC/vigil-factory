@@ -28,7 +28,9 @@
 // implement/verify/review it) lives in an agent; the controller only sequences
 // the handoffs and keeps the capacity gate.
 
+import { execFile } from 'node:child_process';
 import { resolve } from 'node:path';
+import { promisify } from 'node:util';
 import type { CodingWorker, CurrentRun, DepsRecord, EnvRecord, GroomRecord, ReviewRecord, RunHandle, RunRecord, RunResult, SecurityRecord, SimplifyRecord, Task, TokenUsage } from './types.ts';
 import { agentCredentials, claudeBin, epicGroomModel, githubTokenForAgents, loadConfig, loadDotEnv, loadPrinciples, projectRoot, repoSlug, requireCursorApiKey, type FactoryConfig } from './config.ts';
 import { RunBudgetExceeded } from './types.ts';
@@ -61,6 +63,9 @@ interface FactoryContext {
   /** `run --issue N --local`: the implementer commits on this machine, pushes
    *  nothing and opens no PR, and N may be assigned to the person running it. */
   local?: boolean;
+  /** `--local --base`: agents start from this local branch instead of the
+   *  default branch on origin, for work that builds on work not yet pushed. */
+  base?: { repo: string; branch: string };
 }
 
 export function buildContext(): FactoryContext {
@@ -77,9 +82,18 @@ export function buildContext(): FactoryContext {
  * same commit and none can be handed a stale clone. Which runtime the agents
  * are is `worker.kind`; nothing downstream of this function knows.
  */
-export async function buildWorker(config: FactoryConfig): Promise<CodingWorker> {
-  const { branch, sha } = await defaultBranchHead(repoSlug(config));
+/** The commit a local branch points at, for `--base`. */
+async function localBranchHead(base: { repo: string; branch: string }): Promise<string> {
+  const { stdout } = await promisify(execFile)('git', ['-C', base.repo, 'rev-parse', '--verify', `${base.branch}^{commit}`]);
+  return stdout.trim();
+}
+
+export async function buildWorker(config: FactoryConfig, base?: { repo: string; branch: string }): Promise<CodingWorker> {
+  const { branch, sha } = base
+    ? { branch: `local branch ${base.branch} of ${base.repo}`, sha: await localBranchHead(base) }
+    : await defaultBranchHead(repoSlug(config));
   log(`agents will start from ${branch} @ ${sha.slice(0, 8)} (worker: ${config.worker.kind})`);
+  if (base && config.worker.kind !== 'claude-code') throw new Error('--base needs the claude-code worker: a cloud agent cannot see a branch on this machine');
   const common = {
     repoUrl: config.repo.url,
     startingRef: sha,
@@ -99,6 +113,7 @@ export async function buildWorker(config: FactoryConfig): Promise<CodingWorker> 
     case 'claude-code': {
       const worker = new ClaudeCodeWorker({
         ...common,
+        ...(base ? { base } : {}),
         bin: claudeBin(),
         workRoot: resolve(projectRoot, config.telemetryDir, 'workspaces'),
         ghToken: githubTokenForAgents(),
@@ -1227,13 +1242,17 @@ export async function runSecurityPhase(ctx: FactoryContext, worker: CodingWorker
   return record({ outcome: 'pr-opened', prUrl, fixed, dismissed, ...ci });
 }
 
-export async function tick(opts: { dryRun: boolean; onlyIssue?: number; local?: boolean }): Promise<void> {
+export async function tick(opts: { dryRun: boolean; onlyIssue?: number; local?: boolean; base?: { repo: string; branch: string } }): Promise<void> {
   const ctx = buildContext();
   const { config } = ctx;
   if (opts.local) {
     if (opts.onlyIssue === undefined) throw new Error('--local needs --issue N: it builds one issue on this machine');
     if (config.worker.kind !== 'claude-code') throw new Error('--local needs the claude-code worker (FACTORY_WORKER=claude-code): a cloud agent cannot leave its work on this machine');
     ctx.local = true;
+  }
+  if (opts.base) {
+    if (!opts.local) throw new Error('--base needs --local: work built on an unpushed branch cannot be a PR against the default branch');
+    ctx.base = opts.base;
   }
   // `--issue N` is a tick that sees one issue and nothing else: it grooms and
   // implements N as any tick would, and leaves every other issue and PR, and
@@ -1255,7 +1274,7 @@ export async function tick(opts: { dryRun: boolean; onlyIssue?: number; local?: 
     return;
   }
 
-  const worker = await buildWorker(config);
+  const worker = await buildWorker(config, ctx.base);
   if (!scoped) await handBackStuckPrs(ctx, worker);
 
   // 2. Grooming: vet part of the backlog. Deliberately ahead of the
