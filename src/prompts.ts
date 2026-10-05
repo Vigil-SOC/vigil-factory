@@ -52,7 +52,7 @@ const ISSUE_IMAGES = `An image in the issue or its comments is part of the spec,
  * An image is one design: narrowed to the parts that exist today, the PR no
  * longer looks like it, so one that cannot be built whole is a direction.
  */
-const IMAGE_COST = `An image is one design, not a menu: for each part of it, find in the code the data and the API it needs, and say in your notes which exist today and which do not.`;
+const IMAGE_COST = `An image is one design, not a menu: for each part of it, find in the code the data and the API it needs, and say in your notes which exist today and which do not. When it shows a screen, it decides how that screen looks: do not also tell the implementer to keep the app's existing look where the image departs from it.`;
 
 /** The issue groom's half of IMAGE_COST: whole, or a direction. */
 function imageWhole(epicLabel?: string): string {
@@ -65,7 +65,7 @@ function imageWhole(epicLabel?: string): string {
  * avatars, header case, labels and spacing all differed. A reviewer that never
  * saw the code lists the differences, and each one is answered.
  */
-const IMAGE_MATCH = `Before you open the PR, have a subagent that has not seen your code compare the image with your screenshots at the same width, region by region (crop them: a full screenshot reaches a model scaled down and loses detail), and list every visible difference: layout, spacing and column widths, type size and case, colour, shape, icons, labels and wording, data shown. Fix each one within the issue's scope, or keep it and say why. Under **Ran**, list the differences and what happened to each; "it lines up" is not a finding. A redesign the image implies but the issue does not ask for is an issue of its own.`;
+const IMAGE_MATCH = `Before you open the PR, have a subagent that has not seen your code compare the image with your screenshots at the same width, region by region (crop them: a full screenshot reaches a model scaled down and loses detail), and list every visible difference: layout, spacing and column widths, type size and case, colour, shape, icons, labels and wording, data shown. Match each one. A difference stays only when matching it is impossible, or the issue leaves it out by name; that the app's existing tokens or shared components look different is not a reason. Style this screen to the image, scoped to it so no other screen changes, and name in the PR each shared token or component the image departs from, so the design system can follow in an issue of its own. Under **Ran**, list the differences and what happened to each; "it lines up" is not a finding. A redesign the image implies but the issue does not ask for is an issue of its own.`;
 
 export function groomPrompt(task: Task, principles: string, budget: RunBudget, epicLabel?: string): string {
   const epicVerdict = epicLabel === undefined ? '' : `

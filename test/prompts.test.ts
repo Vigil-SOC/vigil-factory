@@ -99,6 +99,10 @@ describe('verification is the agent\'s call and always reported', () => {
     expect(impl).toContain('region by region');
     expect(impl).toContain('list every visible difference');
     expect(impl).toContain('"it lines up" is not a finding');
+    // The app's existing look is not a reason to keep a difference; the screen is styled to the image.
+    expect(impl).toContain("that the app's existing tokens or shared components look different is not a reason");
+    expect(impl).toContain('scoped to it so no other screen changes');
+    expect(groomPrompt(task, 'principles', { maxRunMinutes: 90 })).toContain('it decides how that screen looks');
     expect(impl).toContain('A redesign the image implies but the issue does not ask for is an issue of its own');
   });
 
