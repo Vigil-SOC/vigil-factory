@@ -1365,9 +1365,11 @@ async function runImplementation(ctx: FactoryContext, worker: CodingWorker, cand
     return [];
   }
 
-  // Capacity gate, for the implementation half only.
-  const capacity = await ctx.state.capacity(log);
-  log(`capacity: ${capacity.slots} of ${capacity.limit} slot(s) free (${capacity.openPrs.length} PR(s) awaiting a human, ${capacity.inFlight.length} pipeline(s) in flight)`);
+  // Capacity gate, for the implementation half only. A local run opens no PR,
+  // so it adds nothing to what waits on a human: it takes its one issue.
+  const capacity = ctx.local ? { ...(await ctx.state.capacity(log)), slots: 1 } : await ctx.state.capacity(log);
+  if (ctx.local) log('capacity: not gated, a local run opens no PR');
+  else log(`capacity: ${capacity.slots} of ${capacity.limit} slot(s) free (${capacity.openPrs.length} PR(s) awaiting a human, ${capacity.inFlight.length} pipeline(s) in flight)`);
   if (capacity.slots === 0) {
     for (const pr of capacity.openPrs) log(`  awaiting human: ${pr.url} ("${pr.title}")`);
     for (const run of capacity.inFlight) {
