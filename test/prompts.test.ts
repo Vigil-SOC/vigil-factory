@@ -65,6 +65,15 @@ describe('verification is the agent\'s call and always reported', () => {
     expect(p).toMatch(/even if you then worked around it/);
   });
 
+  // The one live test that is not the agent's call: no unit test lays a page out.
+  it('a change to what a screen renders is always looked at, at two widths', () => {
+    const p = implementPrompt(task);
+    expect(p).toContain('always needs one, because unit tests never lay a page out');
+    expect(p).toContain('the narrowest width the app supports and at 1920 pixels');
+    expect(p).toContain('scrollWidth exceeds its clientWidth');
+    expect(p).toContain("the repo's design docs");
+  });
+
   it('implementer triages review findings, when it asks for a review: fix or dismiss with a reason, never a follow-up', () => {
     const p = implementPrompt(task);
     expect(p).toContain('When a change is large or subtle enough');

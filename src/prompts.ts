@@ -124,10 +124,12 @@ ${principles}`;
 /**
  * The live half of "verified": the changed behavior exercised through its real
  * entry point, where there is behavior worth seeing. The agent's call — a live
- * test on a change the tests already pin down is time spent, not risk removed.
+ * test on a change the tests already pin down is time spent, not risk removed —
+ * except for what a screen renders: unit tests never lay a page out, so a table
+ * pushed off the edge passes every one of them.
  * Shared by every agent that vouches for a change.
  */
-const LIVE = `Test the change live when it has behavior worth seeing work: start the app and exercise it through its real entry point — \`agent-browser\` is on this machine for anything with a UI (\`agent-browser skills get core\` explains it); an API or CLI change gets a real request or invocation. A small change the tests already pin down, docs, or a refactor needs none.`;
+const LIVE = `Test the change live when it has behavior worth seeing work: start the app and exercise it through its real entry point — \`agent-browser\` is on this machine for anything with a UI (\`agent-browser skills get core\` explains it); an API or CLI change gets a real request or invocation. A small change the tests already pin down, docs, or a refactor needs none. A change to what a screen renders — markup, styles, or the text and data it lays out — always needs one, because unit tests never lay a page out: open every screen it touches with real data at the narrowest width the app supports and at 1920 pixels, screenshot each, and look. Fix what is cut off, overlapping, or reachable only by scrolling sideways (an element whose scrollWidth exceeds its clientWidth), and what breaks the conventions of the screens around it or the repo's design docs. Name each screen and width you checked under **Ran**.`;
 
 /**
  * What "verified" means for an agent that opens a PR: the tests that cover the
