@@ -37,6 +37,14 @@ ${list}`;
  * reach only this agent — what the implementer needs is whatever this agent
  * writes into the notes.
  */
+/**
+ * An image in an issue is spec, not decoration: a screenshot of what is broken,
+ * or a design to build. Without this an agent can work from the text alone. On a
+ * private repo the image's own URL answers 404 to a token; the API's rendered
+ * body carries short-lived signed links instead.
+ */
+const ISSUE_IMAGES = `An image in the issue or its comments is part of the spec, as binding as its text. Download it and look at it: when a plain download fails, \`gh api\` on the issue or comment with \`-H 'Accept: application/vnd.github.full+json'\` returns its body with signed image links.`;
+
 export function groomPrompt(task: Task, principles: string, budget: RunBudget, epicLabel?: string): string {
   const epicVerdict = epicLabel === undefined ? '' : `
 - epic — this is not a PR and should not be judged as one. It sets a direction: a capability that takes several PRs to deliver anything, with decisions that bind all of them, or a change to what the product is. The factory labels it \`${epicLabel}\` and grooms it again as a direction, settling its decisions and writing its first children, so do not settle them here — say in a few sentences why it is a direction rather than one change. Size alone does not make an epic: an issue that is merely too large, or a list of unrelated tasks, is needs-work.`;
@@ -44,7 +52,7 @@ export function groomPrompt(task: Task, principles: string, budget: RunBudget, e
   return `Groom GitHub issue #${task.issueNumber} for an autonomous coding agent.
 ${task.url}
 
-Read the issue there, comments included, then look at the code it concerns — you are reviewing, not implementing, so change nothing. Judge it against the product-direction principles below: they are the standard this codebase is held to, and they outrank how the issue's author framed it.
+Read the issue there, comments included, then look at the code it concerns — you are reviewing, not implementing, so change nothing. ${ISSUE_IMAGES} Judge it against the product-direction principles below: they are the standard this codebase is held to, and they outrank how the issue's author framed it.
 
 ${epicLabel === undefined ? 'Three' : 'Four'} verdicts:
 - groomed — there is a correct change here that one PR can land. It may be narrower than what the issue asks for; if it is, your notes say what to leave out. The implementer decides how to build it — an issue that leaves implementation open is not thereby unready.
@@ -94,7 +102,7 @@ export function groomEpicPrompt(task: Task, principles: string, budget: RunBudge
   return `Groom GitHub issue #${task.issueNumber} — an epic — for the software factory.
 ${task.url}
 
-An epic is a direction, not a PR. Read it there, comments included, and everything it links: a design document, earlier issues, whatever the author pointed at. Then read the code it concerns. You are reviewing, not implementing, so change nothing. Judge the direction against the product-direction principles below; they outrank how the author framed it, and the direction you settle on may be narrower than what the epic proposes. A question the code, the running app, or a request you can make with the credentials in your environment would answer is yours to answer: answer it, then judge. Hand back only what is left after that.
+An epic is a direction, not a PR. Read it there, comments included, and everything it links: a design document, earlier issues, whatever the author pointed at. ${ISSUE_IMAGES} Then read the code it concerns. You are reviewing, not implementing, so change nothing. Judge the direction against the product-direction principles below; they outrank how the author framed it, and the direction you settle on may be narrower than what the epic proposes. A question the code, the running app, or a request you can make with the credentials in your environment would answer is yours to answer: answer it, then judge. Hand back only what is left after that.
 
 Three verdicts:
 - groomed — the direction is worth building toward and its shape-changing decisions can be settled here. Settle them. For each decision the epic leaves open, or gets wrong, state the default you chose, why, and what it would cost to reverse. Prefer the smallest choice that proves the seam: the lighter engine over the heavier one, the plain string over the modelled entity, the mechanism the repo already has over a new one. These decisions become the record the children are built against, so write them in the open, addressed to the author and to whoever grooms the children.
@@ -176,7 +184,9 @@ ${WORKING_RULES}${credentialsSection(credentials)}
 ## Issue #${task.issueNumber}: ${task.title}
 ${task.url}
 
-Read the issue at that URL, comments included — do not work from the title alone. The factory's most recent groom comment there (🏭 Factory groom) may end with a "Factory grooming notes" section: that is scoping direction, not a suggestion. Build what it scopes and leave out what it leaves out.`;
+Read the issue at that URL, comments included — do not work from the title alone. The factory's most recent groom comment there (🏭 Factory groom) may end with a "Factory grooming notes" section: that is scoping direction, not a suggestion. Build what it scopes and leave out what it leaves out.
+
+${ISSUE_IMAGES} Compare your screenshots against it before you open the PR, and match it within the issue's scope: a redesign the image implies but the issue does not ask for is an issue of its own.`;
 }
 
 /**

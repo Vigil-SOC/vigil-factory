@@ -74,6 +74,18 @@ describe('verification is the agent\'s call and always reported', () => {
     expect(p).toContain("the repo's design docs");
   });
 
+  // A screenshot of what is broken, or a design to build: spec, not decoration.
+  it('an image in the issue is spec for the groomer and the implementer, fetched even on a private repo', () => {
+    const epic = { ...task, labels: ['type:epic'] };
+    for (const p of [implementPrompt(task), groomPrompt(task, 'principles', { maxRunMinutes: 90 }), groomEpicPrompt(epic, 'principles', { maxRunMinutes: 90 })]) {
+      expect(p).toContain('An image in the issue or its comments is part of the spec');
+      expect(p).toContain('application/vnd.github.full+json');
+    }
+    const impl = implementPrompt(task);
+    expect(impl).toContain('Compare your screenshots against it before you open the PR');
+    expect(impl).toContain('a redesign the image implies but the issue does not ask for is an issue of its own');
+  });
+
   it('implementer triages review findings, when it asks for a review: fix or dismiss with a reason, never a follow-up', () => {
     const p = implementPrompt(task);
     expect(p).toContain('When a change is large or subtle enough');
