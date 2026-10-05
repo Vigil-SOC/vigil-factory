@@ -81,6 +81,12 @@ describe('verification is the agent\'s call and always reported', () => {
       expect(p).toContain('An image in the issue or its comments is part of the spec');
       expect(p).toContain('application/vnd.github.full+json');
     }
+    // Sizing what an image needs from the backend is the groom's call, not the implementer's.
+    for (const g of [groomPrompt(task, 'principles', { maxRunMinutes: 90 }), groomEpicPrompt(epic, 'principles', { maxRunMinutes: 90 })]) {
+      expect(g).toContain('An image shows the result, not what it costs');
+      expect(g).toContain('the data and the API it needs');
+    }
+    expect(groomPrompt(task, 'principles', { maxRunMinutes: 90 })).toContain('When that work is more than one PR, the issue is too large as written');
     const impl = implementPrompt(task);
     expect(impl).toContain('Compare your screenshots against it before you open the PR');
     expect(impl).toContain('a redesign the image implies but the issue does not ask for is an issue of its own');
