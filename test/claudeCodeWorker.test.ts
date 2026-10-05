@@ -101,4 +101,17 @@ describe('machineNote', () => {
     expect(note).toContain('pushes nothing');
     expect(note).not.toContain('gh pr create');
   });
+
+  it('tells a --local agent to commit on its branch and push nothing', () => {
+    const note = machineNote({ repoUrl: 'https://github.com/o/r', ref: 'abc123', branch: 'factory/1-x-deadbeef', keepLocal: true });
+    expect(note).toContain('factory/1-x-deadbeef');
+    expect(note).toContain('do not push and do not open a pull request');
+    expect(note).not.toContain('gh pr create');
+  });
+
+  it('tells every agent the machine is shared', () => {
+    for (const branch of ['factory/1-x-deadbeef', null]) {
+      expect(machineNote({ repoUrl: 'https://github.com/o/r', ref: null, branch })).toContain('never kill by name or pattern');
+    }
+  });
 });

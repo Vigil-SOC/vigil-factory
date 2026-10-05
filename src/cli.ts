@@ -15,6 +15,8 @@ Usage:
                                        One idempotent tick: groom part of the backlog, then hand the oldest groomed issue to a fresh implementer agent (a selector agent picks instead if selector.enabled).
                                        --issue N sees issue N and nothing else: it grooms and implements N as any tick would,
                                        and no other issue, PR, or phase (review, deps, security, simplify, environment) is touched.
+                                       --local (with --issue, claude-code worker): the implementer commits on a branch on this machine
+                                       and pushes nothing; no PR. N may be assigned to you. The branch is in telemetry/workspaces/.
   npm run factory -- groom [--limit N] [--force]
                                        Run just the grooming phase (vets issues against principles.md; no implementation).
                                        --force re-grooms issues that already have a current verdict — use after editing
@@ -271,7 +273,7 @@ async function main(): Promise<void> {
 
   switch (command) {
     case 'run':
-      await tick({ dryRun, ...(issueNumber !== undefined ? { onlyIssue: issueNumber } : {}) });
+      await tick({ dryRun, ...(issueNumber !== undefined ? { onlyIssue: issueNumber } : {}), local: args.includes('--local') });
       break;
     case 'groom':
       await groom({ ...(limit !== undefined ? { limit } : {}), force: args.includes('--force') });

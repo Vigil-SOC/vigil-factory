@@ -101,6 +101,9 @@ export interface CodingWorker {
 
 export interface StartOptions {
   autoCreatePR?: boolean;
+  /** With autoCreatePR: commit on the agent's branch but push nothing and open
+   *  no PR. The work stays on this machine for a person to push (`run --local`). */
+  keepLocal?: boolean;
   name?: string;
   /** Work on this existing pull request: its branch is checked out, and what
    *  the agent pushes goes to it. For reviewing a PR the factory did not open. */
@@ -180,7 +183,7 @@ export interface RunRecord extends AgentPass {
   issueTitle: string;
   /** Absent when the selector is off and the issue was taken oldest-first. */
   selectorAgentId?: string;
-  outcome: 'pr-opened' | 'no-pr' | 'failed' | 'aborted';
+  outcome: 'pr-opened' | 'kept-local' | 'no-pr' | 'failed' | 'aborted';
   failureReason?: string;
   prUrl: string | null;
   selectorUsage?: TokenUsage | null;
