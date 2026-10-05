@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { filterAssigned, filterClaimed, filterEpics, parseSelection } from '../src/selector.ts';
+import { filterAssigned, filterClaimed, filterDrafts, filterEpics, parseSelection } from '../src/selector.ts';
 import type { Task } from '../src/types.ts';
 
 function task(issueNumber: number, labels: string[] = [], assignees: string[] = []): Task {
@@ -18,6 +18,12 @@ function task(issueNumber: number, labels: string[] = [], assignees: string[] = 
 const tasks = [task(642), task(693), task(587)];
 
 describe('filterClaimed', () => {
+  it('drops drafts a human is still writing, and nothing without the label configured', () => {
+    const tasks = [task(1, ['factory:draft']), task(2), task(3, ['type:epic', 'factory:draft'])];
+    expect(filterDrafts(tasks, 'factory:draft').map((t) => t.issueNumber)).toEqual([2]);
+    expect(filterDrafts(tasks, undefined)).toEqual(tasks);
+  });
+
   it('drops issues the factory already claimed', () => {
     const list = [task(1, ['factory:wip']), task(2)];
     expect(filterClaimed(list, 'factory:wip').map((t) => t.issueNumber)).toEqual([2]);

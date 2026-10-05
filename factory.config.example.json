@@ -22,7 +22,8 @@
     "depsPr": "factory:deps",
     "epic": "type:epic",
     "blocker": "factory:blocker",
-    "securityPr": "factory:security"
+    "securityPr": "factory:security",
+    "draft": "factory:draft"
   },
   "groom": {
     "maxPerTick": 5,

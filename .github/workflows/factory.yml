@@ -13,7 +13,7 @@ on:
       model:
         description: 'Run this model from worker.models instead of worker.model (blank = as configured)'
         type: choice
-        options: ['', 'opus', 'grok']
+        options: ['', 'opus', 'grok', 'fable']
         default: ''
 
 concurrency:

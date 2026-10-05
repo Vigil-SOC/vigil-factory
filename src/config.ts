@@ -71,8 +71,19 @@ export interface FactoryConfig {
      *  out of the `maxConcurrentJobs` count, as the other phases' labels do;
      *  it is also how the phase finds the alerts its PRs already claim. */
     securityPr: string;
+    /** An issue still being written. The factory neither grooms nor
+     *  implements it while the label is on, and holds the children of a
+     *  draft epic with it. A human applies and removes it. */
+    draft: string;
   };
-  groom: { maxPerTick: number; principlesFile: string };
+  groom: {
+    maxPerTick: number;
+    principlesFile: string;
+    /** A name from `worker.models` to groom epics with, when settling a
+     *  direction deserves a stronger model than the one that builds toward
+     *  it. Unset, epics are groomed by `worker.model` like everything else. */
+    epicModel?: string;
+  };
   /** How a free slot gets its issue. Off (the default), the oldest groomed
    *  issue by number is handed straight to the implementer: grooming already
    *  judged each one buildable, and a ranking agent that reads the whole
@@ -182,6 +193,10 @@ export function loadConfig(root: string = projectRoot): FactoryConfig {
   config.labels.epic ??= 'type:epic';
   config.labels.blocker ??= 'factory:blocker';
   config.labels.securityPr ??= 'factory:security';
+  config.labels.draft ??= 'factory:draft';
+  if (config.groom.epicModel !== undefined && !config.worker.models[config.groom.epicModel]) {
+    throw new Error(`groom.epicModel=${config.groom.epicModel} names no model in worker.models (has: ${Object.keys(config.worker.models).join(', ') || 'none'})`);
+  }
   config.security ??= { enabled: true, minSeverity: 'high' };
   config.security.enabled ??= true;
   config.security.minSeverity = parseSeverity(config.security.minSeverity ?? 'high');
@@ -214,6 +229,11 @@ export function loadConfig(root: string = projectRoot): FactoryConfig {
     );
   }
   return config;
+}
+
+/** The model an epic's groom runs, when the config names one. */
+export function epicGroomModel(config: FactoryConfig): ModelSpec | undefined {
+  return config.groom.epicModel === undefined ? undefined : config.worker.models[config.groom.epicModel];
 }
 
 /** The product-direction principles grooming judges against. Factory-local by

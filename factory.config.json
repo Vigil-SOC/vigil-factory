@@ -36,6 +36,14 @@
           "reasoning_effort": "medium",
           "fast": "false"
         }
+      },
+      "fable": {
+        "id": "claude-fable-5-1",
+        "params": {
+          "thinking": "true",
+          "context": "300k",
+          "effort": "high"
+        }
       }
     },
     "pollIntervalSeconds": 30,
@@ -43,7 +51,7 @@
     "agentEnv": [
       {
         "name": "GEMINI_API_KEY",
-        "description": "Google Gemini API key (AI Studio, generativelanguage.googleapis.com) for a triage/chat run against a real model, when a change needs one. In this repo Bifrost fronts every model and the environment does not start it: `docker compose -f infra/docker/docker-compose.yml up -d bifrost`, then put the key on Bifrost's `gemini` provider \u2014 through Settings \u2192 AI Config with provider type gemini, or directly: POST /api/providers {\"provider\":\"gemini\",\"keys\":[]}, then POST /api/providers/gemini/keys with the key as `value` and `models: [\"*\"]` (an empty models list routes nothing). Address models as gemini/<id> and use the alias `gemini/gemini-flash-latest` (or `gemini-flash-lite-latest` for the cheapest): it resolves to the current flash model, where a versioned id typed from memory is usually retired or several generations behind, and Google has already withdrawn `gemini-2.5-flash` from new keys. This is not a Vertex credential: the seeded `vertex` provider needs a GCP service account the factory does not hold, so do not route through it or shim it."
+        "description": "Google Gemini API key (AI Studio, generativelanguage.googleapis.com) for a triage/chat run against a real model, when a change needs one. In this repo Bifrost fronts every model and the environment does not start it: `docker compose -f infra/docker/docker-compose.yml up -d bifrost`, then put the key on Bifrost's `gemini` provider — through Settings → AI Config with provider type gemini, or directly: POST /api/providers {\"provider\":\"gemini\",\"keys\":[]}, then POST /api/providers/gemini/keys with the key as `value` and `models: [\"*\"]` (an empty models list routes nothing). Address models as gemini/<id> and use the alias `gemini/gemini-flash-latest` (or `gemini-flash-lite-latest` for the cheapest): it resolves to the current flash model, where a versioned id typed from memory is usually retired or several generations behind, and Google has already withdrawn `gemini-2.5-flash` from new keys. This is not a Vertex credential: the seeded `vertex` provider needs a GCP service account the factory does not hold, so do not route through it or shim it."
       }
     ]
   },
@@ -58,11 +66,13 @@
     "depsPr": "factory:deps",
     "epic": "type:epic",
     "blocker": "factory:blocker",
-    "securityPr": "factory:security"
+    "securityPr": "factory:security",
+    "draft": "factory:draft"
   },
   "groom": {
     "maxPerTick": 5,
-    "principlesFile": "principles.md"
+    "principlesFile": "principles.md",
+    "epicModel": "fable"
   },
   "selector": {
     "enabled": false,

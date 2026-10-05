@@ -30,14 +30,14 @@
 
 import { resolve } from 'node:path';
 import type { CodingWorker, CurrentRun, DepsRecord, EnvRecord, GroomRecord, ReviewRecord, RunHandle, RunRecord, RunResult, SecurityRecord, SimplifyRecord, Task, TokenUsage } from './types.ts';
-import { agentCredentials, claudeBin, githubTokenForAgents, loadConfig, loadDotEnv, loadPrinciples, projectRoot, repoSlug, requireCursorApiKey, type FactoryConfig } from './config.ts';
+import { agentCredentials, claudeBin, epicGroomModel, githubTokenForAgents, loadConfig, loadDotEnv, loadPrinciples, projectRoot, repoSlug, requireCursorApiKey, type FactoryConfig } from './config.ts';
 import { RunBudgetExceeded } from './types.ts';
 import { CursorWorker } from './worker.ts';
 import { ClaudeCodeWorker } from './claudeCodeWorker.ts';
 import { GitHubIssueSource } from './workSource.ts';
 import { FactoryState } from './state.ts';
 import { Telemetry } from './telemetry.ts';
-import { filterAssigned, filterClaimed, filterEpics, parseSelection, type Selection } from './selector.ts';
+import { filterAssigned, filterClaimed, filterDrafts, filterEpics, parseSelection, type Selection } from './selector.ts';
 import { BOOT_CHECK_PROMPT, depsPrompt, environmentPrompt, fixChecksPrompt, resolveConflictsPrompt, groomEpicPrompt, groomPrompt, implementPrompt, reviewPrompt, securityPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
 import { factoryComment, isFactoryComment, groomState, isBlocker, isEpic, isGroomed, needsGroom, queueOrder, openChildren, openIssues, parseGroomReply, stampExtrasFor, unaccountedBlockers, verdict, type GroomLabels, type OpenIssues } from './groom.ts';
 import { type PrCheck, addPrLabels, approveHeldRuns, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, dismissCodeScanningAlert, listAllIssuesByLabel, listCodeScanningAlerts, listDependabotAlerts, listDependabotPrs, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, prMergeable, prDrift, reopenPr, userId, viewPr, viewPrForReview } from './github.ts';
@@ -132,12 +132,13 @@ export async function openSet(ctx: FactoryContext, tasks: Task[]): Promise<OpenI
 
 /**
  * The candidates one phase may act on. Neither touches an issue the factory
- * has claimed. They differ in whether a human's assignment excludes it, and in
- * that epics are groomed — that is where their direction gets settled — but
- * never implemented: their children are.
+ * has claimed, nor one a human has marked as a draft: still being written, so
+ * not yet the factory's to judge. They differ in whether a human's assignment
+ * excludes it, and in that epics are groomed — that is where their direction
+ * gets settled — but never implemented: their children are.
  */
 export function admissible(ctx: FactoryContext, tasks: Task[], phase: 'groom' | 'implement'): Task[] {
-  const unclaimed = filterClaimed(tasks, ctx.config.labels.issueInProgress);
+  const unclaimed = filterDrafts(filterClaimed(tasks, ctx.config.labels.issueInProgress), ctx.config.labels.draft);
   const admitted = ctx.config.assignedIssues[phase] ? unclaimed : filterAssigned(unclaimed);
   return phase === 'implement' ? filterEpics(admitted, ctx.config.labels.epic) : admitted;
 }
@@ -154,6 +155,8 @@ export async function runGroomPhase(
   opts: { limit?: number; force?: boolean; open?: OpenIssues } = {},
 ): Promise<GroomRecord[]> {
   const pending = needsGroom(candidates, ctx.config.labels, opts.force, opts.open).slice(0, opts.limit ?? ctx.config.groom.maxPerTick);
+  // The draft label is a human's to apply, so it has to exist to be applied.
+  await ensureLabel(repoSlug(ctx.config), ctx.config.labels.draft, 'EDEDED', 'Still being written; the factory neither grooms nor implements it').catch((err: Error) => log(`could not ensure the ${ctx.config.labels.draft} label: ${err.message}`));
   if (pending.length === 0) return [];
 
   const principles = loadPrinciples(ctx.config);
@@ -185,10 +188,14 @@ async function groomOne(
   open?: OpenIssues,
 ): Promise<GroomRecord> {
   const epic = isEpic(task, ctx.config.labels);
+  // Settling a direction is the judgment every child inherits, so an epic's
+  // groom may run a stronger model than the one that builds toward it.
+  const model = epic ? epicGroomModel(ctx.config) : undefined;
   const startedAt = new Date().toISOString();
   const handle = await worker.start(groomPromptFor(ctx, task, principles), {
     autoCreatePR: false,
     name: `factory-groom: #${task.issueNumber}`.slice(0, 100),
+    ...(model ? { model } : {}),
   });
   const result = await worker.awaitResult(handle);
   if (result.status !== 'FINISHED') {
@@ -270,7 +277,7 @@ async function groomOne(
     ...(epic ? { epic: true, childrenFiled } : {}),
     ...(reply.blocked !== undefined ? { blockedOn: reply.blocked } : {}),
     worker: ctx.config.worker.kind,
-    model: ctx.config.worker.model,
+    model: model ?? ctx.config.worker.model,
     agentId: handle.agentId,
     startedAt,
     finishedAt: new Date().toISOString(),

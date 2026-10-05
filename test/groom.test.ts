@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  fingerprint, groomComment, groomNotes, groomState, hasLegacyBlock, isEpic, isFactoryComment, isGroomed, needsGroom, openIssues,
+  fingerprint, groomComment, groomNotes, groomState, hasLegacyBlock, isDraft, isEpic, isFactoryComment, isGroomed, needsGroom, openIssues,
   childDroppedComment, childrenFiledComment, epicRecognizedComment, openChildren, parentEpic, parseGroomReply, premiseOf, readBlocker, readChildren,
   readFingerprint, readPremise, recordFingerprint, stampExtrasFor, stripLegacyBlock, unaccountedBlockers, verdict,
 } from '../src/groom.ts';
@@ -157,6 +157,22 @@ describe('backlog filters', () => {
 
   it('offers every issue carrying the groomed label for implementation', () => {
     expect([groomed, rejected, fresh, stale].filter((t) => isGroomed(t, LABELS)).map((t) => t.issueNumber)).toEqual([10, 9]);
+  });
+
+  it('holds the children of a draft epic: their premise is still being written', () => {
+    const labels = { ...LABELS, epic: 'type:epic', draft: 'factory:draft' };
+    const draftEpic = task(100, 'a direction, half written', [], ['type:epic', 'factory:draft']);
+    const child = task(101, 'Part of #100\n\nfirst slice');
+    const unrelated = task(102, 'Part of #99\n\nanother epic');
+    expect(isDraft(draftEpic, labels)).toBe(true);
+    expect(isDraft(child, labels)).toBe(false);
+    // The draft itself never reaches needsGroom — admission filters it — but
+    // it is in the open set, which is where its children find it.
+    const open = openIssues([draftEpic, child, unrelated]);
+    expect(needsGroom([child, unrelated], labels, false, open).map((t) => t.issueNumber)).toEqual([102]);
+    // The label comes off: the epic is groomed, and the child waits for that groom as any child does.
+    const epic = { ...draftEpic, labels: ['type:epic'] };
+    expect(needsGroom([epic, child, unrelated], labels, false, openIssues([epic, child, unrelated])).map((t) => t.issueNumber)).toEqual([100, 102]);
   });
 });
 

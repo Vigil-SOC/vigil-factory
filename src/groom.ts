@@ -143,6 +143,13 @@ export interface GroomLabels {
   epic?: string;
   /** Blocks the agents' own verification; goes ahead of the ordinary backlog. */
   blocker?: string;
+  /** Still being written: not groomed, not implemented, and its children wait. */
+  draft?: string;
+}
+
+/** A draft: a human is still writing it, so the factory leaves it alone. */
+export function isDraft(task: Task, labels: GroomLabels): boolean {
+  return labels.draft !== undefined && task.labels.includes(labels.draft);
 }
 
 /** An epic: a direction the groomer settles and decomposes, never a PR. */
@@ -499,7 +506,9 @@ export function failedAttemptComment(report: string): string {
  * before the backlog's. Going first is not enough
  * when the batch runs in parallel, so a child whose epic is itself waiting for a
  * groom is left out altogether until the epic has one: its verdict would be
- * about a record that is about to change.
+ * about a record that is about to change. A child whose epic is a draft waits
+ * the same way: the direction it would be judged against is still being
+ * written.
  *
  * `force` re-grooms issues whose verdict is still current. The fingerprint covers
  * the issue, not the principles, so editing principles.md or the groom prompt
@@ -512,7 +521,9 @@ export function needsGroom(tasks: Task[], labels: GroomLabels, force = false, op
   const pendingEpics = new Set(pending.filter((t) => isEpic(t, labels)).map((t) => t.issueNumber));
   return pending.filter((t) => {
     const parent = parentEpic(t);
-    return parent === null || !pendingEpics.has(parent);
+    if (parent === null) return true;
+    const epic = open?.get(parent);
+    return !pendingEpics.has(parent) && !(epic && isDraft(epic, labels));
   });
 }
 

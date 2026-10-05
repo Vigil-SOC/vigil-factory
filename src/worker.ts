@@ -136,8 +136,9 @@ export class CursorWorker implements CodingWorker {
     if (opts.name) body['name'] = opts.name;
     const envNames = opts.withholdCredentials ? [] : Object.keys(this.opts.envVars ?? {});
     if (envNames.length > 0) body['envVars'] = this.opts.envVars;
-    if (this.opts.model) {
-      const { id, params } = this.opts.model;
+    const model = opts.model ?? this.opts.model;
+    if (model) {
+      const { id, params } = model;
       body['model'] = {
         id,
         ...(params ? { params: Object.entries(params).map(([pid, value]) => ({ id: pid, value })) } : {}),

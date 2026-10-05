@@ -110,6 +110,10 @@ export interface StartOptions {
   /** Start from this branch instead of the tick's pinned commit: the environment
    *  boot check runs on the branch of the PR it is checking. */
   startingRef?: string;
+  /** Run this model instead of the worker's: an epic's groom runs the model
+   *  `groom.epicModel` names, since settling a direction is the one judgment
+   *  every child inherits. */
+  model?: ModelSpec;
 }
 
 /**

@@ -43,6 +43,19 @@ describe('CursorWorker API retries', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  it('runs the model a start asks for, else the worker\'s own', async () => {
+    const fetch = vi.fn().mockImplementation(() => json({ agent: { id: 'bc-1' }, run: { id: 'run-1' } }));
+    vi.stubGlobal('fetch', fetch);
+    const w = new CursorWorker({
+      apiKey: 'k', repoUrl: 'https://github.com/o/r', startingRef: null, model: { id: 'claude-sonnet-5-5', params: { reasoning_effort: 'high' } }, pollIntervalSeconds: 1, maxRunMinutes: 5,
+    });
+    await w.start('groom an epic', { model: { id: 'claude-fable-5-1', params: { effort: 'high' } } });
+    await w.start('groom an issue');
+    const sent = (i: number) => JSON.parse(fetch.mock.calls[i]![1].body as string).model;
+    expect(sent(0)).toEqual({ id: 'claude-fable-5-1', params: [{ id: 'effort', value: 'high' }] });
+    expect(sent(1)).toEqual({ id: 'claude-sonnet-5-5', params: [{ id: 'reasoning_effort', value: 'high' }] });
+  });
+
   it('repeats a launch that was rate-limited, since nothing was created', async () => {
     const fetch = vi.fn()
       .mockImplementationOnce(() => json({ error: 'rate limited' }, 429))

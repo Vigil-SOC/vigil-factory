@@ -71,6 +71,8 @@ interface Run {
 interface Session {
   workspace: string;
   branch: string | null;
+  /** The model this session runs, follow-ups included. */
+  model: ModelSpec | null;
   usage: TokenUsage[];
 }
 
@@ -305,7 +307,7 @@ export class ClaudeCodeWorker implements CodingWorker {
       branch = branchNameFor(opts.name, sessionId);
       await this.git(['checkout', '--quiet', '-b', branch], workspace);
     }
-    const session: Session = { workspace, branch, usage: [] };
+    const session: Session = { workspace, branch, model: opts.model ?? this.opts.model, usage: [] };
     this.sessions.set(sessionId, session);
     return session;
   }
@@ -323,7 +325,7 @@ export class ClaudeCodeWorker implements CodingWorker {
       '--strict-mcp-config', ...(existsSync(repoMcp) ? ['--mcp-config', repoMcp] : []),
       resume ? '--resume' : '--session-id', sessionId,
       '--append-system-prompt', machineNote({ repoUrl: this.opts.repoUrl, ref: this.opts.startingRef, branch: session.branch }),
-      ...modelArgs(this.opts.model),
+      ...modelArgs(session.model),
     ];
     const child = spawn(this.opts.bin, args, {
       cwd: session.workspace,

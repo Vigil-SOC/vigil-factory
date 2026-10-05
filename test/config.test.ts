@@ -2,15 +2,15 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { agentCredentials, loadConfig } from '../src/config.ts';
+import { agentCredentials, epicGroomModel, loadConfig } from '../src/config.ts';
 
-function configDir(worker: Record<string, unknown>): string {
+function configDir(worker: Record<string, unknown>, groom: Record<string, unknown> = {}): string {
   const dir = mkdtempSync(resolve(tmpdir(), 'factory-config-'));
   writeFileSync(resolve(dir, 'factory.config.json'), JSON.stringify({
     repo: { owner: 'o', name: 'r', url: 'https://github.com/o/r' },
     worker: { kind: 'cursor', model: null, pollIntervalSeconds: 30, maxRunMinutes: 90, ...worker },
     labels: { factoryPr: 'factory', issueInProgress: 'factory:wip', groomed: 'factory:groomed', needsWork: 'factory:needs-work' },
-    groom: { maxPerTick: 5, principlesFile: 'principles.example.md' },
+    groom: { maxPerTick: 5, principlesFile: 'principles.example.md', ...groom },
     selector: { enabled: false, maxCandidates: 100 },
   }));
   return dir;
@@ -73,5 +73,27 @@ describe('model override', () => {
     withModel('grok', () => {
       expect(() => loadConfig(configDir({}))).toThrow(/has: none/);
     });
+  });
+});
+
+describe('epic groom model', () => {
+  const models = { fable: { id: 'claude-fable-5-1', params: { effort: 'high' } }, sonnet: { id: 'claude-sonnet-5-5' } };
+
+  it('is unset by default: epics are groomed by the worker model like everything else', () => {
+    expect(epicGroomModel(loadConfig(configDir({ model: models.sonnet, models })))).toBeUndefined();
+  });
+
+  it('names a model from worker.models for epics only', () => {
+    const config = loadConfig(configDir({ model: models.sonnet, models }, { epicModel: 'fable' }));
+    expect(config.worker.model).toEqual(models.sonnet);
+    expect(epicGroomModel(config)).toEqual(models.fable);
+  });
+
+  it('refuses a name worker.models does not have', () => {
+    expect(() => loadConfig(configDir({ model: models.sonnet, models }, { epicModel: 'opus' }))).toThrow(/groom.epicModel=opus names no model/);
+  });
+
+  it('defaults the draft label', () => {
+    expect(loadConfig(configDir({})).labels.draft).toBe('factory:draft');
   });
 });

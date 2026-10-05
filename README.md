@@ -202,6 +202,14 @@ new its number. The label is an ordering claim and nothing more: the groomer sti
 the issue, can still say `needs-work`, and the implementer's attempt still tests the
 verdict. It does not skip the gate; it goes to the front of the line for it.
 
+**A draft is nobody's to judge yet.** An issue labelled `factory:draft` (`labels.draft`)
+is one a human is still writing, and the factory leaves it alone: not groomed, not
+implemented, and the children of a draft epic wait with it. That is how a team drafts an
+epic in the open — over days, with edits and replies — without the next tick settling its
+direction and filing children under a half-written premise. Take the label off and it
+joins the queue like any other issue. The factory creates the label on the repo so it is
+there to apply; only a human ever puts it on or takes it off.
+
 `principles.md` holds the product-direction principles grooming judges against. Its
 first section, *What the product is*, is the short list of settled commitments an epic's
 direction is checked against before anything else; the rest is about the shape of a
@@ -287,6 +295,14 @@ or licensing exposure, or anything that widens what the system may do on its own
 `needs-work` with the one decision named. Everything else is a default a human can veto
 the way every verdict here is vetoed: reply on the epic, and it is groomed again with the
 reply in view. Nothing waits for an approval nobody asked for.
+
+**An epic's groom may run a stronger model than the work it starts.** Settling a direction
+is the one judgment every child inherits, and the failure it guards against is a specific
+one: a groomer that executes well inside the frame an epic hands it and never asks whether
+the frame is the right size. `groom.epicModel` names an entry of `worker.models` to groom
+epics with; everything else — children, ordinary issues, the implementers — stays on
+`worker.model`. Epic grooms are rare, so the cost is small and lands where the leverage is.
+Unset, epics are groomed by the worker model like everything else.
 
 **A groomed epic's children are the work.** The groomer writes the slice — every issue that
 can start against the code as it stands or against a sibling in the same slice, uncapped — each
@@ -742,6 +758,8 @@ the same. That is the move when the Cursor account is out of usage: nothing else
 **Switching models.** `worker.models` holds alternatives to `worker.model` by name, and
 `FACTORY_MODEL=<name>` runs one of them for one tick; the manual dispatch's `model` input
 does the same. Its options are listed in the workflow, so a new name goes in both places.
+`groom.epicModel` names one of them for epic grooms alone, every tick, whatever the rest
+of the tick runs on.
 
 ## Commands
 
@@ -797,6 +815,12 @@ committed.
   blocks the agents' own verification. Groomed and implemented ahead of the rest of the
   backlog; the environment pass applies it to the repo defects it files, and a human may
   apply or remove it. Ordering only: the groomer still judges the issue.
+- `factory.config.json` → `labels.draft` — (default `factory:draft`) an issue a human is
+  still writing. Neither groomed nor implemented while it carries the label, and the
+  children of a draft epic wait with it. A human applies and removes it.
+- `factory.config.json` → `groom.epicModel` — a name from `worker.models` to groom epics
+  with (unset = `worker.model`). The one place a stronger model buys the most: the direction
+  every child is built against. See "Epics" above.
 - `factory.config.json` → `security` — `enabled` (default true) and `minSeverity` (default
   `high`; `low`, `medium` — or `moderate` — `high`, `critical`): the phase that fixes the
   repo's open Dependabot and code scanning alerts, a group per PR. It merges nothing itself,
