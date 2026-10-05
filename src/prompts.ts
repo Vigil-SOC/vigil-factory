@@ -54,6 +54,14 @@ const ISSUE_IMAGES = `An image in the issue or its comments is part of the spec,
  */
 const IMAGE_COST = `An image is one design, not a menu: for each part of it, find in the code the data and the API it needs, and say in your notes which exist today and which do not. When it shows a screen, it decides how that screen looks: do not also tell the implementer to keep the app's existing look where the image departs from it.`;
 
+/**
+ * Where two written sources disagree on something a user sees, the groomer
+ * used to pick one in its notes (Vigil #1544: "the board decides the look" and
+ * "use existing tokens"), and the implementer then took the reading that cost
+ * less. That is a product decision, not a gap to fill.
+ */
+const SOURCES_CONFLICT = `When two sources this change must follow disagree on something a user would see (the issue and its image, an image and the repo's design docs or tokens, a written rule and the code it governs), do not choose between them, and do not write notes that ask for both. The verdict is needs-work: quote each source and ask which one wins.`;
+
 /** The issue groom's half of IMAGE_COST: whole, or a direction. */
 function imageWhole(epicLabel?: string): string {
   return `It is built whole or not in this issue: when what is missing is more than one PR — data nothing records, an API that does not exist, a decision nobody has made — the issue is a direction, not a PR, and its verdict is ${epicLabel === undefined ? 'needs-work' : 'epic'}. Do not narrow it to the parts that exist today.`;
@@ -74,7 +82,7 @@ export function groomPrompt(task: Task, principles: string, budget: RunBudget, e
   return `Groom GitHub issue #${task.issueNumber} for an autonomous coding agent.
 ${task.url}
 
-Read the issue there, comments included, then look at the code it concerns — you are reviewing, not implementing, so change nothing. ${ISSUE_IMAGES} ${IMAGE_COST} ${imageWhole(epicLabel)} Judge it against the product-direction principles below: they are the standard this codebase is held to, and they outrank how the issue's author framed it.
+Read the issue there, comments included, then look at the code it concerns — you are reviewing, not implementing, so change nothing. ${ISSUE_IMAGES} ${IMAGE_COST} ${imageWhole(epicLabel)} ${SOURCES_CONFLICT} Judge it against the product-direction principles below: they are the standard this codebase is held to, and they outrank how the issue's author framed it.
 
 ${epicLabel === undefined ? 'Three' : 'Four'} verdicts:
 - groomed — there is a correct change here that one PR can land. It may be narrower than what the issue asks for; if it is, your notes say what to leave out. The implementer decides how to build it — an issue that leaves implementation open is not thereby unready.
@@ -177,6 +185,7 @@ const VERIFY = `- Verify with the project's own checks: the tests that cover wha
 const WORKING_RULES = `- Keep code concise, with brief inline comments only where useful.
 ${VERIFY}
 - When a change is large or subtle enough that fresh eyes would catch something, have a subagent review your diff before you open the PR. A real defect it finds in what you changed gets fixed now — a follow-up ships a bug you know about; anything else is dismissed with a sentence saying why. Do not restyle working code to a reviewer's taste.
+- Before Verification, give the PR description a **Choices** section: each choice a user would see that the issue, its images and the repo's rules did not make for you (a behaviour such as what scrolls or sticks, a default, a label or wording, an empty, loading or error state) and what you chose. "None" if there were none. A reviewer reads it to catch a preference nobody wrote down.
 - End the PR description with a **Verification** section: **Ran** — each check and what it showed; **Did not run** — each you skipped, and why; **Blocked by the machine** — anything this environment lacked, anything you had to install or start by hand before a check would run, or a shipped config or script of this repo that would not start until you changed it — even if you then worked around it; "none" if nothing. The factory reads that last part to fix its own environment.`;
 
 /**

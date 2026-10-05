@@ -103,6 +103,13 @@ describe('verification is the agent\'s call and always reported', () => {
     expect(impl).toContain("that the app's existing tokens or shared components look different is not a reason");
     expect(impl).toContain('scoped to it so no other screen changes');
     expect(groomPrompt(task, 'principles', { maxRunMinutes: 90 })).toContain('it decides how that screen looks');
+    // Sources that disagree on what a user sees are a question for a person, not the groomer's pick.
+    const g = groomPrompt(task, 'principles', { maxRunMinutes: 90 }, 'type:epic');
+    expect(g).toContain('When two sources this change must follow disagree on something a user would see');
+    expect(g).toContain('quote each source and ask which one wins');
+    // Choices nobody specified are listed, so an unwritten preference is caught in review.
+    expect(impl).toContain('give the PR description a **Choices** section');
+    expect(impl).toContain('what scrolls or sticks');
     expect(impl).toContain('A redesign the image implies but the issue does not ask for is an issue of its own');
   });
 
