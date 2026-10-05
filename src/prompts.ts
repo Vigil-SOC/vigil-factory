@@ -37,6 +37,21 @@ ${list}`;
  * reach only this agent — what the implementer needs is whatever this agent
  * writes into the notes.
  */
+/**
+ * An image in an issue is spec, not decoration: a screenshot of what is broken,
+ * or a design to build. Without this an agent works from the text alone. On a
+ * private repo the image's own URL answers 404 to a token; the API's rendered
+ * body carries short-lived signed links instead.
+ */
+const ISSUE_IMAGES = `An image in the issue or its comments is part of the spec, as binding as its text. Download it and look at it: when a plain download fails, \`gh api\` on the issue or comment with \`-H 'Accept: application/vnd.github.full+json'\` returns its body with signed image links.`;
+
+/**
+ * How an implementer checks a screen against the design it was pointed at: by
+ * looking, at the same width and state, and saying what differs. One sentence,
+ * not a procedure — the agent is trusted to compare two images.
+ */
+const DESIGN_MATCH = `Where the issue or its groom notes point at a design — an image, or a board in the repo — open it at the same width and state as your screen and compare the two. Under **Ran**, list each visible difference you kept and why; "it lines up" is not a finding.`;
+
 export function groomPrompt(task: Task, principles: string, budget: RunBudget, epicLabel?: string): string {
   const epicVerdict = epicLabel === undefined ? '' : `
 - epic — this is not a PR and should not be judged as one. It sets a direction: a capability that takes several PRs to deliver anything, with decisions that bind all of them, or a change to what the product is. The factory labels it \`${epicLabel}\` and grooms it again as a direction, settling its decisions and writing its first children, so do not settle them here — say in a few sentences why it is a direction rather than one change. Size alone does not make an epic: an issue that is merely too large, or a list of unrelated tasks, is needs-work.`;
@@ -44,7 +59,7 @@ export function groomPrompt(task: Task, principles: string, budget: RunBudget, e
   return `Groom GitHub issue #${task.issueNumber} for an autonomous coding agent.
 ${task.url}
 
-Read the issue there, comments included, then look at the code it concerns — you are reviewing, not implementing, so change nothing. Judge it against the product-direction principles below: they are the standard this codebase is held to, and they outrank how the issue's author framed it.
+Read the issue there, comments included, then look at the code it concerns — you are reviewing, not implementing, so change nothing. ${ISSUE_IMAGES} Judge it against the product-direction principles below: they are the standard this codebase is held to, and they outrank how the issue's author framed it.
 
 ${epicLabel === undefined ? 'Three' : 'Four'} verdicts:
 - groomed — there is a correct change here that one PR can land. It may be narrower than what the issue asks for; if it is, your notes say what to leave out. The implementer decides how to build it — an issue that leaves implementation open is not thereby unready.
@@ -94,7 +109,7 @@ export function groomEpicPrompt(task: Task, principles: string, budget: RunBudge
   return `Groom GitHub issue #${task.issueNumber} — an epic — for the software factory.
 ${task.url}
 
-An epic is a direction, not a PR. Read it there, comments included, and everything it links: a design document, earlier issues, whatever the author pointed at. Then read the code it concerns. You are reviewing, not implementing, so change nothing. Judge the direction against the product-direction principles below; they outrank how the author framed it, and the direction you settle on may be narrower than what the epic proposes. A question the code, the running app, or a request you can make with the credentials in your environment would answer is yours to answer: answer it, then judge. Hand back only what is left after that.
+An epic is a direction, not a PR. Read it there, comments included, and everything it links: a design document, earlier issues, whatever the author pointed at. ${ISSUE_IMAGES} Then read the code it concerns. You are reviewing, not implementing, so change nothing. Judge the direction against the product-direction principles below; they outrank how the author framed it, and the direction you settle on may be narrower than what the epic proposes. A question the code, the running app, or a request you can make with the credentials in your environment would answer is yours to answer: answer it, then judge. Hand back only what is left after that.
 
 Three verdicts:
 - groomed — the direction is worth building toward and its shape-changing decisions can be settled here. Settle them. For each decision the epic leaves open, or gets wrong, state the default you chose, why, and what it would cost to reverse. Prefer the smallest choice that proves the seam: the lighter engine over the heavier one, the plain string over the modelled entity, the mechanism the repo already has over a new one. These decisions become the record the children are built against, so write them in the open, addressed to the author and to whoever grooms the children.
@@ -102,6 +117,8 @@ Three verdicts:
 - done — the direction is delivered: what the epic set out to make true is true in the code, and nothing is left worth writing. Say what landed against each decision, so this comment is the record of what the direction became. The factory closes the epic, and any child still open under it as needs-work closes with it as not planned; a child still being built means the epic is not done.
 
 On a re-review — the epic already carries a 🏭 Factory groom comment — that comment is the record its children were written and groomed against, and what brought you back is a human reply, a revised design it links, a child that landed, a child groomed needs-work, or something the record waited on that closed. A needs-work child's groom may have found the record wrong against the code, or the child not worth building: weigh what it found — correct the record and write what the child now needs, or let the child go: add a line \`CLOSE: #<issue number>\` after the verdict for each, and the factory closes it as not planned. A child you leave needs-work does not bring you back again. Direction changed here costs the children real work, so the record ratchets: keep every settled decision unless the reply names it, the code has moved from under it, or it now pulls against the principles. A decision a merged or in-flight child already relies on is reversed only when the reply asks for that in so many words, and then your comment says what the reversal costs in code that exists. Say plainly which decisions changed and which stand, so the children are re-judged against the difference rather than re-argued from scratch.
+
+When the epic changes what a screen renders — a page, a flow, anything a design board or mockup shows — the design is the target its children are measured against, and the record says where this epic stops short of it. Each child is built and judged against its own text, so the screens drift from the design a little with every one that lands; this review is where that drift is caught. On a re-review, before you write the next slice or call the epic done, open the design and the running app at the same state and width (\`agent-browser\` is on this machine; a board in the repo opens from \`file://\`) and compare them, screen by screen: layout, spacing, type, colour, labels, data shown. A difference inside the direction the record settled is the next slice's work, as children; one outside it is named in your comment and left. Done means the screens match the design as far as the record meant them to, not that every child closed.
 
 A groomed epic is a premise its children inherit, so you also write the children: the first slice of issues the factory can build now. Each is one PR by the same standard as any issue here — a single fresh cloud agent with about ${budget.maxRunMinutes} minutes to read the issue, build the change, verify it, and open the PR. Make each child as large as that standard allows. Most of a run goes to reading the code and verifying the change rather than writing it, and each child pays for that again, so children that would read the same code and be verified the same way — the parts of one screen, one module, one flow — are one child, up to what one run can build and verify. Split where the ground differs or the whole will not fit one run; a piece that builds on a sibling on the same ground is part of that sibling, not a child after it. Do not join unrelated work to make a child bigger. Put each child in its own fenced \`\`\`child block: the first line is the title, the rest is the body, in the repository's own issue style, citing the files it concerns and saying what to reuse and what not to build. Children are not filed yet, so state a dependency on a sibling by describing it, not by number. The slice is everything that can start against the code as it stands or against a sibling in the same slice, however many children that is: write all of it now, since work you hold back costs another review of this epic to write. Hold back only what cannot be written yet because you do not know its shape until something else lands. When held-back work waits on something outside this slice — an issue in another epic, a pull request — add one line after the verdict for each such thing:
 WAITING: #<issue or PR number>
@@ -124,10 +141,12 @@ ${principles}`;
 /**
  * The live half of "verified": the changed behavior exercised through its real
  * entry point, where there is behavior worth seeing. The agent's call — a live
- * test on a change the tests already pin down is time spent, not risk removed.
+ * test on a change the tests already pin down is time spent, not risk removed —
+ * except for what a screen renders: unit tests never lay a page out, so a table
+ * pushed off the edge passes every one of them.
  * Shared by every agent that vouches for a change.
  */
-const LIVE = `Test the change live when it has behavior worth seeing work: start the app and exercise it through its real entry point — \`agent-browser\` is on this machine for anything with a UI (\`agent-browser skills get core\` explains it); an API or CLI change gets a real request or invocation. A small change the tests already pin down, docs, or a refactor needs none.`;
+const LIVE = `Test the change live when it has behavior worth seeing work: start the app and exercise it through its real entry point — \`agent-browser\` is on this machine for anything with a UI (\`agent-browser skills get core\` explains it); an API or CLI change gets a real request or invocation. A small change the tests already pin down, docs, or a refactor needs none. A change to what a screen renders — markup, styles, or the text and data it lays out — always needs one, because unit tests never lay a page out: open every screen it touches with real data at the narrowest width the app supports and at 1920 pixels, screenshot each, and look. Fix what is cut off, overlapping, or reachable only by scrolling sideways (an element whose scrollWidth exceeds its clientWidth), and what breaks the conventions of the screens around it or the repo's design docs. Name each screen and width you checked under **Ran**.`;
 
 /**
  * What "verified" means for an agent that opens a PR: the tests that cover the
@@ -174,7 +193,9 @@ ${WORKING_RULES}${credentialsSection(credentials)}
 ## Issue #${task.issueNumber}: ${task.title}
 ${task.url}
 
-Read the issue at that URL, comments included — do not work from the title alone. The factory's most recent groom comment there (🏭 Factory groom) may end with a "Factory grooming notes" section: that is scoping direction, not a suggestion. Build what it scopes and leave out what it leaves out.`;
+Read the issue at that URL, comments included — do not work from the title alone. The factory's most recent groom comment there (🏭 Factory groom) may end with a "Factory grooming notes" section: that is scoping direction, not a suggestion. Build what it scopes and leave out what it leaves out.
+
+${ISSUE_IMAGES} ${DESIGN_MATCH}`;
 }
 
 /**

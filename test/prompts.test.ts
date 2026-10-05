@@ -78,6 +78,33 @@ describe('verification is the agent\'s call and always reported', () => {
     expect(p).toContain('live test');
     expect(p).toContain('never tell the implementer to skip one');
   });
+
+  // Unit tests never lay a page out: a screen change is the one case where the
+  // live look is not the agent's call.
+  it('a change to what a screen renders is always looked at, at two widths', () => {
+    const p = implementPrompt(task);
+    expect(p).toContain('A change to what a screen renders');
+    expect(p).toContain('narrowest width the app supports and at 1920 pixels');
+    expect(p).toContain('scrollWidth exceeds its clientWidth');
+    expect(p).toContain('Name each screen and width you checked under **Ran**');
+  });
+
+  it('an image in the issue is spec for the groomer and the implementer, fetched even on a private repo', () => {
+    for (const p of [implementPrompt(task), groomPrompt(task, 'principles', { maxRunMinutes: 90 }), groomEpicPrompt(task, 'principles', { maxRunMinutes: 90 })]) {
+      expect(p).toContain('as binding as its text');
+      expect(p).toContain('application/vnd.github.full+json');
+    }
+  });
+
+  // The implementer compares its screen with the design itself: one sentence,
+  // no independent judge, no region-by-region procedure.
+  it('implementer compares its screen with the design it was pointed at and lists what differs', () => {
+    const p = implementPrompt(task);
+    expect(p).toContain('same width and state as your screen');
+    expect(p).toContain('"it lines up" is not a finding');
+    expect(p).not.toMatch(/subagent that has not seen/);
+    expect(p).not.toMatch(/region by region/);
+  });
 });
 
 // An epic is groomed as direction: the agent settles the open decisions itself,
@@ -116,6 +143,15 @@ describe('epics', () => {
     expect(p).toContain('re-review');
     expect(p).toContain('ratchets');
     expect(p).toMatch(/which decisions changed and which stand/);
+  });
+
+  // Drift from the design accumulates between children, not inside one, so the
+  // epic's re-review is where the design is compared with the running app.
+  it('compares the design with the running app on a re-review before the next slice or done', () => {
+    expect(p).toContain('When the epic changes what a screen renders');
+    expect(p).toContain('before you write the next slice or call the epic done');
+    expect(p).toContain('open the design and the running app at the same state and width');
+    expect(p).toMatch(/Done means the screens match the design as far as the record meant them to/);
   });
 
   it('the ordinary groom prompt knows about epics and blockers', () => {

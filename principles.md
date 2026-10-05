@@ -166,6 +166,22 @@ deciding something that binds work beyond this PR — a schema others must join
 to, a contract another component is already written against — and the issue
 gives no basis for that decision.
 
+A change to what a console screen renders is held to how the console is meant
+to look, not only to what it does. The design is in the repo, exported from
+Claude Design: each screen's board is `docs/design/console/boards/<Board>.dc.html`
+(the folder's README maps screens to boards; the PNGs beside them show one state
+at 1440px), and the exact values are in `docs/design/console/tokens/tokens.json`.
+Grooming notes for such a change cite the board and the tab or state to match,
+the tokens, and `DESIGN.md` §7 *Screen rules*; the implementer opens the board
+in `agent-browser` (`file://` works, with `support.js` beside it) at the same
+tab or state and width as its screen, and compares the two. Colours, type and
+spacing come from the board's styles and the tokens; where
+`clients/web/src/styles.css` differs, the tokens win for the screen being
+changed, and the departure is named in the PR. The board decides appearance and
+the PRD decides scope: a fix matches the board where it touches the screen, and
+a redesign toward the board is an issue of its own. An issue need not attach a
+screenshot of a board: naming the board and the tab is enough.
+
 Cite the code. A rejection that cannot point at a file is a guess. And do not
 invent a small task to rescue a bad issue: if the narrowed change is not worth
 doing on its own, it is busywork, and busywork is the failure mode at the top of
