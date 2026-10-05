@@ -56,6 +56,8 @@ interface FactoryContext {
   telemetry: Telemetry;
   state: FactoryState;
   source: GitHubIssueSource;
+  /** `run --issue N`: the one issue this tick may touch. Unset, the whole backlog. */
+  onlyIssue?: number;
 }
 
 export function buildContext(): FactoryContext {
@@ -111,7 +113,8 @@ export async function buildWorker(config: FactoryConfig): Promise<CodingWorker> 
  * blocked verdict is checked against — an issue in progress is still open.
  */
 export async function candidateTasks(ctx: FactoryContext): Promise<Task[]> {
-  return ctx.source.eligibleTasks();
+  const tasks = await ctx.source.eligibleTasks();
+  return ctx.onlyIssue === undefined ? tasks : tasks.filter((t) => t.issueNumber === ctx.onlyIssue);
 }
 
 /**
@@ -1220,13 +1223,21 @@ export async function runSecurityPhase(ctx: FactoryContext, worker: CodingWorker
   return record({ outcome: 'pr-opened', prUrl, fixed, dismissed, ...ci });
 }
 
-export async function tick(opts: { dryRun: boolean }): Promise<void> {
+export async function tick(opts: { dryRun: boolean; onlyIssue?: number }): Promise<void> {
   const ctx = buildContext();
   const { config } = ctx;
-
-  // 1. Record human verdicts on previously opened PRs, release their issues.
-  const recorded = await ctx.state.reconcileOutcomes(log);
-  if (recorded > 0) log(`reconciled ${recorded} human outcome(s)`);
+  // `--issue N` is a tick that sees one issue and nothing else: it grooms and
+  // implements N as any tick would, and leaves every other issue and PR, and
+  // every phase that works on them, alone.
+  const scoped = opts.onlyIssue !== undefined;
+  if (opts.onlyIssue !== undefined) {
+    ctx.onlyIssue = opts.onlyIssue;
+    log(`scoped to #${opts.onlyIssue}: no other issue or PR is touched, and only grooming and implementation run`);
+  } else {
+    // 1. Record human verdicts on previously opened PRs, release their issues.
+    const recorded = await ctx.state.reconcileOutcomes(log);
+    if (recorded > 0) log(`reconciled ${recorded} human outcome(s)`);
+  }
 
   const candidates = await candidateTasks(ctx);
 
@@ -1236,7 +1247,7 @@ export async function tick(opts: { dryRun: boolean }): Promise<void> {
   }
 
   const worker = await buildWorker(config);
-  await handBackStuckPrs(ctx, worker);
+  if (!scoped) await handBackStuckPrs(ctx, worker);
 
   // 2. Grooming: vet part of the backlog. Deliberately ahead of the
   //    capacity gate — it produces no code, so it cannot collide.
@@ -1254,6 +1265,10 @@ export async function tick(opts: { dryRun: boolean }): Promise<void> {
   //    no slot and touch no issue, and their PRs are not the factory's. So
   //    does the dependency batch, for the same reasons, and the security
   //    fix, whose PR is its own queue as theirs are.
+  if (scoped) {
+    await runImplementation(ctx, worker, candidates);
+    return;
+  }
   const [, openedThisTick] = await Promise.all([
     runSimplifyPhase(ctx, worker).catch((err: Error) => {
       log(`simplify phase error: ${err.message}`);
@@ -1452,6 +1467,10 @@ async function dryRun(ctx: FactoryContext, allCandidates: Task[]): Promise<void>
     console.log(`\n${selectPrompt(selectorCandidates(groomed, labels))}\n`);
   } else if (groomed.length > 0) {
     log(`selector off: would implement blockers first, then oldest — ${oldestFirst(groomed, labels).slice(0, ctx.config.maxConcurrentJobs).map((t) => `#${t.issueNumber}`).join(' ')}`);
+  }
+  if (ctx.onlyIssue !== undefined) {
+    log(`scoped to #${ctx.onlyIssue}: environment, review, deps, security and simplify would not run`);
+    return;
   }
 
   const { config } = ctx;
