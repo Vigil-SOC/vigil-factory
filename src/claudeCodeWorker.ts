@@ -111,7 +111,8 @@ export function modelArgs(model: ModelSpec | null): string[] {
   if (!model) return [];
   const wantsLongContext = model.params?.['context'] === '1m' && !model.id.endsWith('[1m]');
   const args = ['--model', wantsLongContext ? `${model.id}[1m]` : model.id];
-  const effort = model.params?.['effort'];
+  // `reasoning_effort` is Cursor's name for the same knob.
+  const effort = model.params?.['effort'] ?? model.params?.['reasoning_effort'];
   if (effort) args.push('--effort', effort);
   return args;
 }
@@ -205,7 +206,10 @@ export function branchNameFor(name: string | undefined, sessionId: string): stri
  * never to the factory's prompts, which stay worker-agnostic.
  */
 export function machineNote(opts: { repoUrl: string; ref: string | null; branch: string | null }): string {
-  const where = `You are working in a local clone of ${opts.repoUrl}${opts.ref ? ` checked out at ${opts.ref}` : ''}.`;
+  // The machine is the tick's, not the agent's: other people's servers and
+  // sessions run on it, and a server already up may be serving another checkout.
+  const shared = 'This machine is shared. Stop only processes you started, by their PID; never kill by name or pattern (no `pkill -f`, no `killall`). A server already listening here may be serving a different checkout, not yours: to see your change, start your own on a free port.';
+  const where = `You are working in a local clone of ${opts.repoUrl}${opts.ref ? ` checked out at ${opts.ref}` : ''}. ${shared}`;
   if (!opts.branch) {
     return `${where} Read and run what you need, but this session makes no changes to the repository and pushes nothing. Put your report in your final message; it is read by a program, so end with the lines it asks for.`;
   }
