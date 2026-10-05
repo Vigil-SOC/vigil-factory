@@ -94,8 +94,12 @@ describe('verification is the agent\'s call and always reported', () => {
     expect(groomPrompt(task, 'principles', { maxRunMinutes: 90 })).toContain('its verdict is needs-work');
     expect(groomEpicPrompt(epic, 'principles', { maxRunMinutes: 90 })).toContain('Its children, together, build all of it');
     const impl = implementPrompt(task);
-    expect(impl).toContain('Compare your screenshots against it before you open the PR');
-    expect(impl).toContain('a redesign the image implies but the issue does not ask for is an issue of its own');
+    // The match is judged by a subagent that never saw the code, difference by difference.
+    expect(impl).toContain('have a subagent that has not seen your code compare the image with your screenshots');
+    expect(impl).toContain('region by region');
+    expect(impl).toContain('list every visible difference');
+    expect(impl).toContain('"it lines up" is not a finding');
+    expect(impl).toContain('A redesign the image implies but the issue does not ask for is an issue of its own');
   });
 
   it('implementer triages review findings, when it asks for a review: fix or dismiss with a reason, never a follow-up', () => {

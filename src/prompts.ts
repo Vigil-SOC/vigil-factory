@@ -59,6 +59,14 @@ function imageWhole(epicLabel?: string): string {
   return `It is built whole or not in this issue: when what is missing is more than one PR — data nothing records, an API that does not exist, a decision nobody has made — the issue is a direction, not a PR, and its verdict is ${epicLabel === undefined ? 'needs-work' : 'epic'}. Do not narrow it to the parts that exist today.`;
 }
 
+/**
+ * How the implementer checks its screen against an image: not by its own eye.
+ * Left to itself it judged the structure and called the rest "lining up" while
+ * avatars, header case, labels and spacing all differed. A reviewer that never
+ * saw the code lists the differences, and each one is answered.
+ */
+const IMAGE_MATCH = `Before you open the PR, have a subagent that has not seen your code compare the image with your screenshots at the same width, region by region (crop them: a full screenshot reaches a model scaled down and loses detail), and list every visible difference: layout, spacing and column widths, type size and case, colour, shape, icons, labels and wording, data shown. Fix each one within the issue's scope, or keep it and say why. Under **Ran**, list the differences and what happened to each; "it lines up" is not a finding. A redesign the image implies but the issue does not ask for is an issue of its own.`;
+
 export function groomPrompt(task: Task, principles: string, budget: RunBudget, epicLabel?: string): string {
   const epicVerdict = epicLabel === undefined ? '' : `
 - epic — this is not a PR and should not be judged as one. It sets a direction: a capability that takes several PRs to deliver anything, with decisions that bind all of them, or a change to what the product is. The factory labels it \`${epicLabel}\` and grooms it again as a direction, settling its decisions and writing its first children, so do not settle them here — say in a few sentences why it is a direction rather than one change. Size alone does not make an epic: an issue that is merely too large, or a list of unrelated tasks, is needs-work.`;
@@ -200,7 +208,7 @@ ${task.url}
 
 Read the issue at that URL, comments included — do not work from the title alone. The factory's most recent groom comment there (🏭 Factory groom) may end with a "Factory grooming notes" section: that is scoping direction, not a suggestion. Build what it scopes and leave out what it leaves out.
 
-${ISSUE_IMAGES} Compare your screenshots against it before you open the PR, and match it within the issue's scope: a redesign the image implies but the issue does not ask for is an issue of its own.`;
+${ISSUE_IMAGES} ${IMAGE_MATCH}`;
 }
 
 /**
