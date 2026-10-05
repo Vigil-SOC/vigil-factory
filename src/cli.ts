@@ -3,6 +3,7 @@
 // for humans operating the factory.
 
 import { admissible, buildContext, buildWorker, candidateTasks, depsInputs, environmentInputs, log, openSet, reviewInputs, runEnvironmentPhase, runDepsPhase, runGroomPhase, runReviewPhase, runSecurityPhase, runSelector, runSimplifyPhase, securityInputs, simplifySkip, tick } from './controller.ts';
+import { resolve } from 'node:path';
 import { repoSlug } from './config.ts';
 import { isEpic, isGroomed, needsGroom, verdict } from './groom.ts';
 import { defaultBranchHead } from './github.ts';
@@ -17,6 +18,8 @@ Usage:
                                        and no other issue, PR, or phase (review, deps, security, simplify, environment) is touched.
                                        --local (with --issue, claude-code worker): the implementer commits on a branch on this machine
                                        and pushes nothing; no PR. N may be assigned to you. The branch is in telemetry/workspaces/.
+                                       --base B [--base-repo PATH] (with --local): agents start from local branch B of the repo at PATH
+                                       instead of the default branch on GitHub, for work that builds on work not yet pushed.
   npm run factory -- groom [--limit N] [--force]
                                        Run just the grooming phase (vets issues against principles.md; no implementation).
                                        --force re-grooms issues that already have a current verdict — use after editing
@@ -273,7 +276,10 @@ async function main(): Promise<void> {
 
   switch (command) {
     case 'run':
-      await tick({ dryRun, ...(issueNumber !== undefined ? { onlyIssue: issueNumber } : {}), local: args.includes('--local') });
+      const flag = (name: string) => args.find((a) => a.startsWith(`${name}=`))?.split('=')[1] ?? (args.includes(name) ? args[args.indexOf(name) + 1] : undefined);
+      const baseBranch = flag('--base');
+      const base = baseBranch === undefined ? undefined : { repo: resolve(flag('--base-repo') ?? '.'), branch: baseBranch };
+      await tick({ dryRun, ...(issueNumber !== undefined ? { onlyIssue: issueNumber } : {}), local: args.includes('--local'), ...(base ? { base } : {}) });
       break;
     case 'groom':
       await groom({ ...(limit !== undefined ? { limit } : {}), force: args.includes('--force') });
