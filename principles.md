@@ -166,6 +166,14 @@ deciding something that binds work beyond this PR — a schema others must join
 to, a contract another component is already written against — and the issue
 gives no basis for that decision.
 
+A change to what a console screen renders is held to how the console is meant
+to look, not only to what it does. Its notes cite `docs/design/console/DESIGN.md`
+§7 *Screen rules* and the board for that screen in
+`docs/design/console/boards/png/` (the folder's README maps screens to boards),
+so the implementer checks its screenshots against both. The board decides
+appearance and the PRD decides scope: a fix matches the board where it touches
+the screen, and a redesign toward the board is an issue of its own.
+
 Cite the code. A rejection that cannot point at a file is a guess. And do not
 invent a small task to rescue a bad issue: if the narrowed change is not worth
 doing on its own, it is busywork, and busywork is the failure mode at the top of
