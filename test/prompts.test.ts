@@ -83,10 +83,16 @@ describe('verification is the agent\'s call and always reported', () => {
     }
     // Sizing what an image needs from the backend is the groom's call, not the implementer's.
     for (const g of [groomPrompt(task, 'principles', { maxRunMinutes: 90 }), groomEpicPrompt(epic, 'principles', { maxRunMinutes: 90 })]) {
-      expect(g).toContain('An image shows the result, not what it costs');
+      expect(g).toContain('An image is one design, not a menu');
       expect(g).toContain('the data and the API it needs');
     }
-    expect(groomPrompt(task, 'principles', { maxRunMinutes: 90 })).toContain('When that work is more than one PR, the issue is too large as written');
+    // Built whole or not: one that needs more than a PR is a direction, never a narrowed slice.
+    const withEpics = groomPrompt(task, 'principles', { maxRunMinutes: 90 }, 'type:epic');
+    expect(withEpics).toContain('It is built whole or not in this issue');
+    expect(withEpics).toContain('its verdict is epic');
+    expect(withEpics).toContain('Do not narrow it to the parts that exist today');
+    expect(groomPrompt(task, 'principles', { maxRunMinutes: 90 })).toContain('its verdict is needs-work');
+    expect(groomEpicPrompt(epic, 'principles', { maxRunMinutes: 90 })).toContain('Its children, together, build all of it');
     const impl = implementPrompt(task);
     expect(impl).toContain('Compare your screenshots against it before you open the PR');
     expect(impl).toContain('a redesign the image implies but the issue does not ask for is an issue of its own');
