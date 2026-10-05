@@ -58,6 +58,9 @@ interface FactoryContext {
   source: GitHubIssueSource;
   /** `run --issue N`: the one issue this tick may touch. Unset, the whole backlog. */
   onlyIssue?: number;
+  /** `run --issue N --local`: the implementer commits on this machine, pushes
+   *  nothing and opens no PR, and N may be assigned to the person running it. */
+  local?: boolean;
 }
 
 export function buildContext(): FactoryContext {
@@ -142,7 +145,8 @@ export async function openSet(ctx: FactoryContext, tasks: Task[]): Promise<OpenI
  */
 export function admissible(ctx: FactoryContext, tasks: Task[], phase: 'groom' | 'implement'): Task[] {
   const unclaimed = filterDrafts(filterClaimed(tasks, ctx.config.labels.issueInProgress), ctx.config.labels.draft);
-  const admitted = ctx.config.assignedIssues[phase] ? unclaimed : filterAssigned(unclaimed);
+  // A local run is someone building their own issue on their own machine.
+  const admitted = ctx.config.assignedIssues[phase] || (phase === 'implement' && ctx.local) ? unclaimed : filterAssigned(unclaimed);
   return phase === 'implement' ? filterEpics(admitted, ctx.config.labels.epic) : admitted;
 }
 
@@ -1223,9 +1227,14 @@ export async function runSecurityPhase(ctx: FactoryContext, worker: CodingWorker
   return record({ outcome: 'pr-opened', prUrl, fixed, dismissed, ...ci });
 }
 
-export async function tick(opts: { dryRun: boolean; onlyIssue?: number }): Promise<void> {
+export async function tick(opts: { dryRun: boolean; onlyIssue?: number; local?: boolean }): Promise<void> {
   const ctx = buildContext();
   const { config } = ctx;
+  if (opts.local) {
+    if (opts.onlyIssue === undefined) throw new Error('--local needs --issue N: it builds one issue on this machine');
+    if (config.worker.kind !== 'claude-code') throw new Error('--local needs the claude-code worker (FACTORY_WORKER=claude-code): a cloud agent cannot leave its work on this machine');
+    ctx.local = true;
+  }
   // `--issue N` is a tick that sees one issue and nothing else: it grooms and
   // implements N as any tick would, and leaves every other issue and PR, and
   // every phase that works on them, alone.
@@ -1533,6 +1542,7 @@ async function runPipeline(
 
   const handle = await worker.start(implementPrompt(task, agentCredentials(config).present), {
     autoCreatePR: true,
+    ...(ctx.local ? { keepLocal: true } : {}),
     name: `factory: #${task.issueNumber} ${task.title}`.slice(0, 100),
   });
   const current: CurrentRun = {
@@ -1549,6 +1559,7 @@ async function runPipeline(
   if (result.status !== 'FINISHED') {
     throw new Error(`run ended with status ${result.status}: ${result.resultText.slice(0, 300) || worker.opaqueRunNote(handle)}`);
   }
+  if (ctx.local) return keptLocal(ctx, worker, task, handle, result, startedAt);
 
   const prUrl = await openedPr(config, result);
   // Labelled before the CI wait, not after: an unlabelled PR is one the review
@@ -1722,6 +1733,42 @@ function pauseNote(config: FactoryConfig): string {
   return config.maxConcurrentJobs === 1
     ? 'the factory is paused until it is merged or closed'
     : `the factory runs up to ${config.maxConcurrentJobs} jobs at a time`;
+}
+
+/**
+ * The end of a `--local` run: the work is a branch on this machine, not a PR.
+ * There is no CI to wait for and nothing to judge the groom verdict by, so the
+ * verdict stands; the agent's report is what it would have put on the PR.
+ */
+async function keptLocal(
+  ctx: FactoryContext,
+  worker: CodingWorker,
+  task: Task,
+  handle: RunHandle,
+  result: RunResult,
+  startedAt: string,
+): Promise<null> {
+  const { config } = ctx;
+  await ctx.source.markFinished(task);
+  log(`#${task.issueNumber} kept local on branch ${result.branch ?? '(none)'} (agent ${handle.agentId}); nothing pushed. The agent's report:\n\n${result.resultText.trim() || '(no report)'}\n`);
+  ctx.telemetry.append({
+    type: 'run',
+    taskId: task.id,
+    issueNumber: task.issueNumber,
+    issueTitle: task.title,
+    worker: config.worker.kind,
+    model: config.worker.model,
+    agentId: handle.agentId,
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    outcome: 'kept-local',
+    prUrl: null,
+    usage: (await worker.usage(handle.agentId)) ?? null,
+    selectorUsage: null,
+    durationMs: Date.now() - Date.parse(startedAt),
+  });
+  ctx.state.clearRun(task.id);
+  return null;
 }
 
 async function failRun(ctx: FactoryContext, worker: CodingWorker, task: Task, err: Error): Promise<void> {

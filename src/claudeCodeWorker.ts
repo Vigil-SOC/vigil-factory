@@ -73,6 +73,7 @@ interface Session {
   branch: string | null;
   /** The model this session runs, follow-ups included. */
   model: ModelSpec | null;
+  keepLocal: boolean;
   usage: TokenUsage[];
 }
 
@@ -205,13 +206,16 @@ export function branchNameFor(name: string | undefined, sessionId: string): stri
  * environment Cursor's agents got for free. Appended to the system prompt,
  * never to the factory's prompts, which stay worker-agnostic.
  */
-export function machineNote(opts: { repoUrl: string; ref: string | null; branch: string | null }): string {
+export function machineNote(opts: { repoUrl: string; ref: string | null; branch: string | null; keepLocal?: boolean }): string {
   // The machine is the tick's, not the agent's: other people's servers and
   // sessions run on it, and a server already up may be serving another checkout.
   const shared = 'This machine is shared. Stop only processes you started, by their PID; never kill by name or pattern (no `pkill -f`, no `killall`). A server already listening here may be serving a different checkout, not yours: to see your change, start your own on a free port.';
   const where = `You are working in a local clone of ${opts.repoUrl}${opts.ref ? ` checked out at ${opts.ref}` : ''}. ${shared}`;
   if (!opts.branch) {
     return `${where} Read and run what you need, but this session makes no changes to the repository and pushes nothing. Put your report in your final message; it is read by a program, so end with the lines it asks for.`;
+  }
+  if (opts.keepLocal) {
+    return `${where} You are on branch \`${opts.branch}\`; stay on it and commit your work there. This run keeps the work on this machine: do not push and do not open a pull request; a person pushes it later. Your final message is the description of the pull request you would have opened, Verification section included.`;
   }
   return `${where} You are on branch \`${opts.branch}\`; stay on it. Commit your work there, push it to origin, and open the pull request with \`gh pr create\` — \`gh\` and \`git push\` are already authenticated. The PR must exist before you finish, and your final message must include its URL. Do not merge it.`;
 }
@@ -311,7 +315,10 @@ export class ClaudeCodeWorker implements CodingWorker {
       branch = branchNameFor(opts.name, sessionId);
       await this.git(['checkout', '--quiet', '-b', branch], workspace);
     }
-    const session: Session = { workspace, branch, model: opts.model ?? this.opts.model, usage: [] };
+    // Kept local is enforced, not only asked for: the clone cannot push.
+    const keepLocal = opts.keepLocal === true && branch !== null;
+    if (keepLocal) await this.git(['remote', 'set-url', '--push', 'origin', 'PUSH-DISABLED-run-local'], workspace);
+    const session: Session = { workspace, branch, model: opts.model ?? this.opts.model, keepLocal, usage: [] };
     this.sessions.set(sessionId, session);
     return session;
   }
@@ -328,7 +335,7 @@ export class ClaudeCodeWorker implements CodingWorker {
       '--dangerously-skip-permissions',
       '--strict-mcp-config', ...(existsSync(repoMcp) ? ['--mcp-config', repoMcp] : []),
       resume ? '--resume' : '--session-id', sessionId,
-      '--append-system-prompt', machineNote({ repoUrl: this.opts.repoUrl, ref: this.opts.startingRef, branch: session.branch }),
+      '--append-system-prompt', machineNote({ repoUrl: this.opts.repoUrl, ref: this.opts.startingRef, branch: session.branch, keepLocal: session.keepLocal }),
       ...modelArgs(session.model),
     ];
     const child = spawn(this.opts.bin, args, {
