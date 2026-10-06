@@ -5,7 +5,7 @@ import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { ReviewPr } from './review.ts';
 import type { DepsPr } from './deps.ts';
-import type { CodeScanningAlert, DependabotAlert } from './security.ts';
+import type { AdvisoryReport, CodeScanningAlert, DependabotAlert, Severity } from './security.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -324,6 +324,35 @@ export async function listCodeScanningAlerts(repo: string): Promise<CodeScanning
     tool: .tool.name, rule: .rule.id, ruleDescription: .rule.description,
     path: .most_recent_instance.location.path, line: .most_recent_instance.location.start_line,
     message: .most_recent_instance.message.text }`);
+}
+
+/**
+ * The repo's privately reported vulnerabilities still in triage — nobody has
+ * accepted or closed them — each with its whole description. Throws when the
+ * token cannot read them.
+ */
+export async function listAdvisoryReports(repo: string): Promise<AdvisoryReport[]> {
+  return ghApiList(`repos/${repo}/security-advisories?state=triage&per_page=100`, `.[] | {
+    kind: "advisory", ghsa: .ghsa_id, severity, url: .html_url, summary, description: (.description // ""),
+    cwes: [.cwes[]? | (.cwe_id + " " + .name)], reporter: .author.login, createdAt: .created_at,
+    cvss: .cvss.vector_string, affected: [.vulnerabilities[]? | .vulnerable_version_range // empty] }`);
+}
+
+/**
+ * Write the factory's assessment onto a reported advisory: the note goes at
+ * the end of its description, under a rule, where the reporter and the
+ * maintainers read it — the advisory has no comment API — and the severity
+ * and state change with it when asked. `draft` accepts a report, `closed`
+ * rejects it; both are a human's to undo from the advisory's page. The
+ * description is re-read first so a line someone added since the tick read
+ * it is kept.
+ */
+export async function annotateAdvisory(repo: string, ghsa: string, note: string, change: { severity?: Severity; state?: 'draft' | 'closed' } = {}): Promise<void> {
+  const current = await gh(['api', `repos/${repo}/security-advisories/${ghsa}`, '--jq', '.description // ""']);
+  const body: Record<string, string> = { description: `${current.trimEnd()}\n\n---\n\n${note.trim()}\n` };
+  if (change.severity) body.severity = change.severity;
+  if (change.state) body.state = change.state;
+  await ghStdin(['api', '-X', 'PATCH', `repos/${repo}/security-advisories/${ghsa}`, '--input', '-'], JSON.stringify(body));
 }
 
 /**

@@ -40,11 +40,11 @@ import { Telemetry } from './telemetry.ts';
 import { filterAssigned, filterClaimed, filterDrafts, filterEpics, parseSelection, type Selection } from './selector.ts';
 import { BOOT_CHECK_PROMPT, depsPrompt, environmentPrompt, fixChecksPrompt, resolveConflictsPrompt, groomEpicPrompt, groomPrompt, implementPrompt, reviewPrompt, securityPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
 import { factoryComment, isFactoryComment, groomState, isBlocker, isEpic, isGroomed, needsGroom, queueOrder, openChildren, openIssues, parseGroomReply, stampExtrasFor, unaccountedBlockers, verdict, type GroomLabels, type OpenIssues } from './groom.ts';
-import { type PrCheck, addPrLabels, approveHeldRuns, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, dismissCodeScanningAlert, listAllIssuesByLabel, listCodeScanningAlerts, listDependabotAlerts, listDependabotPrs, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, prMergeable, prDrift, reopenPr, userId, viewPr, viewPrForReview } from './github.ts';
+import { type PrCheck, addPrLabels, approveHeldRuns, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, annotateAdvisory, dismissCodeScanningAlert, listAdvisoryReports, listAllIssuesByLabel, listCodeScanningAlerts, listDependabotAlerts, listDependabotPrs, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, prMergeable, prDrift, reopenPr, userId, viewPr, viewPrForReview } from './github.ts';
 import { ENV_AGENT_MARK, environmentChangedAt, filedIssueBody, parseEnvReport, recentVerdicts, skipReason, unreadFactoryPrs, withOpenedThisTick, workerSkipReason, type UnreadPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
 import { carried, depsQueue, depsStamp, droppedReasons, skipReason as depsSkipReason, upgradeIssue, upgradeKey, upgradeKeyOf, type DepsPr } from './deps.ts';
-import { alertKey, keysIn, offeredLine, parseFixReply, securityQueue, securityStamp, skipReason as securitySkipReason, type OfferedAlert, type SecurityAlert } from './security.ts';
+import { alertKey, keysIn, offeredLine, parseFixReply, securityQueue, securityStamp, skipReason as securitySkipReason, type FixReply, type OfferedAlert, type SecurityAlert } from './security.ts';
 import { coAuthorTrailer, isBot, parseReviewReply, reviewComment, reviewQueue, reviewStamp, sameCommit, skipReason as reviewSkipReason, staleReason, staleReport, touchesGithub, type ReviewOutcome, type ReviewPr, type ReviewReply } from './review.ts';
 
 export function log(msg: string): void {
@@ -1099,9 +1099,9 @@ async function handDropsToIssues(
 
 /**
  * What the security phase would fix, read from GitHub in one place so the
- * tick, the dry run, and `factory status` agree. An alert source the tick
- * cannot read — off for this repo, or a token without security access — is
- * left out and named; with neither readable there is nothing to fix.
+ * tick, the dry run, and `factory status` agree. A source the tick cannot
+ * read — off for this repo, or a token without security access — is left out
+ * and named; with none readable there is nothing to fix.
  */
 export async function securityInputs(config: FactoryConfig): Promise<{ skip: string | null; offered: OfferedAlert[]; openPrs: string[] }> {
   const { enabled, minSeverity } = config.security;
@@ -1113,15 +1113,16 @@ export async function securityInputs(config: FactoryConfig): Promise<{ skip: str
     unreadable.push(`${what} (${err.message.split('\n')[0]!.slice(0, 200)})`);
     return [];
   });
-  const [dependabot, codeScanning, prs] = await Promise.all([
+  const [dependabot, codeScanning, advisories, prs] = await Promise.all([
     read('Dependabot alerts', listDependabotAlerts(repo)),
     read('code scanning alerts', listCodeScanningAlerts(repo)),
+    read('reported advisories', listAdvisoryReports(repo)),
     listPrsByLabel(repo, config.labels.securityPr, 'all', 500),
   ]);
-  if (unreadable.length === 2) return { skip: `cannot read the repo's alerts: ${unreadable.join('; ')}`, offered: [], openPrs: [] };
-  if (unreadable.length) log(`security: leaving out ${unreadable[0]}`);
+  if (unreadable.length === 3) return { skip: `cannot read the repo's alerts or advisories: ${unreadable.join('; ')}`, offered: [], openPrs: [] };
+  for (const what of unreadable) log(`security: leaving out ${what}`);
   const open = prs.filter((p) => p.state === 'OPEN');
-  const { offered, held } = securityQueue([...dependabot, ...codeScanning], prs, minSeverity);
+  const { offered, held } = securityQueue([...dependabot, ...codeScanning, ...advisories], prs, minSeverity);
   return {
     skip: securitySkipReason(true, config.worker.kind, open, { offered: offered.length, held }),
     offered,
@@ -1129,8 +1130,61 @@ export async function securityInputs(config: FactoryConfig): Promise<{ skip: str
   };
 }
 
+const isReport = (key: string) => key.startsWith('advisory#');
+
 function securityPromptFor(config: FactoryConfig, inputs: { offered: OfferedAlert[]; openPrs: string[] }): string {
-  return securityPrompt({ alerts: inputs.offered.map(offeredLine), openPrs: inputs.openPrs, budget: { maxRunMinutes: config.worker.maxRunMinutes } });
+  return securityPrompt({
+    alerts: inputs.offered.filter((o) => o.alert.kind !== 'advisory').map(offeredLine),
+    advisories: inputs.offered.filter((o) => o.alert.kind === 'advisory').map(offeredLine),
+    openPrs: inputs.openPrs,
+    budget: { maxRunMinutes: config.worker.maxRunMinutes },
+  });
+}
+
+/**
+ * What the agent said about each reported advisory, written onto it in one
+ * edit: closed as not a vulnerability, re-rated, accepted with its fix named —
+ * or two of those at once. The advisory is where the reporter reads it; see
+ * security.ts. An edit GitHub refuses is logged, and the report is offered
+ * again next pass, so nothing is lost but the pass.
+ */
+async function annotateReports(repo: string, offered: OfferedAlert[], reply: FixReply, fixed: string[], prUrl: string | null): Promise<{ closed: string[]; rerated: string[] }> {
+  const closed: string[] = [];
+  const rerated: string[] = [];
+  const today = new Date().toISOString().slice(0, 10);
+  for (const o of offered) {
+    const report = o.alert;
+    if (report.kind !== 'advisory') continue;
+    const key = alertKey(report);
+    const close = reply.dismiss.find((d) => d.key === key);
+    const rate = reply.rerate.find((r) => r.key === key);
+    const fix = !close && prUrl && fixed.includes(key) ? prUrl : null;
+    if (!close && !rate && !fix) continue;
+    const reported = report.severity ?? 'unrated';
+    const note = [
+      `🏭 **Factory assessment**, ${today}.`,
+      rate ? `**Severity ${rate.severity}** (reported ${reported}): ${rate.reason}` : null,
+      close ? `**Not a vulnerability:** ${close.reason} Closed by the software factory; a maintainer can reopen it.` : null,
+      fix ? `**Fix in ${fix}.** Accepted as a draft advisory by the software factory; publishing it once the fix merges is a maintainer's call.` : null,
+    ].filter(Boolean).join('\n\n');
+    const change: Parameters<typeof annotateAdvisory>[3] = {};
+    if (close) change.state = 'closed';
+    else if (fix) change.state = 'draft';
+    try {
+      await annotateAdvisory(repo, report.ghsa, note, rate ? { ...change, severity: rate.severity } : change).catch(async (err: Error) => {
+        // A report filed with a CVSS vector may refuse a bare severity; the note still says it.
+        if (!rate) throw err;
+        log(`security: could not set ${key} to ${rate.severity} (${err.message.split('\n')[0]}); writing the assessment without it`);
+        await annotateAdvisory(repo, report.ghsa, note, change);
+      });
+      if (close) closed.push(key);
+      if (rate) rerated.push(`${key} ${reported}→${rate.severity}`);
+      log(`security: ${key} ${[close ? `closed — ${close.reason}` : null, rate ? `rated ${rate.severity} (reported ${reported})` : null, fix ? `accepted as a draft, fix in ${fix}` : null].filter(Boolean).join('; ')}`);
+    } catch (err) {
+      log(`security: could not update ${key}: ${(err as Error).message}`);
+    }
+  }
+  return { closed, rerated };
 }
 
 /**
@@ -1151,7 +1205,8 @@ export async function runSecurityPhase(ctx: FactoryContext, worker: CodingWorker
   }
   const { offered } = inputs;
   const keys = offered.map((o) => alertKey(o.alert));
-  log(`security: handing ${offered.length} open alert(s) at ${config.security.minSeverity} or above to a fixer`);
+  const reports = keys.filter(isReport).length;
+  log(`security: handing ${keys.length - reports} open alert(s) at ${config.security.minSeverity} or above and ${reports} reported advisor${reports === 1 ? 'y' : 'ies'} to a fixer`);
   const startedAt = new Date().toISOString();
   // No credentials: upgrading a dependency runs a release nobody here has read.
   const handle = await worker.start(securityPromptFor(config, inputs), { autoCreatePR: true, withholdCredentials: true, name: 'factory-security' });
@@ -1185,7 +1240,7 @@ export async function runSecurityPhase(ctx: FactoryContext, worker: CodingWorker
 
   const reply = parseFixReply(result.resultText, keys);
   const dismissed: string[] = [];
-  for (const { key, reason } of reply.dismiss) {
+  for (const { key, reason } of reply.dismiss.filter((d) => !isReport(d.key))) {
     try {
       await dismissCodeScanningAlert(repo, Number(key.split('#')[1]), `Factory security agent: ${reason}`);
       dismissed.push(key);
@@ -1197,8 +1252,11 @@ export async function runSecurityPhase(ctx: FactoryContext, worker: CodingWorker
 
   const prUrl = await openedPr(config, result);
   if (!prUrl) {
+    // The agent's word on the reports stands without a PR: a closed or
+    // re-rated report is a pass's worth of judgment, and this is where it lands.
+    const reports = await annotateReports(repo, offered, reply, [], null);
     log(`security: no PR. The agent's report:\n${result.resultText.trim() || '_(no report)_'}`);
-    return record({ outcome: 'no-pr', dismissed });
+    return record({ outcome: 'no-pr', dismissed: [...dismissed, ...reports.closed], rerated: reports.rerated });
   }
   // Labelled and claimed before the CI wait: an unlabelled PR is one the review
   // phase would take for someone else's, and an unclaimed alert is one the
@@ -1206,18 +1264,27 @@ export async function runSecurityPhase(ctx: FactoryContext, worker: CodingWorker
   await ensureLabel(repo, config.labels.securityPr, 'D93F0B', 'Fixes open security alerts; opened by the software factory');
   await addPrLabels(repo, prUrl, [config.labels.securityPr]);
   // An agent that forgot its ALERTS line still named them in its PR, most likely.
+  const rejected = reply.dismiss.map((d) => d.key);
   const fixed = reply.fixed.length > 0
     ? reply.fixed
-    : keysIn((await viewPr(repo, prUrl)).body).filter((k, i, all) => keys.includes(k) && !dismissed.includes(k) && all.indexOf(k) === i);
+    : keysIn((await viewPr(repo, prUrl)).body).filter((k, i, all) => keys.includes(k) && !rejected.includes(k) && all.indexOf(k) === i);
   const url = new Map(offered.map((o) => [alertKey(o.alert), o.alert.url]));
   if (fixed.length > 0) {
-    await commentOnPr(repo, prUrl, factoryComment(`${securityStamp(fixed)}\n🏭 **Factory security fix** for ${fixed.map((k) => `[${k}](${url.get(k)})`).join(', ')}. GitHub closes each once this reaches the default branch; one still open a day after the merge is offered to the factory again.`));
+    const alerts = fixed.filter((k) => !isReport(k)).length;
+    const reports = fixed.length - alerts;
+    const then = [
+      alerts > 0 ? `GitHub closes ${alerts === 1 ? 'the alert' : 'each alert'} once this reaches the default branch; one still open a day after the merge is offered to the factory again.` : null,
+      reports > 0 ? `${reports === 1 ? 'The report is' : 'The reports are'} accepted as draft advisories naming this PR; publishing ${reports === 1 ? 'it' : 'them'} once this merges is a maintainer's call.` : null,
+    ].filter(Boolean).join(' ');
+    await commentOnPr(repo, prUrl, factoryComment(`${securityStamp(fixed)}\n🏭 **Factory security fix** for ${fixed.map((k) => `[${k}](${url.get(k)})`).join(', ')}. ${then}`));
   } else {
     log(`security: ${prUrl} names none of the alerts it was handed; nothing is claimed, so the next pass is offered them again`);
   }
+  const reportsWritten = await annotateReports(repo, offered, reply, fixed, prUrl);
+  dismissed.push(...reportsWritten.closed);
   const ci = await greenChecks(config, worker, handle, prUrl);
-  log(`security: ${prUrl} fixes ${fixed.length} of ${offered.length} alert(s) (checks ${ci.checks}); it awaits a human${dismissed.length ? `; dismissed ${dismissed.join(' ')}` : ''}.`);
-  return record({ outcome: 'pr-opened', prUrl, fixed, dismissed, ...ci });
+  log(`security: ${prUrl} fixes ${fixed.length} of ${offered.length} alert(s) (checks ${ci.checks}); it awaits a human${dismissed.length ? `; dismissed ${dismissed.join(' ')}` : ''}${reportsWritten.rerated.length ? `; re-rated ${reportsWritten.rerated.join(' ')}` : ''}.`);
+  return record({ outcome: 'pr-opened', prUrl, fixed, dismissed, rerated: reportsWritten.rerated, ...ci });
 }
 
 export async function tick(opts: { dryRun: boolean }): Promise<void> {
@@ -1488,7 +1555,8 @@ async function dryRun(ctx: FactoryContext, allCandidates: Task[]): Promise<void>
   if (security.skip) {
     log(`security: would skip — ${security.skip}.`);
   } else {
-    log(`security: would hand ${security.offered.length} open alert(s) to a fixer. Its prompt would be:`);
+    const reports = security.offered.filter((o) => o.alert.kind === 'advisory').length;
+    log(`security: would hand ${security.offered.length - reports} open alert(s) and ${reports} reported advisor${reports === 1 ? 'y' : 'ies'} to a fixer. Its prompt would be:`);
     console.log(`\n${securityPromptFor(config, security)}\n`);
   }
 

@@ -299,15 +299,18 @@ export interface DepsRecord extends AgentPass {
 }
 
 /**
- * One security fix. `offered` is the alerts the agent was handed, `fixed` the
- * ones its PR claims, `dismissed` the code scanning findings the factory
- * dismissed as false positives on its word. `no-pr`: it fixed nothing.
+ * One security fix. `offered` is the alerts and reports the agent was handed,
+ * `fixed` the ones its PR claims, `dismissed` the code scanning findings the
+ * factory dismissed and the reports it closed as false positives on its word,
+ * `rerated` the reports whose severity it set to the agent's (`advisory#… high→low`).
+ * `no-pr`: it fixed nothing.
  */
 export interface SecurityRecord extends AgentPass {
   type: 'security';
   offered: string[];
   fixed: string[];
   dismissed: string[];
+  rerated?: string[];
   outcome: 'pr-opened' | 'no-pr' | 'failed';
   prUrl: string | null;
   fixRounds?: number;

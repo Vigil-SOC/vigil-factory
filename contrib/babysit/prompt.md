@@ -93,14 +93,19 @@ Oldest first, for each:
   this pass can put the next one in conflict, so check each one's mergeability right
   before merging it.
 
+A `factory:security` PR whose factory comment names an `advisory#GHSA-…` fixes a privately
+reported vulnerability: the tick accepted the report as a draft advisory naming the PR. Merge
+the PR as any other, then note in the journal that the advisory awaits Sam to publish —
+publishing is outward-facing and his call, so it is a note, not an alert, and only once.
+
 An unlabelled PR on any `cursor/factory-…` branch is the factory's, from a pipeline that
 died before taking it up: `cursor/factory-<N>-…` is an implementer's, and
 `cursor/factory-security-…`, `-env-…`, `-simplify-…`, `-deps-…`, `-review-…` are the
 other phases'. The tick adopts or closes these itself, so leave a fresh one to it. One
 still unlabelled after a tick has run is yours to finish, the way the tick would have:
 - `-review-…`, or one that conflicts with the default branch, or one whose work is
-  already on main (its alerts closed, its issue closed, another factory PR fixed the
-  same thing): close it with a one-line comment saying why.
+  already on main (its alerts closed, its advisory accepted or closed, its issue closed,
+  another factory PR fixed the same thing): close it with a one-line comment saying why.
 - Otherwise: add its phase's label (`factory`, `factory:security`, `factory:env`,
   `factory:simplify`, `factory:deps`), ready it, and merge it under the rules above.
 

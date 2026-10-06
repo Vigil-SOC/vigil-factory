@@ -30,8 +30,9 @@ Usage:
                                        regenerates what the repo installs from, and the factory merges the batch on green CI and
                                        closes the Dependabot PRs it carried.
   npm run factory -- security          Run just the security phase: one agent takes the most severe group of open Dependabot and
-                                       code scanning alerts no factory PR claims (at security.minSeverity or above) that one PR
-                                       can fix, and opens that PR.
+                                       code scanning alerts (at security.minSeverity or above) and privately reported advisories
+                                       in triage that no factory PR claims and one PR can fix, and opens that PR; a report it
+                                       shows is not a vulnerability is closed, one it rates differently is re-rated.
   npm run factory -- status            Show grooming progress, capacity, in-flight jobs, pending PRs, and recent telemetry.
   npm run factory -- abort [--issue N] Abandon stuck local pipelines — all of them, or just issue N's
                                        (cancels the runs if the worker still can).
@@ -127,9 +128,10 @@ async function status(): Promise<void> {
   if (lastDeps) log(`  last batch: ${lastDeps.startedAt} → ${lastDeps.outcome}${lastDeps.prUrl ? ` ${lastDeps.prUrl}` : ''} (carried ${lastDeps.carried.length} of ${lastDeps.offered.length})${lastDeps.reason ? ` (${lastDeps.reason})` : ''}`);
 
   const security = await securityInputs(ctx.config);
-  log(`security: ${security.skip ?? `next pass is offered ${security.offered.length} open alert(s)`}${security.openPrs.length ? `; ${security.openPrs.length} security PR(s) open` : ''}.`);
+  const reports = security.offered.filter((o) => o.alert.kind === 'advisory').length;
+  log(`security: ${security.skip ?? `next pass is offered ${security.offered.length - reports} open alert(s) and ${reports} reported advisor${reports === 1 ? 'y' : 'ies'}`}${security.openPrs.length ? `; ${security.openPrs.length} security PR(s) open` : ''}.`);
   const lastSecurity = ctx.telemetry.securityPasses().at(-1);
-  if (lastSecurity) log(`  last pass: ${lastSecurity.startedAt} → ${lastSecurity.outcome}${lastSecurity.prUrl ? ` ${lastSecurity.prUrl}` : ''} (fixed ${lastSecurity.fixed.length} of ${lastSecurity.offered.length} alert(s), dismissed ${lastSecurity.dismissed.length})`);
+  if (lastSecurity) log(`  last pass: ${lastSecurity.startedAt} → ${lastSecurity.outcome}${lastSecurity.prUrl ? ` ${lastSecurity.prUrl}` : ''} (fixed ${lastSecurity.fixed.length} of ${lastSecurity.offered.length} alert(s), dismissed ${lastSecurity.dismissed.length}${lastSecurity.rerated?.length ? `, re-rated ${lastSecurity.rerated.length}` : ''})`);
 
   const { sha } = await defaultBranchHead(repoSlug(ctx.config));
   const simplifySkipped = await simplifySkip(ctx, sha);
@@ -168,7 +170,7 @@ async function security(): Promise<void> {
   const ctx = buildContext();
   const record = await runSecurityPhase(ctx, await buildWorker(ctx.config));
   if (!record) return;
-  log(`security fix → ${record.outcome}${record.prUrl ? ` ${record.prUrl}` : ''}: fixed ${record.fixed.length} of ${record.offered.length} alert(s), dismissed ${record.dismissed.length}${record.failureReason ? ` (${record.failureReason})` : ''}`);
+  log(`security fix → ${record.outcome}${record.prUrl ? ` ${record.prUrl}` : ''}: fixed ${record.fixed.length} of ${record.offered.length} alert(s), dismissed ${record.dismissed.length}${record.rerated?.length ? `, re-rated ${record.rerated.length}` : ''}${record.failureReason ? ` (${record.failureReason})` : ''}`);
 }
 
 async function env(): Promise<void> {

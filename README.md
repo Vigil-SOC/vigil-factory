@@ -105,11 +105,13 @@ reconcile with GitHub: record the verdict on every factory PR that has closed, r
    factory:deps. CI runs once, on the versions that ship; the factory merges it on green
    under the review phase's rules and closes the Dependabot PRs it carried. One open at a time
 → SECURITY agent, alongside too (security.enabled, on by default; Cursor worker only): every
-   open Dependabot and code scanning alert at security.minSeverity or above that no factory
-   PR claims is handed to one agent, which fixes the most severe group one PR can and opens
-   it, labelled factory:security — no issue, no groom. The factory claims the alerts on the
-   PR, hands a red check back, and leaves it for a human. No alerts due, or three security
-   PRs already awaiting a merge, no agent
+   open Dependabot and code scanning alert at security.minSeverity or above, and every
+   privately reported advisory still in triage, that no factory PR claims is handed to one
+   agent, which fixes the most severe group one PR can and opens it, labelled
+   factory:security — no issue, no groom. A report is verified first: one that does not hold
+   is closed with the reason, one rated wrong is re-rated, one that holds is accepted as a
+   draft naming the PR. The factory claims the alerts on the PR, hands a red check back, and
+   leaves it for a human. Nothing due, or three security PRs already awaiting a merge, no agent
 count the jobs already in flight (open factory PRs + running pipelines)
    → no free slot under maxConcurrentJobs? stop here
 for each free slot:
@@ -662,13 +664,15 @@ nothing and is retried next tick. Like reviews, the agent gets no `worker.agentE
 credentials and runs only on the Cursor worker, because resolving and installing new
 releases runs their code. The phase is off unless `deps.enabled` is set, since it merges.
 
-## Security alerts
+## Security alerts and reported advisories
 
 A repo's security tab fills faster than anyone reads it: one dependency's advisories appear
 once per advisory per lockfile, and one CodeQL rule fires on every call site of the helper it
 flags. Fixed one alert at a time, a few hundred of them are a few hundred PRs. No rule groups
 them well — the right group is *what one change fixes*, and only reading the code says what
-that is — so the grouping is an agent's judgment.
+that is — so the grouping is an agent's judgment. The same tab holds the vulnerabilities
+people report privately, which are a different thing: open-ended claims a person wrote, often
+with a model's help, that may not hold or may hold at another severity. One phase takes both.
 
 **Straight to a PR.** Each tick, every open Dependabot and code scanning alert at or above
 `security.minSeverity` (default `high`, so high and critical) that no factory PR claims is
@@ -701,14 +705,43 @@ that reason on it. That is reversible from the security tab, and it is the one w
 touches an alert. A dependency alert is never dismissed: upgrading or removing it is always
 possible.
 
+**A reported advisory is a claim, verified first.** Every report still in triage — nobody has
+accepted or closed it — is offered whatever its reported severity, since the rating is the
+reporter's guess and answering a person's report is not optional; it is ranked by that rating
+among the alerts, an unrated one as medium. The agent reads it as a starting point, not a
+verdict: it reproduces the report or traces the flow it describes through the code as it is
+now, and rates the severity itself from what an attacker can actually do and what they need
+first. It then answers, in lines the factory writes onto the advisory itself, where the
+reporter and the maintainers read them (an advisory has no comment API, so the note goes at
+the end of the description under a rule):
+
+- A fix: the PR claims `advisory#GHSA-…` like any alert, and the factory accepts the report
+  as a draft advisory with the PR named on it. GitHub closes no report on a merge, so the
+  acceptance is what takes it out of the queue, and publishing the advisory once the fix
+  merges is a human's call — the babysitter notes it in its journal.
+- `FALSE POSITIVE: advisory#GHSA-… — <reason>`: not a vulnerability. The factory closes the
+  report with the reason on it. A human can reopen it.
+- `SEVERITY: advisory#GHSA-… <low|medium|high|critical> — <reason>`: the agent's rating,
+  when it differs from the reporter's. The factory sets the advisory's severity to it,
+  whether the report was fixed, closed, or left for the next pass. A report filed with a CVSS
+  vector may refuse a bare severity; the note still records it.
+
+Any PR that claims a report holds it for good: one still in triage after its fix merged is a
+human's to accept or close, not a second fixer's. The reports reach the agent whole — every
+field and the entire description, quoted — in the same private prompt as the alerts, and the
+PR that fixes one says what was fixed without quoting the report's reproduction. The `draft`
+advisories a maintainer is writing themselves are never offered: triage is the queue.
+
 The alerts reach the agent in its prompt, every field the tick read, rather than as links: an
 alert page is behind a permission the agents' GitHub access does not carry, and the prompt is
 private where an issue would not be. The tick reads them with its own `gh` login (in Actions,
-`FACTORY_GH_TOKEN`; on a private repo it needs `security_events`, and dismissing needs write).
-A source it cannot read — Dependabot alerts off, code scanning never run — is left out with a
-log line; with neither readable, or nothing due, no agent starts. Like the dependency batch, the
-phase runs only on the Cursor worker and gets no `worker.agentEnv` credentials, because
-upgrading a dependency runs a release nobody here has read.
+`FACTORY_GH_TOKEN`; on a private repo it needs `security_events`, and dismissing needs write;
+reading reported advisories needs the repository advisories permission, and closing,
+re-rating, or accepting one needs it with write). A source it cannot read — Dependabot alerts
+off, code scanning never run, advisories unreadable — is left out with a log line; with none
+readable, or nothing due, no agent starts. Like the dependency batch, the phase runs only on
+the Cursor worker and gets no `worker.agentEnv` credentials, because upgrading a dependency
+runs a release nobody here has read.
 
 ## Deploying
 
@@ -772,7 +805,7 @@ npm run factory -- env             # run just the environment phase over the unr
 npm run factory -- simplify        # run just the simplification phase: one PR that removes more than it adds
 npm run factory -- review          # run just the review phase over the outside PRs that are due
 npm run factory -- review --pr 42  # ...or review PR #42 now, due or not
-npm run factory -- security        # run just the security phase: one PR fixing the most severe group of open alerts
+npm run factory -- security        # run just the security phase: one PR fixing the most severe group of open alerts and reports
 npm run factory -- status          # grooming progress, capacity, in-flight jobs, recent telemetry
 npm run factory -- abort           # abandon every stuck pipeline (cancels the runs where the worker can)
 npm run factory -- abort --issue 42  # ...or just the one working issue #42
@@ -823,9 +856,11 @@ committed.
   every child is built against. See "Epics" above.
 - `factory.config.json` → `security` — `enabled` (default true) and `minSeverity` (default
   `high`; `low`, `medium` — or `moderate` — `high`, `critical`): the phase that fixes the
-  repo's open Dependabot and code scanning alerts, a group per PR. It merges nothing itself,
-  and starts no agent while no alert is due. `labels.securityPr` (default `factory:security`)
-  marks its PRs; see [Security alerts](#security-alerts).
+  repo's open Dependabot and code scanning alerts, and its privately reported advisories, a
+  group per PR. The threshold applies to alerts only; every report in triage is offered. It
+  merges nothing itself, and starts no agent while nothing is due. `labels.securityPr`
+  (default `factory:security`) marks its PRs; see [Security alerts and reported
+  advisories](#security-alerts-and-reported-advisories).
 - `factory.config.json` → `assignedIssues` — whether each phase may act on an issue a
   human has assigned to themselves. Defaults to `{ "groom": true, "implement": false }`:
   vetting an assigned issue costs its assignee nothing, implementing one collides with

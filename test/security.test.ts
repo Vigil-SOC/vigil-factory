@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { claimedBy, describeAlert, MAX_OPEN_PRS, parseFixReply, parseSeverity, securityQueue, securityStamp, skipReason, type CodeScanningAlert, type DependabotAlert, type SecurityPr } from '../src/security.ts';
+import { alertKey, claimedBy, describeAdvisory, describeAlert, keysIn, MAX_OPEN_PRS, parseFixReply, parseSeverity, securityQueue, securityStamp, skipReason, type AdvisoryReport, type CodeScanningAlert, type DependabotAlert, type SecurityPr } from '../src/security.ts';
 import { factoryComment } from '../src/groom.ts';
 import { securityPrompt } from '../src/prompts.ts';
 
@@ -34,7 +34,7 @@ function pr(n: number, claims: string[], state: SecurityPr['state'] = 'OPEN', me
 }
 
 const offeredKeys = (alerts: Parameters<typeof securityQueue>[0], prs: SecurityPr[] = [], min: Parameters<typeof securityQueue>[2] = 'high') =>
-  securityQueue(alerts, prs, min, NOW).offered.map((o) => `${o.alert.kind}#${o.alert.number}`);
+  securityQueue(alerts, prs, min, NOW).offered.map((o) => alertKey(o.alert));
 
 describe('which alerts a fixer is handed', () => {
   it('those at the threshold or above, most severe first', () => {
@@ -110,5 +110,80 @@ describe('the fixer\'s reply', () => {
     expect(prompt).toContain('- dependabot#1 …');
     expect(prompt).toContain('https://github.com/o/r/pull/10');
     expect(prompt).toContain('**Verification**');
+  });
+});
+
+describe('reported advisories', () => {
+  const report = (ghsa: string, over: Partial<AdvisoryReport> = {}): AdvisoryReport => ({
+    kind: 'advisory', ghsa, severity: 'high', url: `https://github.com/o/r/security/advisories/${ghsa}`,
+    summary: 'Role permissions are not enforced', description: '**Affected:** main\n\nA Viewer can `POST /api/config`.\n\n```\ncurl …\n```',
+    cwes: ['CWE-862 Missing Authorization'], reporter: 'CryptoJones', createdAt: '2026-10-03T16:37:18Z', cvss: null, affected: ['<= 0.6'],
+    ...over,
+  });
+  const r1 = report('GHSA-9mxj-c95c-5823');
+
+  it('is named with a prefix, and found in prose, stamps, and replies however it is cased', () => {
+    expect(alertKey(r1)).toBe('advisory#GHSA-9mxj-c95c-5823');
+    expect(keysIn('fixes advisory#GHSA-9MXJ-C95C-5823 and dependabot#4, not GHSA-aaaa-bbbb-cccc')).toEqual(['advisory#GHSA-9mxj-c95c-5823', 'dependabot#4']);
+    expect(claimedBy(pr(1, ['advisory#GHSA-9mxj-c95c-5823']))).toEqual(['advisory#GHSA-9mxj-c95c-5823']);
+  });
+
+  it('is offered at any severity, ranked by the reported one, unrated as medium, oldest first', () => {
+    const low = report('GHSA-3vfj-56jm-xp4r', { severity: 'low', createdAt: '2026-10-02T20:29:42Z' });
+    const unrated = report('GHSA-aaaa-bbbb-cccc', { severity: null, createdAt: '2026-10-01T00:00:00Z' });
+    const older = report('GHSA-qxq5-qc4h-2766', { createdAt: '2026-09-28T16:27:25Z' });
+    expect(offeredKeys([low, dep(1), r1, unrated, dep(2, { severity: 'critical' }), older]))
+      .toEqual(['dependabot#2', 'dependabot#1', 'advisory#GHSA-qxq5-qc4h-2766', 'advisory#GHSA-9mxj-c95c-5823', 'advisory#GHSA-aaaa-bbbb-cccc', 'advisory#GHSA-3vfj-56jm-xp4r']);
+  });
+
+  it('is held by any PR that claims it, merged however long ago — GitHub closes no report on a merge', () => {
+    expect(offeredKeys([r1], [pr(10, ['advisory#GHSA-9mxj-c95c-5823'])])).toEqual([]);
+    expect(offeredKeys([r1], [pr(10, ['advisory#GHSA-9mxj-c95c-5823'], 'MERGED', 60)])).toEqual([]);
+    expect(securityQueue([r1], [pr(10, ['advisory#GHSA-9mxj-c95c-5823'], 'CLOSED')], 'high', NOW).held).toBe(1);
+  });
+
+  it('reaches the agent whole: the facts on a line, the description quoted', () => {
+    const text = describeAdvisory(r1, ['https://github.com/o/r/pull/9']);
+    expect(text).toContain('### advisory#GHSA-9mxj-c95c-5823 — Role permissions are not enforced');
+    expect(text).toContain('reported **high** by @CryptoJones on 2026-10-03 as CWE-862 Missing Authorization affecting <= 0.6.');
+    expect(text).toContain('Still in triage after https://github.com/o/r/pull/9 merged.');
+    expect(text).toContain('> A Viewer can `POST /api/config`.\n> \n> ```\n> curl …\n> ```');
+    expect(describeAdvisory(report('GHSA-aaaa-bbbb-cccc', { severity: null, reporter: null, cwes: [], affected: [] }))).toContain('reported **unrated** on 2026-10-03.');
+  });
+
+  it('the reply closes a report as a false positive, re-rates one, or fixes one — and a re-rating rides along with any of them', () => {
+    const offered = ['advisory#GHSA-9mxj-c95c-5823', 'advisory#GHSA-3vfj-56jm-xp4r', 'advisory#GHSA-qxq5-qc4h-2766', 'dependabot#1'];
+    const reply = parseFixReply([
+      'ALERTS: advisory#GHSA-9mxj-c95c-5823 dependabot#1',
+      'FALSE POSITIVE: advisory#GHSA-3vfj-56jm-xp4r — the credentials column is encrypted at rest since #1402',
+      'SEVERITY: advisory#GHSA-9mxj-c95c-5823 critical — any signed-in user, no interaction',
+      'SEVERITY: advisory#GHSA-qxq5-qc4h-2766 Moderate — needs an operator-configured Elastic source and an analyst role',
+      'SEVERITY: advisory#GHSA-qxq5-qc4h-2766 low — repeated, ignored',
+      'SEVERITY: advisory#GHSA-zzzz-zzzz-zzzz high — not offered',
+      'FALSE POSITIVE: dependabot#1 — never a false positive',
+    ].join('\n'), offered);
+    expect(reply.fixed).toEqual(['advisory#GHSA-9mxj-c95c-5823', 'dependabot#1']);
+    expect(reply.dismiss).toEqual([{ key: 'advisory#GHSA-3vfj-56jm-xp4r', reason: 'the credentials column is encrypted at rest since #1402' }]);
+    expect(reply.rerate).toEqual([
+      { key: 'advisory#GHSA-9mxj-c95c-5823', severity: 'critical', reason: 'any signed-in user, no interaction' },
+      { key: 'advisory#GHSA-qxq5-qc4h-2766', severity: 'medium', reason: 'needs an operator-configured Elastic source and an analyst role' },
+    ]);
+  });
+
+  it('the prompt carries the reports in their own section with their own rules, and no empty alerts section', () => {
+    const prompt = securityPrompt({ alerts: [], advisories: [describeAdvisory(r1)], openPrs: [], budget: { maxRunMinutes: 90 } });
+    expect(prompt).toContain('## Reported advisories');
+    expect(prompt).toContain('### advisory#GHSA-9mxj-c95c-5823');
+    expect(prompt).toContain('SEVERITY: advisory#GHSA-<id>');
+    expect(prompt).toContain('FALSE POSITIVE: advisory#GHSA-<id>');
+    expect(prompt).not.toContain('## Alerts');
+    const alertsOnly = securityPrompt({ alerts: ['dependabot#1 …'], openPrs: [], budget: { maxRunMinutes: 90 } });
+    expect(alertsOnly).toContain('## Alerts');
+    expect(alertsOnly).not.toContain('Reported advisories');
+    expect(alertsOnly).not.toContain('SEVERITY:');
+  });
+
+  it('the skip reason says both are empty', () => {
+    expect(skipReason(true, 'cursor', [], { offered: 0, held: 0 })).toMatch(/no reports in triage/);
   });
 });
