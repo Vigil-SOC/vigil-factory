@@ -44,7 +44,7 @@ import { type PrCheck, addPrLabels, approveHeldRuns, awaitPrChecks, closePr, clo
 import { ENV_AGENT_MARK, environmentChangedAt, filedIssueBody, parseEnvReport, recentVerdicts, skipReason, unreadFactoryPrs, withOpenedThisTick, workerSkipReason, type UnreadPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
 import { carried, depsQueue, depsStamp, droppedReasons, skipReason as depsSkipReason, upgradeIssue, upgradeKey, upgradeKeyOf, type DepsPr } from './deps.ts';
-import { alertKey, fixedReports, keysIn, offeredLine, parseFixReply, securityQueue, securityStamp, skipReason as securitySkipReason, type FixReply, type OfferedAlert, type SecurityAlert } from './security.ts';
+import { alertKey, fixedReports, keysIn, offeredLine, openReports, parseFixReply, securityQueue, securityStamp, skipReason as securitySkipReason, type FixReply, type OfferedAlert, type SecurityAlert } from './security.ts';
 import { coAuthorTrailer, isBot, parseReviewReply, reviewComment, reviewQueue, reviewStamp, sameCommit, skipReason as reviewSkipReason, staleReason, staleReport, touchesGithub, type ReviewOutcome, type ReviewPr, type ReviewReply } from './review.ts';
 
 export function log(msg: string): void {
@@ -1116,7 +1116,7 @@ export async function securityInputs(config: FactoryConfig): Promise<{ skip: str
   const [dependabot, codeScanning, advisories, prs] = await Promise.all([
     read('Dependabot alerts', listDependabotAlerts(repo)),
     read('code scanning alerts', listCodeScanningAlerts(repo)),
-    read('reported advisories', listAdvisoryReports(repo)),
+    read('reported advisories', listAdvisoryReports(repo).then(openReports)),
     listPrsByLabel(repo, config.labels.securityPr, 'all', 500),
   ]);
   if (unreadable.length === 3) return { skip: `cannot read the repo's alerts or advisories: ${unreadable.join('; ')}`, offered: [], openPrs: [] };
@@ -1158,11 +1158,12 @@ async function annotateReports(repo: string, offered: OfferedAlert[], reply: Fix
     const key = alertKey(report);
     const close = reply.dismiss.find((d) => d.key === key);
     const rate = reply.rerate.find((r) => r.key === key);
-    const fix = !close && prUrl && fixed.includes(key) ? prUrl : null;
-    if (!close && !rate && !fix) continue;
+    const held = reply.hold.find((h) => h.key === key);
+    const fix = !close && !held && prUrl && fixed.includes(key) ? prUrl : null;
+    if (!close && !rate && !fix && !held) continue;
     const reported = report.severity ?? 'unrated';
     const note = [
-      `🏭 **Factory assessment**, ${today}.`,
+      held ? `🏭 **Left for a maintainer** by the software factory, ${today}: ${held.reason} It will not be offered to a fixer again.` : `🏭 **Factory assessment**, ${today}.`,
       rate ? `**Severity ${rate.severity}** (reported ${reported}): ${rate.reason}` : null,
       close ? `**Not a vulnerability:** ${close.reason} Closed by the software factory; a maintainer can reopen it.` : null,
       fix ? `**Fix in ${fix}.** Accepted as a draft advisory by the software factory, which closes it once the fix merges.` : null,
@@ -1179,7 +1180,7 @@ async function annotateReports(repo: string, offered: OfferedAlert[], reply: Fix
       });
       if (close) closed.push(key);
       if (rate) rerated.push(`${key} ${reported}→${rate.severity}`);
-      log(`security: ${key} ${[close ? `closed — ${close.reason}` : null, rate ? `rated ${rate.severity} (reported ${reported})` : null, fix ? `accepted as a draft, fix in ${fix}` : null].filter(Boolean).join('; ')}`);
+      log(`security: ${key} ${[close ? `closed — ${close.reason}` : null, held ? `left for a maintainer — ${held.reason}` : null, rate ? `rated ${rate.severity} (reported ${reported})` : null, fix ? `accepted as a draft, fix in ${fix}` : null].filter(Boolean).join('; ')}`);
     } catch (err) {
       log(`security: could not update ${key}: ${(err as Error).message}`);
     }

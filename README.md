@@ -106,7 +106,7 @@ reconcile with GitHub: record the verdict on every factory PR that has closed, r
    under the review phase's rules and closes the Dependabot PRs it carried. One open at a time
 → SECURITY agent, alongside too (security.enabled, on by default; Cursor worker only): every
    open Dependabot and code scanning alert at security.minSeverity or above, and every
-   privately reported advisory still in triage, that no factory PR claims is handed to one
+   privately reported advisory still awaiting an answer, that no factory PR claims is handed to one
    agent, which fixes the most severe group one PR can and opens it, labelled
    factory:security — no issue, no groom. A report is verified first: one that does not hold
    is closed with the reason, one rated wrong is re-rated, one that holds is accepted as a
@@ -709,7 +709,9 @@ possible.
 **A reported advisory is a claim, verified first.** Every report still in triage — nobody has
 accepted or closed it — is offered whatever its reported severity, since the rating is the
 reporter's guess and answering a person's report is not optional; it is ranked by that rating
-among the alerts, an unrated one as medium. The agent reads it as a starting point, not a
+among the alerts, an unrated one as medium. A maintainer's own report is offered the same way:
+filed with write access it skips triage and is born a draft, so a draft the factory has never
+written on is a report awaiting its answer, and the agent is told it is a maintainer's. The agent reads it as a starting point, not a
 verdict: it reproduces the report or traces the flow it describes through the code as it is
 now, and rates the severity itself from what an attacker can actually do and what they need
 first. It then answers, in lines the factory writes onto the advisory itself, where the
@@ -729,12 +731,18 @@ the end of the description under a rule):
   when it differs from the reporter's. The factory sets the advisory's severity to it,
   whether the report was fixed, closed, or left for the next pass. A report filed with a CVSS
   vector may refuse a bare severity; the note still records it.
+- `HELD: advisory#GHSA-… — <reason>`: a report the factory's public PR cannot honour — it
+  asks for coordinated disclosure, for its fix to be made in the advisory's private fork, or
+  for nothing to reach the public repository before a release. The factory writes the reason
+  on the report for the maintainers and never offers it to a fixer again; a hold outranks a
+  close or a fix of the same report in one reply.
 
 Any PR that claims a report holds it for good: one still in triage after its fix merged is a
 human's to accept or close, not a second fixer's. The reports reach the agent whole — every
 field and the entire description, quoted — in the same private prompt as the alerts, and the
-PR that fixes one says what was fixed without quoting the report's reproduction. The `draft`
-advisories a maintainer is writing themselves are never offered: triage is the queue.
+PR that fixes one says what was fixed without quoting the report's reproduction. A draft that
+carries any factory line — accepted, held, or closed and reopened by a human — is never
+offered: once the factory has answered a draft, it is a human's.
 
 The alerts reach the agent in its prompt, every field the tick read, rather than as links: an
 alert page is behind a permission the agents' GitHub access does not carry, and the prompt is

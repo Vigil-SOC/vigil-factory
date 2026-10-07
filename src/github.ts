@@ -327,15 +327,18 @@ export async function listCodeScanningAlerts(repo: string): Promise<CodeScanning
 }
 
 /**
- * The repo's privately reported vulnerabilities still in triage — nobody has
- * accepted or closed them — each with its whole description. Throws when the
- * token cannot read them.
+ * The repo's privately reported vulnerabilities not yet closed or published —
+ * those in triage, and the drafts, which a maintainer's own report is born as
+ * — each with its whole description. Which of them the factory still owes an
+ * answer is `openReports`' call. Throws when the token cannot read them.
  */
 export async function listAdvisoryReports(repo: string): Promise<AdvisoryReport[]> {
-  return ghApiList(`repos/${repo}/security-advisories?state=triage&per_page=100`, `.[] | {
-    kind: "advisory", ghsa: .ghsa_id, severity, url: .html_url, summary, description: (.description // ""),
+  const list = (state: 'triage' | 'draft') => ghApiList<AdvisoryReport>(`repos/${repo}/security-advisories?state=${state}&per_page=100`, `.[] | {
+    kind: "advisory", ghsa: .ghsa_id, state: "${state}", severity, url: .html_url, summary, description: (.description // ""),
     cwes: [.cwes[]? | (.cwe_id + " " + .name)], reporter: .author.login, createdAt: .created_at,
     cvss: .cvss.vector_string, affected: [.vulnerabilities[]? | .vulnerable_version_range // empty] }`);
+  const [triage, draft] = await Promise.all([list('triage'), list('draft')]);
+  return [...triage, ...draft];
 }
 
 /**

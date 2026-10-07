@@ -51,6 +51,15 @@
 // itself on the first pass after its fix merges. The maintainers use these
 // reports to track and close security issues, not to publish advisories, so a
 // fixed one is done; publishing stays a human's to do from the closed report.
+//
+// A maintainer's own report skips triage: filed with write access it is born
+// a draft, the same state the factory's acceptance puts a report in. So a
+// draft is offered too, but only one the factory has never written on — an
+// accepted, held, or closed-then-reopened report carries the factory's note
+// and is a human's. A report that asks for coordinated disclosure, or for its
+// fix to stay off the public repo, is one the factory's public PR cannot
+// honour: the agent answers `HELD:` with the reason, the factory writes that
+// on the report, and offers it to no one again.
 
 export const SEVERITIES = ['low', 'medium', 'high', 'critical'] as const;
 export type Severity = typeof SEVERITIES[number];
@@ -70,10 +79,12 @@ interface AlertBase {
   url: string;
 }
 
-/** A privately reported vulnerability still in triage: a person's claim, in full. */
+/** A privately reported vulnerability nobody has answered: a person's claim, in full. */
 export interface AdvisoryReport {
   kind: 'advisory';
   ghsa: string;
+  /** `triage` is a report awaiting an answer; `draft` is one a maintainer filed themselves, or one already accepted. */
+  state: 'triage' | 'draft';
   /** As reported; null when the reporter rated nothing. Treated as medium for ordering. */
   severity: Severity | null;
   url: string;
@@ -155,6 +166,7 @@ export function describeAdvisory(a: AdvisoryReport, priorAttempts: string[] = []
     `on ${a.createdAt.slice(0, 10)}`,
     a.cwes.length ? `as ${a.cwes.join(', ')}` : null,
     a.affected.length ? `affecting ${a.affected.map(oneLine).join('; ')}` : null,
+    a.state === 'draft' ? '— filed as a draft by a maintainer, so it never passed through triage' : null,
   ].filter(Boolean).join(' ');
   const outlived = priorAttempts.length ? `\n\nStill in triage after ${priorAttempts.join(', ')} merged.` : '';
   const quoted = a.description.trim().split('\n').map((l) => `> ${l}`).join('\n');
@@ -270,6 +282,20 @@ export function acceptedFix(description: string): string | null {
   return last?.[1] ?? null;
 }
 
+const FACTORY_NOTE_RE = /🏭 \*\*(?:Factory assessment|Closed by the software factory|Left for a maintainer)\*\*/;
+const HOLD_RE = /🏭 \*\*Left for a maintainer\*\*/;
+
+/**
+ * The reports the factory still owes an answer. A triage report is offered
+ * until it leaves triage, re-rated or not, unless the factory held it for a
+ * human. A draft is offered only while the factory has never written on it:
+ * one a maintainer filed themselves is a report like any other, but one the
+ * factory accepted, held, or closed and a human reopened is theirs now.
+ */
+export function openReports<R extends { state: 'triage' | 'draft'; description: string }>(reports: R[]): R[] {
+  return reports.filter((r) => !(r.state === 'triage' ? HOLD_RE : FACTORY_NOTE_RE).test(r.description));
+}
+
 /**
  * The accepted reports whose fix has merged, each with its PR: these the
  * factory closes, since a fixed report is a done one here. A PR that is not
@@ -287,6 +313,7 @@ export function fixedReports<R extends { ghsa: string; description: string }>(ac
 
 const DISMISS_RE = /^[\s>*-]*false[ -]positive:\s*((?:code-scanning#\d+)|(?:advisory#GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}))\s*[—–:-]*\s*(.*)$/gim;
 const SEVERITY_RE = /^[\s>*-]*severity:\s*(advisory#GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4})\s+(low|medium|moderate|high|critical)\b\s*[—–:-]*\s*(.*)$/gim;
+const HELD_RE = /^[\s>*-]*held:\s*(advisory#GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4})\s*[—–:-]*\s*(.*)$/gim;
 
 export interface FixReply {
   /** The offered alerts the PR fixes. */
@@ -295,6 +322,8 @@ export interface FixReply {
   dismiss: { key: string; reason: string }[];
   /** Reports whose severity the agent rated differently from the reporter. */
   rerate: { key: string; severity: Severity; reason: string }[];
+  /** Reports the factory cannot answer — they ask for private handling — left for a human with the reason. */
+  hold: { key: string; reason: string }[];
 }
 
 /**
@@ -304,11 +333,18 @@ export interface FixReply {
  * another severity (`SEVERITY:` lines). Only offered alerts count, each once
  * as fixed or dismissed; a dependency alert cannot be dismissed. A re-rating
  * stands on its own: a report may be re-rated and fixed, re-rated and left for
- * the next pass, or re-rated and closed.
+ * the next pass, or re-rated and closed. A `HELD:` line leaves a report for a
+ * human: neither fixed nor closed, though it may still be re-rated.
  */
 export function parseFixReply(text: string, offered: string[]): FixReply {
   const allowed = new Set(offered.map((k) => keysIn(k)[0] ?? k));
   const normalize = (key: string) => keysIn(key)[0] ?? key;
+  // A held report is a human's: a hold outranks a close or a fix on the same key.
+  const hold: FixReply['hold'] = [];
+  for (const m of text.matchAll(HELD_RE)) {
+    const key = normalize(m[1]!);
+    if (allowed.delete(key)) hold.push({ key, reason: m[2]!.trim() });
+  }
   const dismiss: FixReply['dismiss'] = [];
   for (const m of text.matchAll(DISMISS_RE)) {
     const key = normalize(m[1]!);
@@ -323,7 +359,7 @@ export function parseFixReply(text: string, offered: string[]): FixReply {
     rerated.add(key);
     rerate.push({ key, severity: parseSeverity(m[2]), reason: m[3]!.trim() });
   }
-  return { fixed, dismiss, rerate };
+  return { fixed, dismiss, rerate, hold };
 }
 
 /** Why the security phase is not running at all, or null if it may. */
