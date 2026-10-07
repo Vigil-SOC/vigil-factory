@@ -225,7 +225,6 @@ describe('openReports', () => {
   const r = (state: 'triage' | 'draft', description: string) => ({ state, description });
   const fix = 'https://github.com/o/r/pull/1766';
   const accepted = `### Summary\nx\n\n---\n\n🏭 **Factory assessment**, 2026-10-06.\n\n**Fix in ${fix}.** Accepted as a draft advisory by the software factory, which closes it once the fix merges.\n`;
-  const held = `### Summary\nx\n\n---\n\n🏭 **Left for a maintainer** by the software factory, 2026-10-07: asks for private-fork fixes. It will not be offered to a fixer again.\n`;
   const rerated = `### Summary\nx\n\n---\n\n🏭 **Factory assessment**, 2026-10-06.\n\n**Severity low** (reported high): needs an admin.\n`;
 
   it('offers a triage report until it leaves triage, re-rated or not', () => {
@@ -234,39 +233,21 @@ describe('openReports', () => {
 
   it('offers a draft a maintainer wrote, and not one the factory has written on', () => {
     const human = r('draft', '### Summary\nAdmin routes check sign-in only.');
-    expect(openReports([human, r('draft', accepted), r('draft', held), r('draft', `${accepted}\n---\n\n🏭 **Closed by the software factory**, 2026-10-07: the fix in ${fix} merged.\n`)])).toEqual([human]);
+    expect(openReports([human, r('draft', accepted), r('draft', `${accepted}\n---\n\n🏭 **Closed by the software factory**, 2026-10-07: the fix in ${fix} merged.\n`)])).toEqual([human]);
   });
 
-  it('never offers a held report again, whatever its state', () => {
-    expect(openReports([r('triage', held), r('draft', held)])).toEqual([]);
-  });
 });
 
-describe('HELD replies', () => {
-  const offered = ['advisory#GHSA-mhcm-5g5q-gf4x', 'advisory#GHSA-jrm2-wc9j-wwcj'];
-
-  it('leaves a held report for a human, neither fixed nor closed, re-rated if asked', () => {
-    const reply = parseFixReply([
-      'HELD: advisory#GHSA-mhcm-5g5q-gf4x — the report asks for fixes in its private fork and no public merge before release',
-      'SEVERITY: advisory#GHSA-mhcm-5g5q-gf4x high — the connectors need an operator role first',
-      'FALSE POSITIVE: advisory#GHSA-mhcm-5g5q-gf4x — ignored, already held',
-      'ALERTS: advisory#GHSA-mhcm-5g5q-gf4x advisory#GHSA-jrm2-wc9j-wwcj',
-    ].join('\n'), offered);
-    expect(reply.hold).toEqual([{ key: 'advisory#GHSA-mhcm-5g5q-gf4x', reason: 'the report asks for fixes in its private fork and no public merge before release' }]);
-    expect(reply.fixed).toEqual(['advisory#GHSA-jrm2-wc9j-wwcj']);
-    expect(reply.dismiss).toEqual([]);
-    expect(reply.rerate.map((x) => x.severity)).toEqual(['high']);
-  });
-
-  it('is offered to the agent in the prompt, and a draft is described as a maintainer\'s', () => {
+describe('a report asking for private handling', () => {
+  it('is described as a maintainer\'s when a draft, and the agent is told to fix it in the open', () => {
     const draft: AdvisoryReport = {
-      kind: 'advisory', ghsa: 'GHSA-jrm2-wc9j-wwcj', state: 'draft', severity: 'critical', url: 'https://github.com/o/r/security/advisories/GHSA-jrm2-wc9j-wwcj',
-      summary: 'Admin routes check sign-in only', description: 'x', cwes: [], reporter: 'craig-dt', createdAt: '2026-09-29T10:00:00Z', cvss: null, affected: [],
+      kind: 'advisory', ghsa: 'GHSA-mhcm-5g5q-gf4x', state: 'draft', severity: 'critical', url: 'https://github.com/o/r/security/advisories/GHSA-mhcm-5g5q-gf4x',
+      summary: 'Connector security audit: confidential fixes', description: 'Please do not merge into the public repository before coordinated release.', cwes: [], reporter: 'ShmalexM', createdAt: '2026-09-23T10:00:00Z', cvss: null, affected: [],
     };
     const text = describeAdvisory(draft);
     expect(text).toContain('filed as a draft by a maintainer, so it never passed through triage');
     const prompt = securityPrompt({ alerts: [], advisories: [text], openPrs: [], budget: { maxRunMinutes: 90 } });
-    expect(prompt).toContain('HELD: advisory#GHSA-<id>');
-    expect(prompt).toContain('coordinated disclosure');
+    expect(prompt).toContain('not the maintainers\' wish');
+    expect(prompt).not.toContain('HELD');
   });
 });

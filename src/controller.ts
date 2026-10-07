@@ -1158,12 +1158,11 @@ async function annotateReports(repo: string, offered: OfferedAlert[], reply: Fix
     const key = alertKey(report);
     const close = reply.dismiss.find((d) => d.key === key);
     const rate = reply.rerate.find((r) => r.key === key);
-    const held = reply.hold.find((h) => h.key === key);
-    const fix = !close && !held && prUrl && fixed.includes(key) ? prUrl : null;
-    if (!close && !rate && !fix && !held) continue;
+    const fix = !close && prUrl && fixed.includes(key) ? prUrl : null;
+    if (!close && !rate && !fix) continue;
     const reported = report.severity ?? 'unrated';
     const note = [
-      held ? `🏭 **Left for a maintainer** by the software factory, ${today}: ${held.reason} It will not be offered to a fixer again.` : `🏭 **Factory assessment**, ${today}.`,
+      `🏭 **Factory assessment**, ${today}.`,
       rate ? `**Severity ${rate.severity}** (reported ${reported}): ${rate.reason}` : null,
       close ? `**Not a vulnerability:** ${close.reason} Closed by the software factory; a maintainer can reopen it.` : null,
       fix ? `**Fix in ${fix}.** Accepted as a draft advisory by the software factory, which closes it once the fix merges.` : null,
@@ -1180,7 +1179,7 @@ async function annotateReports(repo: string, offered: OfferedAlert[], reply: Fix
       });
       if (close) closed.push(key);
       if (rate) rerated.push(`${key} ${reported}→${rate.severity}`);
-      log(`security: ${key} ${[close ? `closed — ${close.reason}` : null, held ? `left for a maintainer — ${held.reason}` : null, rate ? `rated ${rate.severity} (reported ${reported})` : null, fix ? `accepted as a draft, fix in ${fix}` : null].filter(Boolean).join('; ')}`);
+      log(`security: ${key} ${[close ? `closed — ${close.reason}` : null, rate ? `rated ${rate.severity} (reported ${reported})` : null, fix ? `accepted as a draft, fix in ${fix}` : null].filter(Boolean).join('; ')}`);
     } catch (err) {
       log(`security: could not update ${key}: ${(err as Error).message}`);
     }

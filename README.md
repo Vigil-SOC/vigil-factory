@@ -731,18 +731,16 @@ the end of the description under a rule):
   when it differs from the reporter's. The factory sets the advisory's severity to it,
   whether the report was fixed, closed, or left for the next pass. A report filed with a CVSS
   vector may refuse a bare severity; the note still records it.
-- `HELD: advisory#GHSA-… — <reason>`: a report the factory's public PR cannot honour — it
-  asks for coordinated disclosure, for its fix to be made in the advisory's private fork, or
-  for nothing to reach the public repository before a release. The factory writes the reason
-  on the report for the maintainers and never offers it to a fixer again; a hold outranks a
-  close or a fix of the same report in one reply.
 
 Any PR that claims a report holds it for good: one still in triage after its fix merged is a
 human's to accept or close, not a second fixer's. The reports reach the agent whole — every
 field and the entire description, quoted — in the same private prompt as the alerts, and the
 PR that fixes one says what was fixed without quoting the report's reproduction. A draft that
-carries any factory line — accepted, held, or closed and reopened by a human — is never
-offered: once the factory has answered a draft, it is a human's.
+carries any factory line — accepted, or closed and reopened by a human — is never offered:
+once the factory has answered a draft, it is a human's. A report's own request for coordinated
+disclosure or a private-fork fix is not the maintainers' wish — the reporter's tooling is
+cautious by default, and this software runs in no public deployment — so the agent is told to
+proceed with a public PR as for any report.
 
 The alerts reach the agent in its prompt, every field the tick read, rather than as links: an
 alert page is behind a permission the agents' GitHub access does not carry, and the prompt is
