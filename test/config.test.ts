@@ -97,3 +97,12 @@ describe('epic groom model', () => {
     expect(loadConfig(configDir({})).labels.draft).toBe('factory:draft');
   });
 });
+
+describe('usage pause', () => {
+  it('defaults to 90%, takes null for never, and refuses what is not a percentage', () => {
+    expect(loadConfig(configDir({})).worker.pauseAtUsagePercent).toBe(90);
+    expect(loadConfig(configDir({ pauseAtUsagePercent: null })).worker.pauseAtUsagePercent).toBeNull();
+    expect(() => loadConfig(configDir({ pauseAtUsagePercent: 0 }))).toThrow(/pauseAtUsagePercent/);
+    expect(() => loadConfig(configDir({ pauseAtUsagePercent: 150 }))).toThrow(/pauseAtUsagePercent/);
+  });
+});

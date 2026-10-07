@@ -20,11 +20,17 @@
 // Auth is whatever the `claude` binary resolves: the machine's claude.ai login,
 // or CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) where there is no
 // browser. Not `--bare`: bare mode refuses subscription credentials.
+//
+// A subscription is metered in a five-hour window and a weekly one, shared
+// with whoever else uses the login. Every run waits for headroom before it
+// starts, and a run the limit cuts off mid-turn waits for the reset and
+// resumes its own session, so hitting the limit costs time, not the run.
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -40,6 +46,12 @@ const execFileAsync = promisify(execFile);
 const WORKSPACE_TTL_HOURS = 24;
 /** After SIGINT, how long a run gets to write its result before SIGKILL. */
 const KILL_GRACE_MS = 30_000;
+/** How long to wait when the usage limit is in force but its reset time is
+ *  unknown, before looking again. */
+const LIMIT_RECHECK_MS = 15 * 60_000;
+/** Times one run may be cut off by the usage limit and resumed. */
+const MAX_LIMIT_RESUMES = 3;
+const LIMIT_RESUME_NOTE = 'Your previous turn was cut off by a usage limit, which has since reset. Carry on from where you stopped.';
 
 export interface ClaudeCodeWorkerOptions {
   /** The `claude` executable. launchd and CI rarely have ~/.local/bin on PATH. */
@@ -54,8 +66,25 @@ export interface ClaudeCodeWorkerOptions {
   /** Token the agent's `git push` and `gh` use. Null = the machine's own
    *  credentials (gh login, git credential helper), which is the local case. */
   ghToken: string | null;
+  /** Usage, in percent of either subscription window, at which no run starts
+   *  until that window resets. Null: never wait. */
+  pauseAtUsagePercent: number | null;
+  /** Reads the subscription's usage; null when it cannot be read. Injectable
+   *  for tests. */
+  readUsage?: () => Promise<SubscriptionUsage | null>;
   log?: (msg: string) => void;
 }
+
+/** One metering window of a Claude subscription. */
+export interface UsageWindow {
+  name: string;
+  /** Percent of the window used. */
+  utilization: number;
+  /** Epoch ms; null when the API did not say. */
+  resetsAt: number | null;
+}
+
+export type SubscriptionUsage = UsageWindow[];
 
 /** One `claude -p` invocation. */
 interface Run {
@@ -65,6 +94,11 @@ interface Run {
   stderr: string[];
   exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
   startedAt: number;
+  /** Work time the same task already spent in runs the usage limit cut off;
+   *  it counts against the budget, the wait for the reset does not. */
+  priorMs: number;
+  /** How many times the usage limit has cut this task off already. */
+  limitResumes: number;
 }
 
 /** One agent: a clone and every run made in it. */
@@ -111,7 +145,8 @@ export function modelArgs(model: ModelSpec | null): string[] {
   if (!model) return [];
   const wantsLongContext = model.params?.['context'] === '1m' && !model.id.endsWith('[1m]');
   const args = ['--model', wantsLongContext ? `${model.id}[1m]` : model.id];
-  const effort = model.params?.['effort'];
+  // Cursor names it `effort` for some models and `reasoning_effort` for others.
+  const effort = model.params?.['effort'] ?? model.params?.['reasoning_effort'];
   if (effort) args.push('--effort', effort);
   return args;
 }
@@ -163,6 +198,71 @@ export function usageFrom(json: ClaudeResultJson): TokenUsage | null {
   if (json.total_cost_usd !== undefined) usage.costCents = Math.round(json.total_cost_usd * 10_000) / 100;
   return usage;
 }
+
+/** Whether a failed run's report says the subscription's usage limit ended it. */
+export function hitUsageLimit(text: string): boolean {
+  return /hit your (?:session |weekly |usage )?limit|usage limit reached/i.test(text);
+}
+
+/**
+ * How long to wait before a run may start: until every window at or over
+ * `pauseAt` percent has reset. Null when none is.
+ */
+export function headroomWait(usage: SubscriptionUsage, pauseAt: number, now: number): { untilMs: number; full: UsageWindow[] } | null {
+  const full = usage.filter((w) => w.utilization >= pauseAt);
+  if (full.length === 0) return null;
+  const untilMs = Math.max(...full.map((w) => (w.resetsAt !== null && w.resetsAt > now ? w.resetsAt : now + LIMIT_RECHECK_MS)));
+  return { untilMs, full };
+}
+
+/** The usage API's reply as windows; anything it does not meter is skipped. */
+export function parseUsage(json: unknown): SubscriptionUsage {
+  const windows: SubscriptionUsage = [];
+  for (const [key, name] of [['five_hour', 'five-hour'], ['seven_day', 'weekly']] as const) {
+    const w = (json as Record<string, { utilization?: unknown; resets_at?: unknown } | null>)?.[key];
+    if (!w || typeof w.utilization !== 'number') continue;
+    const resetsAt = typeof w.resets_at === 'string' ? Date.parse(w.resets_at) : NaN;
+    windows.push({ name, utilization: w.utilization, resetsAt: Number.isNaN(resetsAt) ? null : resetsAt });
+  }
+  return windows;
+}
+
+/** The OAuth token the machine's Claude Code login holds: macOS keychain,
+ *  else ~/.claude/.credentials.json, else CLAUDE_CODE_OAUTH_TOKEN. */
+async function subscriptionToken(): Promise<string | null> {
+  const fromJson = (raw: string) => (JSON.parse(raw) as { claudeAiOauth?: { accessToken?: string } }).claudeAiOauth?.accessToken ?? null;
+  if (process.platform === 'darwin') {
+    try {
+      const { stdout } = await execFileAsync('security', ['find-generic-password', '-s', 'Claude Code-credentials', '-w']);
+      const token = fromJson(stdout);
+      if (token) return token;
+    } catch { /* not in the keychain; try the file */ }
+  }
+  try {
+    const token = fromJson(readFileSync(resolve(homedir(), '.claude', '.credentials.json'), 'utf8'));
+    if (token) return token;
+  } catch { /* no credentials file */ }
+  return process.env['CLAUDE_CODE_OAUTH_TOKEN'] ?? null;
+}
+
+/** The subscription's usage, from the endpoint Claude Code's own /usage reads. */
+export async function readSubscriptionUsage(): Promise<SubscriptionUsage | null> {
+  const token = await subscriptionToken();
+  if (!token) return null;
+  try {
+    const res = await fetch('https://api.anthropic.com/api/oauth/usage', {
+      headers: { authorization: `Bearer ${token}`, 'anthropic-beta': 'oauth-2025-04-20' },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return null;
+    const usage = parseUsage(await res.json());
+    return usage.length > 0 ? usage : null;
+  } catch {
+    return null;
+  }
+}
+
+const sleep = (ms: number) => new Promise<void>((res) => setTimeout(res, ms));
 
 export function sumUsage(parts: TokenUsage[]): TokenUsage | undefined {
   if (parts.length === 0) return undefined;
@@ -217,6 +317,9 @@ export class ClaudeCodeWorker implements CodingWorker {
   private readonly sessions = new Map<string, Session>();
   private readonly owner: string;
   private readonly repoName: string;
+  /** The wait every concurrent start shares, so one wait is logged once. */
+  private headroom: Promise<void> | null = null;
+  private usageUnreadableLogged = false;
 
   constructor(private readonly opts: ClaudeCodeWorkerOptions) {
     const m = opts.repoUrl.match(/github\.com[/:]([^/]+)\/([^/.]+)/);
@@ -312,7 +415,44 @@ export class ClaudeCodeWorker implements CodingWorker {
     return session;
   }
 
-  private launch(sessionId: string, session: Session, prompt: string, resume: boolean): RunHandle {
+  /**
+   * Resolves once a run may start: at once, unless a subscription window is at
+   * `pauseAtUsagePercent` or past it. `cutOff` is set after a run the limit
+   * ended; then an unreadable usage is no reason to go ahead.
+   */
+  private awaitHeadroom(cutOff = false): Promise<void> {
+    this.headroom ??= this.waitForHeadroom(cutOff).finally(() => { this.headroom = null; });
+    return this.headroom;
+  }
+
+  private async waitForHeadroom(cutOff: boolean): Promise<void> {
+    const pauseAt = this.opts.pauseAtUsagePercent;
+    if (pauseAt === null && !cutOff) return;
+    const read = this.opts.readUsage ?? readSubscriptionUsage;
+    for (;;) {
+      const usage = await read();
+      if (!usage) {
+        if (!cutOff) {
+          if (!this.usageUnreadableLogged) this.log('could not read the subscription\'s usage; runs start without waiting for headroom');
+          this.usageUnreadableLogged = true;
+          return;
+        }
+        this.log(`usage limit hit and the subscription's usage cannot be read; looking again in ${LIMIT_RECHECK_MS / 60_000} min`);
+        await sleep(LIMIT_RECHECK_MS);
+        cutOff = false;
+        continue;
+      }
+      const wait = headroomWait(usage, pauseAt ?? 100, Date.now());
+      if (!wait) return;
+      const windows = wait.full.map((w) => `${w.name} ${w.utilization}%`).join(', ');
+      this.log(`subscription usage at ${windows} (pausing at ${pauseAt ?? 100}%): no run starts until ${new Date(wait.untilMs).toISOString()}`);
+      // A minute past the reset, so the next read sees the new window.
+      await sleep(wait.untilMs - Date.now() + 60_000);
+      cutOff = false;
+    }
+  }
+
+  private launch(sessionId: string, session: Session, prompt: string, resume: boolean, carried?: Pick<Run, 'priorMs' | 'limitResumes'>): RunHandle {
     // The agent gets the MCP servers the target repo declares and no others:
     // not this machine's, whose owner's connectors are not the factory's to
     // hand out. The counterpart of Cursor's agents having only what the repo's
@@ -338,6 +478,8 @@ export class ClaudeCodeWorker implements CodingWorker {
       stdout: [],
       stderr: [],
       startedAt: Date.now(),
+      priorMs: carried?.priorMs ?? 0,
+      limitResumes: carried?.limitResumes ?? 0,
       exited: new Promise((res) => {
         child.once('error', (err) => { run.stderr.push(String(err.message)); res({ code: null, signal: null }); });
         child.once('close', (code, signal) => res({ code, signal }));
@@ -361,6 +503,7 @@ export class ClaudeCodeWorker implements CodingWorker {
     if (opts.prUrl) throw new Error('ClaudeCodeWorker does not work on existing PRs; reviews run on the cursor worker');
     // Only the environment boot check starts elsewhere, and that phase is Cursor's.
     if (opts.startingRef) throw new Error('ClaudeCodeWorker starts every agent from the tick\'s pinned commit');
+    await this.awaitHeadroom();
     const sessionId = randomUUID();
     const session = await this.prepareWorkspace(sessionId, opts);
     return this.launch(sessionId, session, prompt, false);
@@ -369,6 +512,7 @@ export class ClaudeCodeWorker implements CodingWorker {
   async continueRun(handle: RunHandle, instruction: string): Promise<RunHandle> {
     const session = this.sessions.get(handle.agentId);
     if (!session) throw new Error(`ClaudeCodeWorker: no workspace for session ${handle.agentId} in this process`);
+    await this.awaitHeadroom();
     return this.launch(handle.agentId, session, instruction, true);
   }
 
@@ -377,7 +521,7 @@ export class ClaudeCodeWorker implements CodingWorker {
     if (!run) throw new Error(`ClaudeCodeWorker: unknown run ${handle.runId}`);
     const session = this.sessions.get(handle.agentId)!;
 
-    const budgetMs = this.opts.maxRunMinutes * 60_000;
+    const budgetMs = this.opts.maxRunMinutes * 60_000 - run.priorMs;
     let timer: NodeJS.Timeout | undefined;
     const budget = new Promise<'budget'>((res) => { timer = setTimeout(() => res('budget'), budgetMs); });
     const outcome = await Promise.race([run.exited, budget]);
@@ -400,6 +544,13 @@ export class ClaudeCodeWorker implements CodingWorker {
     const resultText = reported || (succeeded ? '' : tail(stderr) || tail(stdout));
     if (!succeeded) {
       this.log(`claude session ${handle.agentId} ended: exit ${outcome.code ?? `signal ${outcome.signal}`}${json?.subtype ? `, ${json.subtype}` : ''}`);
+    }
+    if (!succeeded && !outcome.signal && hitUsageLimit(resultText) && run.limitResumes < MAX_LIMIT_RESUMES) {
+      this.log(`claude session ${handle.agentId} was cut off by the usage limit; resuming it once the limit resets`);
+      const carried = { priorMs: run.priorMs + (Date.now() - run.startedAt), limitResumes: run.limitResumes + 1 };
+      await this.awaitHeadroom(true);
+      const next = this.launch(handle.agentId, session, LIMIT_RESUME_NOTE, true, carried);
+      return this.awaitResult(next);
     }
 
     // The branch the agent left HEAD on, if it is a branch at all: a

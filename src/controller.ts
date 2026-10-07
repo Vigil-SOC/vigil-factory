@@ -97,6 +97,7 @@ export async function buildWorker(config: FactoryConfig): Promise<CodingWorker> 
         bin: claudeBin(),
         workRoot: resolve(projectRoot, config.telemetryDir, 'workspaces'),
         ghToken: githubTokenForAgents(),
+        pauseAtUsagePercent: config.worker.pauseAtUsagePercent ?? null,
       });
       const version = await worker.check();
       log(`claude-code worker: ${version}; agents ${githubTokenForAgents() ? 'push with GH_TOKEN' : "push with this machine's own git/gh login"}`);
@@ -1378,6 +1379,49 @@ export async function tick(opts: { dryRun: boolean }): Promise<void> {
     log(`environment phase error: ${err.message}`);
     return null;
   });
+}
+
+/**
+ * `factory implement --issue N`: the issues a human names, one at a time in the
+ * order named, each groomed first if its verdict is not current. Outside the
+ * capacity gate, as `review --pr` is outside the review queue: naming the
+ * issue is the go-ahead. One at a time because a local worker's agents share
+ * one subscription window, and an issue later in the list may build on one
+ * earlier. Running it again skips what is already claimed, so it resumes.
+ */
+export async function implementIssues(issueNumbers: number[]): Promise<void> {
+  const ctx = buildContext();
+  const { config } = ctx;
+  const { labels } = config;
+  const worker = await buildWorker(config);
+  await ensureLabel(repoSlug(config), labels.factoryPr, '0E8A16', 'Opened by the software factory');
+
+  for (const n of issueNumbers) {
+    // Fresh each time: the issue before this one may have closed a blocker.
+    const all = await candidateTasks(ctx);
+    let task = all.find((t) => t.issueNumber === n);
+    if (!task) { log(`#${n}: not an open issue; skipping.`); continue; }
+    if (admissible(ctx, [task], 'groom').length === 0) { log(`#${n}: claimed (${labels.issueInProgress}) or a draft; skipping.`); continue; }
+    if (isEpic(task, labels)) { log(`#${n}: an epic; its children are the work, so skipping.`); continue; }
+
+    const open = await openSet(ctx, all);
+    if (needsGroom([task], labels, false, open).length > 0) {
+      await runGroomPhase(ctx, worker, [task], { open });
+      task = (await candidateTasks(ctx)).find((t) => t.issueNumber === n);
+      if (!task) { log(`#${n}: closed by its groom.`); continue; }
+    }
+    if (!isGroomed(task, labels)) {
+      log(`#${n}: verdict is ${verdict(task, labels) ?? 'none'}${groomState(task, labels, open) === 'current' ? '' : ' (not current)'}; not implementing.`);
+      continue;
+    }
+
+    log(`implementing #${n} "${task.title}"`);
+    await ctx.source.markStarted(task);
+    await runPipeline(ctx, worker, task, undefined, null).catch(async (err) => {
+      log(`pipeline error for #${n}: ${(err as Error).message}`);
+      await failRun(ctx, worker, task, err as Error);
+    });
+  }
 }
 
 interface Pick {

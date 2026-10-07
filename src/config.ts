@@ -33,6 +33,10 @@ export interface FactoryConfig {
     models: Record<string, ModelSpec>;
     pollIntervalSeconds: number;
     maxRunMinutes: number;
+    /** claude-code only: usage, in percent of the subscription's five-hour or
+     *  weekly window, at which no agent starts until that window resets.
+     *  Default 90; null never waits. */
+    pauseAtUsagePercent?: number | null;
     /** Credentials every agent is handed, by environment variable name. Only
      *  the ones actually set where the tick runs are forwarded (see
      *  agentCredentials); the rest are logged and left out. */
@@ -171,6 +175,11 @@ export function loadConfig(root: string = projectRoot): FactoryConfig {
     config.worker.model = model;
   }
   config.worker.agentEnv ??= [];
+  if (config.worker.pauseAtUsagePercent === undefined) config.worker.pauseAtUsagePercent = 90;
+  const pauseAt = config.worker.pauseAtUsagePercent;
+  if (pauseAt !== null && !(typeof pauseAt === 'number' && pauseAt > 0 && pauseAt <= 100)) {
+    throw new Error(`worker.pauseAtUsagePercent must be a percentage in (0, 100] or null, got ${JSON.stringify(pauseAt)}`);
+  }
   for (const cred of config.worker.agentEnv) {
     // Cursor rejects env var names in its own namespace; the rest is shell.
     if (typeof cred?.name !== 'string' || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(cred.name) || cred.name.startsWith('CURSOR_')) {
