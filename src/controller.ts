@@ -40,11 +40,11 @@ import { Telemetry } from './telemetry.ts';
 import { filterAssigned, filterClaimed, filterDrafts, filterEpics, parseSelection, type Selection } from './selector.ts';
 import { BOOT_CHECK_PROMPT, depsPrompt, environmentPrompt, fixChecksPrompt, resolveConflictsPrompt, groomEpicPrompt, groomPrompt, implementPrompt, reviewPrompt, securityPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
 import { factoryComment, isFactoryComment, groomState, isBlocker, isEpic, isGroomed, needsGroom, queueOrder, openChildren, openIssues, parseGroomReply, stampExtrasFor, unaccountedBlockers, verdict, type GroomLabels, type OpenIssues } from './groom.ts';
-import { type PrCheck, addPrLabels, approveHeldRuns, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, annotateAdvisory, dismissCodeScanningAlert, listAdvisoryReports, listAllIssuesByLabel, listCodeScanningAlerts, listDependabotAlerts, listDependabotPrs, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, prMergeable, prDrift, reopenPr, userId, viewPr, viewPrForReview } from './github.ts';
+import { type PrCheck, addPrLabels, approveHeldRuns, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, annotateAdvisory, dismissCodeScanningAlert, listAcceptedReports, listAdvisoryReports, listAllIssuesByLabel, listCodeScanningAlerts, listDependabotAlerts, listDependabotPrs, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, prMergeable, prDrift, reopenPr, userId, viewPr, viewPrForReview } from './github.ts';
 import { ENV_AGENT_MARK, environmentChangedAt, filedIssueBody, parseEnvReport, recentVerdicts, skipReason, unreadFactoryPrs, withOpenedThisTick, workerSkipReason, type UnreadPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
 import { carried, depsQueue, depsStamp, droppedReasons, skipReason as depsSkipReason, upgradeIssue, upgradeKey, upgradeKeyOf, type DepsPr } from './deps.ts';
-import { alertKey, keysIn, offeredLine, parseFixReply, securityQueue, securityStamp, skipReason as securitySkipReason, type FixReply, type OfferedAlert, type SecurityAlert } from './security.ts';
+import { alertKey, fixedReports, keysIn, offeredLine, parseFixReply, securityQueue, securityStamp, skipReason as securitySkipReason, type FixReply, type OfferedAlert, type SecurityAlert } from './security.ts';
 import { coAuthorTrailer, isBot, parseReviewReply, reviewComment, reviewQueue, reviewStamp, sameCommit, skipReason as reviewSkipReason, staleReason, staleReport, touchesGithub, type ReviewOutcome, type ReviewPr, type ReviewReply } from './review.ts';
 
 export function log(msg: string): void {
@@ -1165,7 +1165,7 @@ async function annotateReports(repo: string, offered: OfferedAlert[], reply: Fix
       `🏭 **Factory assessment**, ${today}.`,
       rate ? `**Severity ${rate.severity}** (reported ${reported}): ${rate.reason}` : null,
       close ? `**Not a vulnerability:** ${close.reason} Closed by the software factory; a maintainer can reopen it.` : null,
-      fix ? `**Fix in ${fix}.** Accepted as a draft advisory by the software factory; publishing it once the fix merges is a maintainer's call.` : null,
+      fix ? `**Fix in ${fix}.** Accepted as a draft advisory by the software factory, which closes it once the fix merges.` : null,
     ].filter(Boolean).join('\n\n');
     const change: Parameters<typeof annotateAdvisory>[3] = {};
     if (close) change.state = 'closed';
@@ -1188,6 +1188,43 @@ async function annotateReports(repo: string, offered: OfferedAlert[], reply: Fix
 }
 
 /**
+ * Close the reports whose fix merged. A report the factory accepted names its
+ * PR; once that PR is merged the report is done — these advisories track and
+ * close security issues, nobody publishes them — so the factory closes it with
+ * a line saying so, on its first pass after the merge. A report GitHub will
+ * not let it close is logged and tried again next pass. Nothing here needs
+ * the agent, so it runs even on a pass the fixer sits out.
+ */
+export async function closeFixedReports(config: FactoryConfig, opts: { dryRun: boolean }): Promise<string[]> {
+  if (securitySkipReason(config.security.enabled, config.worker.kind)) return [];
+  const repo = repoSlug(config);
+  const [accepted, prs] = await Promise.all([
+    listAcceptedReports(repo).catch((err: Error) => {
+      log(`security: cannot read accepted advisories (${err.message.split('\n')[0]!.slice(0, 200)})`);
+      return [];
+    }),
+    listPrsByLabel(repo, config.labels.securityPr, 'merged', 500),
+  ]);
+  const closed: string[] = [];
+  const today = new Date().toISOString().slice(0, 10);
+  for (const { report, prUrl } of fixedReports(accepted, prs)) {
+    const key = `advisory#${report.ghsa}`;
+    if (opts.dryRun) {
+      log(`security: would close ${key} — fixed in ${prUrl}, merged`);
+      continue;
+    }
+    try {
+      await annotateAdvisory(repo, report.ghsa, `🏭 **Closed by the software factory**, ${today}: the fix in ${prUrl} merged. A maintainer can reopen it.`, { state: 'closed' });
+      closed.push(key);
+      log(`security: closed ${key} — fixed in ${prUrl}, merged`);
+    } catch (err) {
+      log(`security: could not close ${key}: ${(err as Error).message.split('\n')[0]}`);
+    }
+  }
+  return closed;
+}
+
+/**
  * The security phase: one agent takes the most severe group of open alerts no
  * factory PR claims that one PR can fix, and opens that PR. The factory claims
  * the alerts on it, hands a red check back, and leaves it for a human, like an
@@ -1198,6 +1235,7 @@ async function annotateReports(repo: string, offered: OfferedAlert[], reply: Fix
 export async function runSecurityPhase(ctx: FactoryContext, worker: CodingWorker): Promise<SecurityRecord | null> {
   const { config } = ctx;
   const repo = repoSlug(config);
+  await closeFixedReports(config, { dryRun: false });
   const inputs = await securityInputs(config);
   if (inputs.skip) {
     log(`security: skipped — ${inputs.skip}.`);
@@ -1274,7 +1312,7 @@ export async function runSecurityPhase(ctx: FactoryContext, worker: CodingWorker
     const reports = fixed.length - alerts;
     const then = [
       alerts > 0 ? `GitHub closes ${alerts === 1 ? 'the alert' : 'each alert'} once this reaches the default branch; one still open a day after the merge is offered to the factory again.` : null,
-      reports > 0 ? `${reports === 1 ? 'The report is' : 'The reports are'} accepted as draft advisories naming this PR; publishing ${reports === 1 ? 'it' : 'them'} once this merges is a maintainer's call.` : null,
+      reports > 0 ? `${reports === 1 ? 'The report is' : 'The reports are'} accepted as ${reports === 1 ? 'a draft advisory' : 'draft advisories'} naming this PR; the factory closes ${reports === 1 ? 'it' : 'them'} on its first pass after this merges.` : null,
     ].filter(Boolean).join(' ');
     await commentOnPr(repo, prUrl, factoryComment(`${securityStamp(fixed)}\n🏭 **Factory security fix** for ${fixed.map((k) => `[${k}](${url.get(k)})`).join(', ')}. ${then}`));
   } else {
@@ -1551,6 +1589,7 @@ async function dryRun(ctx: FactoryContext, allCandidates: Task[]): Promise<void>
     console.log(`\n${depsPrompt(deps.offered.map((p) => p.url))}\n`);
   }
 
+  await closeFixedReports(config, { dryRun: true });
   const security = await securityInputs(config);
   if (security.skip) {
     log(`security: would skip — ${security.skip}.`);

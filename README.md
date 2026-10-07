@@ -110,8 +110,9 @@ reconcile with GitHub: record the verdict on every factory PR that has closed, r
    agent, which fixes the most severe group one PR can and opens it, labelled
    factory:security — no issue, no groom. A report is verified first: one that does not hold
    is closed with the reason, one rated wrong is re-rated, one that holds is accepted as a
-   draft naming the PR. The factory claims the alerts on the PR, hands a red check back, and
-   leaves it for a human. Nothing due, or three security PRs already awaiting a merge, no agent
+   draft naming the PR, and closed by the factory once that PR merges. The factory claims the
+   alerts on the PR, hands a red check back, and leaves it for a human. Nothing due, or three
+   security PRs already awaiting a merge, no agent
 count the jobs already in flight (open factory PRs + running pipelines)
    → no free slot under maxConcurrentJobs? stop here
 for each free slot:
@@ -717,8 +718,11 @@ the end of the description under a rule):
 
 - A fix: the PR claims `advisory#GHSA-…` like any alert, and the factory accepts the report
   as a draft advisory with the PR named on it. GitHub closes no report on a merge, so the
-  acceptance is what takes it out of the queue, and publishing the advisory once the fix
-  merges is a human's call — the babysitter notes it in its journal.
+  acceptance is what takes it out of the queue, and the factory closes the report itself on
+  its first pass after the PR merges, with a line saying so. These reports track and close
+  security issues; nobody here publishes them, and a closed one can still be published, or
+  reopened, by a maintainer. A draft the factory did not accept — one a maintainer wrote
+  themselves, or one a human reopened after the factory closed it — is never closed this way.
 - `FALSE POSITIVE: advisory#GHSA-… — <reason>`: not a vulnerability. The factory closes the
   report with the reason on it. A human can reopen it.
 - `SEVERITY: advisory#GHSA-… <low|medium|high|critical> — <reason>`: the agent's rating,

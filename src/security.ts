@@ -45,10 +45,12 @@
 // (the factory closes the report with the reason), or a `SEVERITY:` the agent
 // rates itself when the reported one is wrong (the factory sets it). Each is
 // written onto the advisory, where the reporter and the maintainers read it,
-// and each is reversible from the advisory's page. Nothing closes a report on
-// a merge — GitHub does not know a fix landed — so acceptance is the hold: a
-// report leaves the queue when it leaves triage, and publishing the advisory
-// once the fix merges is a human's call.
+// and each is reversible from the advisory's page. GitHub closes no report on
+// a merge — it does not know a fix landed — so acceptance is the hold: a
+// report leaves the queue when it leaves triage, and the factory closes it
+// itself on the first pass after its fix merges. The maintainers use these
+// reports to track and close security issues, not to publish advisories, so a
+// fixed one is done; publishing stays a human's to do from the closed report.
 
 export const SEVERITIES = ['low', 'medium', 'high', 'critical'] as const;
 export type Severity = typeof SEVERITIES[number];
@@ -255,6 +257,34 @@ export function offeredLine(o: OfferedAlert): string {
 }
 
 const FIXED_RE = /^[\s>*-]*alerts:(.*)$/gim;
+/**
+ * A report the factory accepted — its note names the fix PR — and nobody has
+ * answered since: the factory's own acceptance is the last word on it. The
+ * note is the last factory line in the description, so a report a human
+ * reopened after the factory closed it is not here, and neither is one a
+ * maintainer wrote as a draft themselves.
+ */
+export function acceptedFix(description: string): string | null {
+  const notes = [...description.matchAll(/\*\*(?:Fix in (https?:\/\/\S+?)\.|Closed by the software factory[^*]*)\*\*/g)];
+  const last = notes.at(-1);
+  return last?.[1] ?? null;
+}
+
+/**
+ * The accepted reports whose fix has merged, each with its PR: these the
+ * factory closes, since a fixed report is a done one here. A PR that is not
+ * the factory's security PR — a human linked their own — is taken at its word.
+ */
+export function fixedReports<R extends { ghsa: string; description: string }>(accepted: R[], prs: { url: string; state: string }[]): { report: R; prUrl: string }[] {
+  const merged = new Set(prs.filter((p) => p.state === 'MERGED').map((p) => p.url));
+  const out: { report: R; prUrl: string }[] = [];
+  for (const report of accepted) {
+    const prUrl = acceptedFix(report.description);
+    if (prUrl && merged.has(prUrl)) out.push({ report, prUrl });
+  }
+  return out;
+}
+
 const DISMISS_RE = /^[\s>*-]*false[ -]positive:\s*((?:code-scanning#\d+)|(?:advisory#GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}))\s*[—–:-]*\s*(.*)$/gim;
 const SEVERITY_RE = /^[\s>*-]*severity:\s*(advisory#GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4})\s+(low|medium|moderate|high|critical)\b\s*[—–:-]*\s*(.*)$/gim;
 

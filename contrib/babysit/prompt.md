@@ -95,8 +95,9 @@ Oldest first, for each:
 
 A `factory:security` PR whose factory comment names an `advisory#GHSA-…` fixes a privately
 reported vulnerability: the tick accepted the report as a draft advisory naming the PR. Merge
-the PR as any other, then note in the journal that the advisory awaits Sam to publish —
-publishing is outward-facing and his call, so it is a note, not an alert, and only once.
+the PR as any other; the tick you start next closes the report itself, so there is nothing
+to note. A report still in draft two ticks after its PR merged is one the tick could not
+close (the tick log says `security: could not close advisory#…`) — alert on that, once.
 
 An unlabelled PR on any `cursor/factory-…` branch is the factory's, from a pipeline that
 died before taking it up: `cursor/factory-<N>-…` is an implementer's, and

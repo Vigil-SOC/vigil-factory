@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { alertKey, claimedBy, describeAdvisory, describeAlert, keysIn, MAX_OPEN_PRS, parseFixReply, parseSeverity, securityQueue, securityStamp, skipReason, type AdvisoryReport, type CodeScanningAlert, type DependabotAlert, type SecurityPr } from '../src/security.ts';
+import { alertKey, claimedBy, describeAdvisory, describeAlert, fixedReports, keysIn, MAX_OPEN_PRS, parseFixReply, parseSeverity, securityQueue, securityStamp, skipReason, type AdvisoryReport, type CodeScanningAlert, type DependabotAlert, type SecurityPr } from '../src/security.ts';
 import { factoryComment } from '../src/groom.ts';
 import { securityPrompt } from '../src/prompts.ts';
 
@@ -185,5 +185,38 @@ describe('reported advisories', () => {
 
   it('the skip reason says both are empty', () => {
     expect(skipReason(true, 'cursor', [], { offered: 0, held: 0 })).toMatch(/no reports in triage/);
+  });
+});
+
+describe('fixedReports', () => {
+  const accepted = (ghsa: string, description: string) => ({ ghsa, description });
+  const pr = (url: string, state: 'OPEN' | 'MERGED' | 'CLOSED') => ({ url, state });
+  const fixUrl = 'https://github.com/o/r/pull/1766';
+  const acceptedNote = `### Summary\nViewer can write settings.\n\n---\n\n🏭 **Factory assessment**, 2026-10-06.\n\n**Severity high** (reported critical): needs a session.\n\n**Fix in ${fixUrl}.** Accepted as a draft advisory by the software factory, which closes it once the fix merges.\n`;
+
+  it('closes an accepted report once the PR its note names has merged', () => {
+    const out = fixedReports([accepted('GHSA-9mxj-c95c-5823', acceptedNote)], [pr(fixUrl, 'MERGED')]);
+    expect(out.map((o) => [o.report.ghsa, o.prUrl])).toEqual([['GHSA-9mxj-c95c-5823', fixUrl]]);
+  });
+
+  it('waits while the PR is open, and leaves a closed-unmerged PR alone', () => {
+    expect(fixedReports([accepted('GHSA-9mxj-c95c-5823', acceptedNote)], [pr(fixUrl, 'OPEN')])).toEqual([]);
+    expect(fixedReports([accepted('GHSA-9mxj-c95c-5823', acceptedNote)], [pr(fixUrl, 'CLOSED')])).toEqual([]);
+  });
+
+  it('never touches a draft a maintainer wrote themselves', () => {
+    const human = accepted('GHSA-jrm2-wc9j-wwcj', `### Summary\nAdmin routes check sign-in only. Fixed in ${fixUrl} I think.`);
+    expect(fixedReports([human], [pr(fixUrl, 'MERGED')])).toEqual([]);
+  });
+
+  it('leaves a report a human reopened after the factory closed it', () => {
+    const reopened = accepted('GHSA-9mxj-c95c-5823', `${acceptedNote}\n---\n\n🏭 **Closed by the software factory**, 2026-10-07: the fix in ${fixUrl} merged. A maintainer can reopen it.\n`);
+    expect(fixedReports([reopened], [pr(fixUrl, 'MERGED')])).toEqual([]);
+  });
+
+  it('takes the latest acceptance when a report was accepted twice', () => {
+    const again = accepted('GHSA-9mxj-c95c-5823', `${acceptedNote}\n---\n\n🏭 **Closed by the software factory**, 2026-10-07: the fix in ${fixUrl} merged.\n\n---\n\n🏭 **Factory assessment**, 2026-10-08.\n\n**Fix in https://github.com/o/r/pull/1900.** Accepted as a draft advisory by the software factory, which closes it once the fix merges.\n`);
+    expect(fixedReports([again], [pr(fixUrl, 'MERGED'), pr('https://github.com/o/r/pull/1900', 'OPEN')])).toEqual([]);
+    expect(fixedReports([again], [pr('https://github.com/o/r/pull/1900', 'MERGED')]).map((o) => o.prUrl)).toEqual(['https://github.com/o/r/pull/1900']);
   });
 });

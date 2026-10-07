@@ -339,11 +339,21 @@ export async function listAdvisoryReports(repo: string): Promise<AdvisoryReport[
 }
 
 /**
+ * The repo's draft advisories — reports accepted but not yet closed or
+ * published — with their descriptions, where the factory's acceptance note
+ * names the fix PR. Throws when the token cannot read them.
+ */
+export async function listAcceptedReports(repo: string): Promise<{ ghsa: string; summary: string; description: string }[]> {
+  return ghApiList(`repos/${repo}/security-advisories?state=draft&per_page=100`, `.[] | { ghsa: .ghsa_id, summary, description: (.description // "") }`);
+}
+
+/**
  * Write the factory's assessment onto a reported advisory: the note goes at
  * the end of its description, under a rule, where the reporter and the
  * maintainers read it — the advisory has no comment API — and the severity
  * and state change with it when asked. `draft` accepts a report, `closed`
- * rejects it; both are a human's to undo from the advisory's page. The
+ * rejects it or finishes it once its fix merged; both are a human's to undo
+ * from the advisory's page. The
  * description is re-read first so a line someone added since the tick read
  * it is kept.
  */
