@@ -102,10 +102,9 @@ export interface FactoryConfig {
   /** The review phase: PRs the factory did not open, reviewed against the
    *  principles, verified, fixed, and merged or closed by the factory itself.
    *  `maxPerTick` bounds how many one tick reviews. Off by default: it is the
-   *  one phase that merges. A PR more than `maxCommitsBehind` commits behind the
-   *  default branch, or conflicting with it, is closed with a request to rebase,
-   *  before any agent is spent on it. */
-  review: { enabled: boolean; maxPerTick: number; maxCommitsBehind: number };
+   *  one phase that merges. A PR that conflicts with the default branch is
+   *  caught up by the review agent, not handed back to its author. */
+  review: { enabled: boolean; maxPerTick: number };
   /** The dependency phase: Dependabot's open PRs carried onto one branch by one
    *  agent, the lockfile regenerated, and the batch merged on green CI under
    *  the review phase's rules. Off by default: it merges. */
@@ -202,17 +201,13 @@ export function loadConfig(root: string = projectRoot): FactoryConfig {
   config.security.minSeverity = parseSeverity(config.security.minSeverity ?? 'high');
   config.simplify ??= { enabled: false };
   // The one phase that merges is the one a deployment has to ask for.
-  config.review ??= { enabled: false, maxPerTick: 3, maxCommitsBehind: 100 };
+  config.review ??= { enabled: false, maxPerTick: 3 };
   config.review.enabled ??= false;
   config.deps ??= { enabled: false };
   config.deps.enabled ??= false;
   config.review.maxPerTick ??= 3;
-  config.review.maxCommitsBehind ??= 100;
   if (!Number.isInteger(config.review.maxPerTick) || config.review.maxPerTick < 1) {
     throw new Error(`review.maxPerTick must be a positive integer, got ${JSON.stringify(config.review.maxPerTick)}`);
-  }
-  if (!Number.isInteger(config.review.maxCommitsBehind) || config.review.maxCommitsBehind < 0) {
-    throw new Error(`review.maxCommitsBehind must be a non-negative integer, got ${JSON.stringify(config.review.maxCommitsBehind)}`);
   }
   config.selector ??= { enabled: false, maxCandidates: 100 };
   config.selector.enabled ??= false;

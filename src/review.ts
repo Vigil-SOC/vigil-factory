@@ -167,25 +167,6 @@ export function reviewQueue(prs: ReviewPr[], factoryLabels: string[]): { open: R
   };
 }
 
-/**
- * Why a PR is too far from the default branch to review, or null. Catching one
- * up is the author's job: an agent that merges the default branch in, resolves
- * conflicts, and verifies the result has done an implementer's run on someone
- * else's code. GitHub reports that a PR conflicts, not how much, so any
- * conflict counts. `UNKNOWN` mergeability is GitHub still computing it, not a
- * conflict.
- */
-export function staleReason(state: { mergeable: string; behindBy: number }, maxCommitsBehind: number): string | null {
-  if (state.mergeable === 'CONFLICTING') return 'it conflicts with the default branch';
-  if (state.behindBy > maxCommitsBehind) return `it is ${state.behindBy} commits behind the default branch`;
-  return null;
-}
-
-/** The factory's report on a PR it closed without a review for being stale. */
-export function staleReport(reason: string, maxCommitsBehind: number): string {
-  return `Nothing was reviewed: ${reason}, and the factory reviews a PR that is within ${maxCommitsBehind} commits of the default branch and merges cleanly. Rebase it onto the default branch and open a new PR — GitHub cannot reopen a closed PR whose branch was force-pushed — and it is reviewed as it stands.`;
-}
-
 /** A path under `.github/`: workflows, actions, CODEOWNERS, dependabot config. */
 export function touchesGithub(files: { path: string }[]): string[] {
   return files.map((f) => f.path).filter((p) => p === '.github' || p.startsWith('.github/'));

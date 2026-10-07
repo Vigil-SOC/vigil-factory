@@ -47,7 +47,7 @@ function config(maxConcurrentJobs: number): FactoryConfig {
     selector: { enabled: false, maxCandidates: 100 },
     environment: { enabled: true, maxPrsPerPass: 3 },
     simplify: { enabled: true },
-    review: { enabled: false, maxPerTick: 3, maxCommitsBehind: 100 },
+    review: { enabled: false, maxPerTick: 3 },
     deps: { enabled: false },
     security: { enabled: false, minSeverity: 'high' },
     assignedIssues: { groom: true, implement: false },
