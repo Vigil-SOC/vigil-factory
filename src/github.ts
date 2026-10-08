@@ -253,24 +253,30 @@ export async function approveHeldRuns(repo: string, sha: string): Promise<number
 
 /**
  * Wait for a PR's checks to settle, and return the failing ones. A repo with no
- * checks settles at once — unless `expectChecks`, when runs were just approved
- * and their checks have yet to appear. Gives up after `maxWaitMs` and treats
- * whatever is still pending as not failing: a slow CI is not the implementer's
- * fault, and the human sees the real state on the PR either way.
+ * checks settles once `graceMs` has passed with none appearing — GitHub
+ * registers a fresh push's check runs some seconds after the push, so a PR read
+ * the moment it opens shows none even where CI is about to run (Vigil #1932
+ * was reported "checks none" and its red lint never went back). With
+ * `expectChecks`, runs were just approved and an empty list waits until
+ * `maxWaitMs`. Gives up after `maxWaitMs` and treats whatever is still pending
+ * as not failing: a slow CI is not the implementer's fault, and the human sees
+ * the real state on the PR either way.
  */
 export async function awaitPrChecks(
   repo: string,
   prUrl: string,
-  opts: { maxWaitMs: number; pollMs: number; expectChecks?: boolean; log?: (msg: string) => void },
+  opts: { maxWaitMs: number; pollMs: number; expectChecks?: boolean; graceMs?: number; log?: (msg: string) => void },
 ): Promise<{ failed: PrCheck[]; settled: boolean }> {
-  const deadline = Date.now() + opts.maxWaitMs;
+  const started = Date.now();
+  const deadline = started + opts.maxWaitMs;
   for (;;) {
     const checks = await prChecks(repo, prUrl);
     const pending = checks.filter((c) => c.bucket === 'pending');
-    const waiting = pending.length > 0 || (opts.expectChecks === true && checks.length === 0);
+    const unregistered = checks.length === 0 && (opts.expectChecks === true || Date.now() - started < (opts.graceMs ?? 0));
+    const waiting = pending.length > 0 || unregistered;
     if (!waiting) return { failed: checks.filter((c) => c.bucket === 'fail'), settled: true };
     if (Date.now() > deadline) return { failed: checks.filter((c) => c.bucket === 'fail'), settled: false };
-    opts.log?.(`${prUrl}: ${pending.length > 0 ? `${pending.length} check(s) still running` : 'waiting for the approved runs\' checks'}`);
+    opts.log?.(`${prUrl}: ${pending.length > 0 ? `${pending.length} check(s) still running` : 'waiting for its checks to register'}`);
     await new Promise((r) => setTimeout(r, opts.pollMs));
   }
 }

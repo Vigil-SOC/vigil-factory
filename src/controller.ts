@@ -1719,6 +1719,8 @@ async function runPipeline(
 
 /** How long the pipeline waits for a PR's CI before treating it as unsettled. */
 const CHECKS_WAIT_MS = 30 * 60_000;
+/** How long a PR with no checks yet is given for its CI to register before it counts as having none. */
+const CHECKS_GRACE_MS = 3 * 60_000;
 /**
  * Follow-up rounds an implementer gets, within its own pipeline, to turn red CI
  * green. A red PR fills a slot until a human acts, and three of them stall the
@@ -1811,7 +1813,7 @@ async function greenChecks(
   opts: { expectChecks?: boolean } = {},
 ): Promise<{ fixRounds: number; checks: NonNullable<RunRecord['checks']> }> {
   const repo = repoSlug(config);
-  const poll = { maxWaitMs: CHECKS_WAIT_MS, pollMs: config.worker.pollIntervalSeconds * 1000, log };
+  const poll = { maxWaitMs: CHECKS_WAIT_MS, pollMs: config.worker.pollIntervalSeconds * 1000, graceMs: CHECKS_GRACE_MS, log };
   let fixRounds = 0;
   let { failed, settled } = await awaitPrChecks(repo, prUrl, { ...poll, expectChecks: opts.expectChecks === true });
   while (failed.length > 0 && fixRounds < FIX_ROUNDS) {
