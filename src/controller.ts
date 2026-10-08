@@ -1382,46 +1382,41 @@ export async function tick(opts: { dryRun: boolean }): Promise<void> {
 }
 
 /**
- * `factory implement --issue N`: the issues a human names, one at a time in the
- * order named, each groomed first if its verdict is not current. Outside the
- * capacity gate, as `review --pr` is outside the review queue: naming the
- * issue is the go-ahead. One at a time because a local worker's agents share
- * one subscription window, and an issue later in the list may build on one
- * earlier. Running it again skips what is already claimed, so it resumes.
+ * `factory implement --issue N`: the issues a human names, in the order named.
+ * Not groomed: the groom is the factory's judgment that an issue is one PR
+ * worth building, and a human naming one has made that judgment. The attempt
+ * still tests it — an implementer that opens no PR retracts the verdict as it
+ * would any groom's. Outside the capacity gate, as `review --pr` is outside
+ * the review queue. `parallel` lanes take the next issue as each frees up;
+ * one by default, since a local worker's agents share one subscription
+ * window. Running it again skips what is already claimed, so it resumes.
  */
-export async function implementIssues(issueNumbers: number[]): Promise<void> {
+export async function implementIssues(issueNumbers: number[], parallel = 1): Promise<void> {
   const ctx = buildContext();
-  const { config } = ctx;
-  const { labels } = config;
-  const worker = await buildWorker(config);
-  await ensureLabel(repoSlug(config), labels.factoryPr, '0E8A16', 'Opened by the software factory');
+  const worker = await buildWorker(ctx.config);
+  await ensureLabel(repoSlug(ctx.config), ctx.config.labels.factoryPr, '0E8A16', 'Opened by the software factory');
+  const queue = [...issueNumbers];
+  const lane = async () => {
+    for (let n = queue.shift(); n !== undefined; n = queue.shift()) await implementNamed(ctx, worker, n);
+  };
+  await Promise.all(Array.from({ length: Math.min(parallel, queue.length) }, lane));
+}
 
-  for (const n of issueNumbers) {
-    // Fresh each time: the issue before this one may have closed a blocker.
-    const all = await candidateTasks(ctx);
-    let task = all.find((t) => t.issueNumber === n);
-    if (!task) { log(`#${n}: not an open issue; skipping.`); continue; }
-    if (admissible(ctx, [task], 'groom').length === 0) { log(`#${n}: claimed (${labels.issueInProgress}) or a draft; skipping.`); continue; }
-    if (isEpic(task, labels)) { log(`#${n}: an epic; its children are the work, so skipping.`); continue; }
+async function implementNamed(ctx: FactoryContext, worker: CodingWorker, n: number): Promise<void> {
+  const { labels } = ctx.config;
+  // Fetched now, not when the command began: an issue finished meanwhile may
+  // have changed this one.
+  const task = (await candidateTasks(ctx)).find((t) => t.issueNumber === n);
+  if (!task) return log(`#${n}: not an open issue; skipping.`);
+  if (admissible(ctx, [task], 'groom').length === 0) return log(`#${n}: claimed (${labels.issueInProgress}) or a draft; skipping.`);
+  if (isEpic(task, labels)) return log(`#${n}: an epic; its children are the work, so skipping.`);
 
-    const open = await openSet(ctx, all);
-    if (needsGroom([task], labels, false, open).length > 0) {
-      await runGroomPhase(ctx, worker, [task], { open });
-      task = (await candidateTasks(ctx)).find((t) => t.issueNumber === n);
-      if (!task) { log(`#${n}: closed by its groom.`); continue; }
-    }
-    if (!isGroomed(task, labels)) {
-      log(`#${n}: verdict is ${verdict(task, labels) ?? 'none'}${groomState(task, labels, open) === 'current' ? '' : ' (not current)'}; not implementing.`);
-      continue;
-    }
-
-    log(`implementing #${n} "${task.title}"`);
-    await ctx.source.markStarted(task);
-    await runPipeline(ctx, worker, task, undefined, null).catch(async (err) => {
-      log(`pipeline error for #${n}: ${(err as Error).message}`);
-      await failRun(ctx, worker, task, err as Error);
-    });
-  }
+  log(`implementing #${n} "${task.title}"`);
+  await ctx.source.markStarted(task);
+  await runPipeline(ctx, worker, task, undefined, null).catch(async (err) => {
+    log(`pipeline error for #${n}: ${(err as Error).message}`);
+    await failRun(ctx, worker, task, err as Error);
+  });
 }
 
 interface Pick {

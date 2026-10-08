@@ -33,10 +33,11 @@ Usage:
                                        code scanning alerts (at security.minSeverity or above) and privately reported advisories
                                        in triage that no factory PR claims and one PR can fix, and opens that PR; a report it
                                        shows is not a vulnerability is closed, one it rates differently is re-rated.
-  npm run factory -- implement --issue N[,M...]
-                                       Groom (if due) and implement the named issues, one at a time in the order given,
-                                       outside the capacity gate. Skips any already claimed, so re-running resumes;
-                                       one whose groom is blocked or needs work is reported and left.
+  npm run factory -- implement --issue N[,M...] [--parallel K]
+                                       Implement the named issues in the order given, K at a time (default 1), outside
+                                       the capacity gate and without a groom: naming an issue is the verdict that it is
+                                       one PR, and the attempt tests it as it would a groom's. Skips any already claimed,
+                                       so re-running resumes.
   npm run factory -- status            Show grooming progress, capacity, in-flight jobs, pending PRs, and recent telemetry.
   npm run factory -- abort [--issue N] Abandon stuck local pipelines — all of them, or just issue N's
                                        (cancels the runs if the worker still can).
@@ -267,6 +268,12 @@ async function main(): Promise<void> {
   }
   const issueArg = args.find((a) => a.startsWith('--issue'))?.split('=')[1]
     ?? (args.includes('--issue') ? args[args.indexOf('--issue') + 1] : undefined);
+  const parallelArg = args.find((a) => a.startsWith('--parallel'))?.split('=')[1]
+    ?? (args.includes('--parallel') ? args[args.indexOf('--parallel') + 1] : undefined);
+  const parallel = parallelArg !== undefined ? Number(parallelArg) : 1;
+  if (!Number.isInteger(parallel) || parallel < 1) {
+    throw new Error(`--parallel must be a positive integer, got "${parallelArg}"`);
+  }
   // `implement` takes a list (`--issue 1,2,3`, or the flag repeated); `abort` takes one.
   const issueNumbers = args.flatMap((a, i) => a.startsWith('--issue=') ? [a.split('=')[1]!] : a === '--issue' && args[i + 1] ? [args[i + 1]!] : [])
     .flatMap((v) => v.split(','))
@@ -309,7 +316,7 @@ async function main(): Promise<void> {
       break;
     case 'implement':
       if (issueNumbers.length === 0) throw new Error('implement needs --issue N[,M...]');
-      await implementIssues(issueNumbers);
+      await implementIssues(issueNumbers, parallel);
       break;
     case 'status':
       await status();
