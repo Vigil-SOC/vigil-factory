@@ -33,7 +33,17 @@
 // is stamped `outcome=left verdict=merge`. The review's judgment stands while
 // the PR does, so each tick tries the merge again, with no agent, until it
 // lands or the PR changes and is reviewed afresh. A human is not the next
-// step for a PR the factory already decided to merge.
+// step for a PR the factory already decided to merge. When the merge that was
+// refused was a replacement's (below), the stamp names it, `replacement=N`,
+// and the retry merges that PR and closes this one as superseded — a
+// replacement that conflicts meanwhile is handed back to the agent that opened
+// it, like any factory PR (handBackStuckPrs), not left for the babysitter.
+//
+// The `.github/` rule is about who could already run workflows with the repo's
+// secrets. An author with write access to the repo can push a workflow to any
+// branch and watch it run; the factory merging their change adds nothing to
+// what they can do, so it merges it. Anyone else — a fork contributor with read
+// access — gets a human's eyes on it, as the rule has always said.
 //
 // A PR from a fork is the common case and the awkward one: the agents' machine
 // cannot push to a contributor's fork, and Cursor cannot check one out by PR.
@@ -74,6 +84,8 @@ interface ReviewStamp {
   outcome: ReviewOutcome | null;
   /** The agent answered merge and only a mechanical refusal stood in the way. */
   mergePending: boolean;
+  /** The replacement PR the pending merge is of, when the fixes went to one. */
+  replacement?: number;
 }
 
 function parseStamp(body: string): ReviewStamp | null {
@@ -83,10 +95,12 @@ function parseStamp(body: string): ReviewStamp | null {
   const sha = attrs.get('sha');
   if (!sha) return null;
   const outcome = attrs.get('outcome');
+  const replacement = Number(attrs.get('replacement'));
   return {
     sha,
     outcome: outcome === 'merged' || outcome === 'superseded' || outcome === 'closed' || outcome === 'left' ? outcome : null,
     mergePending: outcome === 'left' && attrs.get('verdict') === 'merge',
+    ...(Number.isInteger(replacement) && replacement > 0 ? { replacement } : {}),
   };
 }
 
@@ -106,9 +120,11 @@ export function reviewFingerprint(pr: Pick<ReviewPr, 'headRefOid' | 'body' | 'co
   return createHash('sha256').update([pr.headRefOid, pr.body.trim(), ...human].join('\n\n')).digest('hex').slice(0, 12);
 }
 
-export function reviewStamp(pr: Pick<ReviewPr, 'headRefOid' | 'body' | 'comments'>, outcome: ReviewOutcome, opts: { mergePending?: boolean } = {}): string {
-  const verdict = outcome === 'left' && opts.mergePending ? ' verdict=merge' : '';
-  return `<!-- factory-review sha=${reviewFingerprint(pr)} outcome=${outcome}${verdict} -->`;
+export function reviewStamp(pr: Pick<ReviewPr, 'headRefOid' | 'body' | 'comments'>, outcome: ReviewOutcome, opts: { mergePending?: boolean; replacement?: number } = {}): string {
+  const pending = outcome === 'left' && opts.mergePending === true;
+  const verdict = pending ? ' verdict=merge' : '';
+  const replacement = pending && opts.replacement ? ` replacement=${opts.replacement}` : '';
+  return `<!-- factory-review sha=${reviewFingerprint(pr)} outcome=${outcome}${verdict}${replacement} -->`;
 }
 
 /** Bots are someone else's automation: release-please, and Dependabot, whose PRs the dependency batch takes (deps.ts). Not reviewed here. */
@@ -172,6 +188,17 @@ export function touchesGithub(files: { path: string }[]): string[] {
   return files.map((f) => f.path).filter((p) => p === '.github' || p.startsWith('.github/'));
 }
 
+/**
+ * Whether a change under `.github/` from this author is the factory's to merge.
+ * `permission` is GitHub's role name for them on the repo. Write and above can
+ * already push a workflow to a branch and have it run with the repo's secrets,
+ * so a merge adds nothing; read, triage, and no access are the outside PRs the
+ * rule exists for.
+ */
+export function mayMergeGithub(permission: string): boolean {
+  return permission === 'write' || permission === 'maintain' || permission === 'admin';
+}
+
 export interface ReviewReply {
   verdict: ReviewVerdict;
   /** For `merge`: the head commit the agent verified, as it wrote it (7–40 hex). */
@@ -209,7 +236,7 @@ export function sameCommit(named: string, head: string): boolean {
 }
 
 /** The body of the factory's review comment, below the stamp. */
-export function reviewComment(outcome: ReviewOutcome, report: string, note?: string, opts: { mergePending?: boolean } = {}): string {
+export function reviewComment(outcome: ReviewOutcome, report: string, note?: string, opts: { mergePending?: boolean; replacement?: number } = {}): string {
   const pending = outcome === 'left' && opts.mergePending === true;
   const heading = pending ? '🏭 **Factory review — merge pending.**' : {
     merged: '🏭 **Factory review — merged.**',
@@ -220,7 +247,9 @@ export function reviewComment(outcome: ReviewOutcome, report: string, note?: str
   const tail = outcome === 'closed'
     ? '\n\nIf this misreads your change, reply here: the factory reopens a PR it closed when its author replies, and reviews it again with your reply in view.'
     : pending
-      ? '\n\nThe factory tries the merge again every tick while the PR stands as it is. A push or a reply here sends it back for a fresh review instead.'
+      ? opts.replacement
+        ? `\n\nThe factory tries the merge of #${opts.replacement} again every tick, hands it back to its agent if it conflicts or goes red, and closes this PR once it lands. A push or a reply here sends this PR back for a fresh review instead.`
+        : '\n\nThe factory tries the merge again every tick while the PR stands as it is. A push or a reply here sends it back for a fresh review instead.'
       : outcome === 'left'
         ? '\n\nPush to the branch or reply here and the factory reviews it again.'
         : '';

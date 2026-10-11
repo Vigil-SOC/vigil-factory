@@ -87,7 +87,8 @@
   },
   "review": {
     "enabled": true,
-    "maxPerTick": 5
+    "maxPerTick": 5,
+    "model": "fable"
   },
   "deps": {
     "enabled": true

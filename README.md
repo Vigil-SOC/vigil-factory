@@ -63,7 +63,8 @@ Plenty of tools point an agent at a backlog. This one takes positions:
   requested changes thrown back over the fence is the expensive answer. Then the factory
   merges it, or closes it with the reason and an invitation to reply. It is the one place the
   factory merges, and the rules it holds a merge to are mechanical: CI green on the exact
-  commit the agent verified, no admin bypass, nothing under `.github/`.
+  commit the agent verified, no admin bypass, and a change under `.github/` only from an
+  author who could already run it with the repo's secrets.
 - **Telemetry exists to earn autonomy.** Every groom, run, environment pass, and PR
   outcome is recorded so that "which classes of task can automerge?" becomes an
   empirical question, not a leap of faith.
@@ -589,7 +590,10 @@ it (Cursor does not), and it opens as a replacement PR. The factory
 labels it `factory:review` (so no queue takes it for an outside PR), puts it through the
 same merge rules below, squash-merges it with a `Co-authored-by` trailer for the author, and
 closes the original with a link. The stamp records that as `superseded`. If the replacement
-cannot be merged, both stay open and the original says where the fixes are. A same-repo PR —
+cannot be merged yet — GitHub refused, CI still running — the original's stamp names the
+replacement (`verdict=merge replacement=N`), and each tick retries that merge, with the
+author's credit, and closes the original once it lands. A replacement that conflicts or goes
+red meanwhile is handed back to the review's own agent, like any factory PR. A same-repo PR —
 a teammate's branch — is simpler: its agent works on the PR's own branch.
 
 **The merge is the agent's call held to the factory's rules.** The controller merges only:
@@ -602,9 +606,12 @@ a teammate's branch — is simpler: its agent works on the PR's own branch.
   since that review is the maintainer's read the hold asks for;
 - within the repo's own rules — never `--admin`, though the factory's token could bypass
   them, because a merge that needed to is one the repo said no to;
-- and never a PR that changes anything under `.github/`: workflows run with the repo's
-  secrets, and an outside PR is where a change to them most needs a human. Those are left
-  with the review posted.
+- and a PR that changes anything under `.github/` only when its author has write access to
+  the repo. Workflows run with the repo's secrets, and the rule is about who could already
+  run one: a collaborator with write can push a workflow to a branch and watch it run, so the
+  factory merging their change adds nothing to what they can do, and the agent is told to
+  review it as it would any file. A fork contributor with read access is where a change to
+  them most needs a human, and those are left with the review posted.
 
 **The agent runs a stranger's code, so it gets nothing it does not need.** No
 `worker.agentEnv` credentials are handed to a review agent, and the phase runs only on the
@@ -651,8 +658,9 @@ why, and that includes one that turns CI red in the agent's one fix round.
 
 **The merge is the review phase's.** The factory merges the batch under exactly the rules
 in [Reviewing outside PRs](#reviewing-outside-prs): CI green after at most one fix round,
-`--match-head-commit`, no admin bypass, nothing under `.github/`. That last rule is why
-Actions bumps are never offered to a batch; they stay open for a human. Once it merges,
+`--match-head-commit`, no admin bypass, `.github/` only from an author with write access.
+That last rule is why Actions bumps are never offered to a batch — Dependabot has none —
+and they stay open for a human. Once it merges,
 the factory closes each Dependabot PR on a `Supersedes` line with a link, and comments on
 the ones it left. A batch it could not merge stays open for a human, and no new batch
 starts until it is gone.
@@ -882,9 +890,11 @@ committed.
   code. Off means the factory only ever adds; turn it on once heavy implementation settles.
 - `factory.config.json` → `labels.reviewPr` — (default `factory:review`) the replacement PR
   the review phase opens for a fork PR that needed fixes.
-- `factory.config.json` → `review` — `enabled` (default false) and `maxPerTick` (default
-  3): the phase that reviews PRs the factory did not open
-  and merges or closes them. Cursor worker only. See [Reviewing outside PRs](#reviewing-outside-prs).
+- `factory.config.json` → `review` — `enabled` (default false), `maxPerTick` (default
+  3), and `model` (a name from `worker.models`; unset = `worker.model`): the phase that
+  reviews PRs the factory did not open and merges or closes them. It is the one judgment that
+  merges a stranger's code, so it is the other place a stronger model earns its cost. Cursor
+  worker only. See [Reviewing outside PRs](#reviewing-outside-prs).
 - `factory.config.json` → `selector` — `enabled` (default false): whether an agent ranks
   the groomed issues before each implementer run. Off, the oldest groomed issue is
   implemented next; see [One judge of size](#one-judge-of-size) for why that is the
@@ -906,7 +916,7 @@ committed.
   which declined ones to warn it off, whether a PR shrank the code, and why a pass is not
   running.
 - `src/review.ts` — only the mechanical bits: which PRs are due a review, the stamp that
-  dates one, `VERDICT`-line parsing, and the `.github/` rule.
+  dates one, `VERDICT`-line parsing, and the `.github/` rule (who may change it).
 
 ## Telemetry
 

@@ -2,9 +2,9 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { agentCredentials, epicGroomModel, loadConfig } from '../src/config.ts';
+import { agentCredentials, epicGroomModel, loadConfig, reviewModel } from '../src/config.ts';
 
-function configDir(worker: Record<string, unknown>, groom: Record<string, unknown> = {}): string {
+function configDir(worker: Record<string, unknown>, groom: Record<string, unknown> = {}, rest: Record<string, unknown> = {}): string {
   const dir = mkdtempSync(resolve(tmpdir(), 'factory-config-'));
   writeFileSync(resolve(dir, 'factory.config.json'), JSON.stringify({
     repo: { owner: 'o', name: 'r', url: 'https://github.com/o/r' },
@@ -12,6 +12,7 @@ function configDir(worker: Record<string, unknown>, groom: Record<string, unknow
     labels: { factoryPr: 'factory', issueInProgress: 'factory:wip', groomed: 'factory:groomed', needsWork: 'factory:needs-work' },
     groom: { maxPerTick: 5, principlesFile: 'principles.example.md', ...groom },
     selector: { enabled: false, maxCandidates: 100 },
+    ...rest,
   }));
   return dir;
 }
@@ -91,6 +92,13 @@ describe('epic groom model', () => {
 
   it('refuses a name worker.models does not have', () => {
     expect(() => loadConfig(configDir({ model: models.sonnet, models }, { epicModel: 'opus' }))).toThrow(/groom.epicModel=opus names no model/);
+  });
+
+  it('names a model from worker.models for outside-PR reviews', () => {
+    const config = loadConfig(configDir({ model: models.sonnet, models }, {}, { review: { enabled: true, model: 'fable' } }));
+    expect(reviewModel(config)).toEqual(models.fable);
+    expect(reviewModel(loadConfig(configDir({ model: models.sonnet, models })))).toBeUndefined();
+    expect(() => loadConfig(configDir({ model: models.sonnet, models }, {}, { review: { enabled: true, model: 'opus' } }))).toThrow(/review.model=opus names no model/);
   });
 
   it('defaults the draft label', () => {

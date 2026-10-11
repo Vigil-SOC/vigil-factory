@@ -316,7 +316,7 @@ ${prUrls.join('\n')}`;
  * commit it verified; the `.github/` rule is stated because the controller
  * enforces it. No credentials are handed over: this agent runs a stranger's code.
  */
-export function reviewPrompt(pr: { number: number; url: string; isCrossRepository: boolean }, principles: string): string {
+export function reviewPrompt(pr: { number: number; url: string; isCrossRepository: boolean; authorMayChangeGithub: boolean }, principles: string): string {
   // The agents' machine can push to a branch of this repo but not to a fork.
   const where = pr.isCrossRepository
     ? `It comes from a fork, which this machine cannot push to, so you start on your own session branch off the default branch. Review the PR's code detached: \`git fetch origin pull/${pr.number}/head && git checkout FETCH_HEAD\`. If it needs fixes, put its commits on your session branch — \`git checkout -B <the branch you started on> FETCH_HEAD\` — commit the fixes on top, and push it: \`git push -u origin HEAD\`. Nothing pushes it for you, and fixes left unpushed are lost with this machine. That branch becomes a replacement PR carrying the author's commits and yours, which the factory merges in place of this one, crediting the author. Do not open a PR yourself, and commit and push nothing to your session branch unless the PR needs fixes: any push there opens a PR.`
@@ -341,7 +341,9 @@ Then verify it: that it does what its description claims, not only that it compi
 
 Then fix what stands between it and merge rather than asking the author to: a defect you found, a piece the PR's own point needs. Stay inside what the PR is for — scope it lacks is a reason to close, not to build, and a fix that grows into a rewrite means the PR was not close.
 
-The factory never merges a PR that changes anything under \`.github/\`: close one of those or leave it for a human, and say which.
+${pr.authorMayChangeGithub
+    ? 'The author has write access to this repo, so the factory merges a change under `.github/` from them like any other: workflows run with the repo\'s secrets, and they could already push one to a branch and run it. Read a workflow change with that in mind — what it runs, what it is handed, what it could weaken in the checks the factory merges on — and fix or close it on what you find, as with any file.'
+    : 'The author has no write access to this repo, and the factory never merges a change under `.github/` from someone who does not: workflows run with the repo\'s secrets. If the PR changes anything there, close it or leave it for a human, and say which.'}
 
 End your reply with exactly one line:
 VERDICT: merge <sha> — the PR is worth having and <sha> is correct: ${sha}, exactly what you verified, pasted from \`git rev-parse --short=12 HEAD\` rather than retyped. The factory waits for CI on it, hands a red check back to you once, and squash-merges it. If you could not push a fix it needs, this is not your answer.

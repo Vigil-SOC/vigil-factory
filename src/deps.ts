@@ -67,8 +67,9 @@ export function concluded(pr: Pick<DepsPr, 'headRefOid' | 'comments'>): boolean 
 /**
  * The Dependabot PRs the next batch is offered, oldest first. Not drafts, not
  * one a batch already concluded on at this head, and not one that changes
- * `.github/` — a GitHub Actions bump — because the factory does not merge
- * those, so carrying one would only hold the rest of the batch back.
+ * `.github/` — a GitHub Actions bump — because the factory merges those only
+ * from an author with write access, which a bot is not, so carrying one would
+ * only hold the rest of the batch back.
  */
 export function depsQueue(prs: DepsPr[]): DepsPr[] {
   return prs

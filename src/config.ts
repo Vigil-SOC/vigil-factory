@@ -107,8 +107,11 @@ export interface FactoryConfig {
    *  principles, verified, fixed, and merged or closed by the factory itself.
    *  `maxPerTick` bounds how many one tick reviews. Off by default: it is the
    *  one phase that merges. A PR that conflicts with the default branch is
-   *  caught up by the review agent, not handed back to its author. */
-  review: { enabled: boolean; maxPerTick: number };
+   *  caught up by the review agent, not handed back to its author. `model`
+   *  names an entry in `worker.models` to review with, when the one judgment
+   *  that merges a stranger's code deserves a stronger model than the one
+   *  that builds issues; unset, reviews run `worker.model`. */
+  review: { enabled: boolean; maxPerTick: number; model?: string };
   /** The dependency phase: Dependabot's open PRs carried onto one branch by one
    *  agent, the lockfile regenerated, and the batch merged on green CI under
    *  the review phase's rules. Off by default: it merges. */
@@ -218,6 +221,9 @@ export function loadConfig(root: string = projectRoot): FactoryConfig {
   if (!Number.isInteger(config.review.maxPerTick) || config.review.maxPerTick < 1) {
     throw new Error(`review.maxPerTick must be a positive integer, got ${JSON.stringify(config.review.maxPerTick)}`);
   }
+  if (config.review.model !== undefined && !config.worker.models[config.review.model]) {
+    throw new Error(`review.model=${config.review.model} names no model in worker.models (has: ${Object.keys(config.worker.models).join(', ') || 'none'})`);
+  }
   config.selector ??= { enabled: false, maxCandidates: 100 };
   config.selector.enabled ??= false;
   config.selector.maxCandidates ??= 100;
@@ -238,6 +244,11 @@ export function loadConfig(root: string = projectRoot): FactoryConfig {
 /** The model an epic's groom runs, when the config names one. */
 export function epicGroomModel(config: FactoryConfig): ModelSpec | undefined {
   return config.groom.epicModel === undefined ? undefined : config.worker.models[config.groom.epicModel];
+}
+
+/** The model an outside PR's review runs, when the config names one. */
+export function reviewModel(config: FactoryConfig): ModelSpec | undefined {
+  return config.review.model === undefined ? undefined : config.worker.models[config.review.model];
 }
 
 /** The product-direction principles grooming judges against. Factory-local by

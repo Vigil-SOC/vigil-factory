@@ -437,6 +437,21 @@ export async function userId(login: string): Promise<number> {
   return (await ghJson<{ id: number }>(['api', `users/${login}`])).id;
 }
 
+/**
+ * A user's role on the repo — `admin`, `maintain`, `write`, `triage`, `read` —
+ * or `none` for someone who is not a collaborator (GitHub answers 404). The
+ * `.github/` rule reads this: it is about who could already run workflows with
+ * the repo's secrets.
+ */
+export async function collaboratorPermission(repo: string, login: string): Promise<string> {
+  try {
+    return (await ghJson<{ role_name: string }>(['api', `repos/${repo}/collaborators/${login}/permission`])).role_name;
+  } catch (err) {
+    if (/404|Not Found/i.test((err as Error).message)) return 'none';
+    throw err;
+  }
+}
+
 /** Extract "Closes #N" / "#N" issue references from a PR body. */
 export function linkedIssueNumber(prBody: string): number | null {
   const m = prBody.match(/(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/i) ?? prBody.match(/#(\d+)/);

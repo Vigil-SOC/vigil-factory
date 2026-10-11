@@ -89,9 +89,14 @@ Oldest first, for each:
 - A conflict with the default branch: do not merge it, and do not alert — parallel work
   causes these, and the tick you are about to start hands it back to the agent that
   opened it to resolve, three ticks at most (its comments say "Handed the merge
-  conflicts back"). Alert only once a PR has used all three. A PR that merged earlier
+  conflicts back"). That covers every factory label, `factory:review` and `factory:deps`
+  included. Alert only once a PR has used all three. A PR that merged earlier
   this pass can put the next one in conflict, so check each one's mergeability right
   before merging it.
+- A `factory:review` replacement whose original's latest review comment is headed
+  "merge pending": leave it to the tick. The tick merges it with the author's credit and
+  closes the original; a plain `gh pr merge` here would drop the co-author trailer and
+  leave the original open.
 
 A `factory:security` PR whose factory comment names an `advisory#GHSA-…` fixes a privately
 reported vulnerability: the tick accepted the report as a draft advisory naming the PR. Merge
@@ -122,8 +127,9 @@ was pushed or commented on it since that review comment (compare the head commit
 and the later comments), merge it yourself: checks green, mergeable, squash, never
 `--admin`, and `--match-head-commit <head sha>`. That way you merge exactly what the
 review verified. Rerun a flaky check first if that is all that stands in the way.
-Leave it alone when the comment says it changes `.github/`, or the agent itself
-answered leave or close. Those are a human's call, and the review already told them.
+Leave it alone when the comment says it changes `.github/` and its author has no write
+access, or the agent itself answered leave or close. Those are a human's call, and the
+review already told them.
 
 ## 3. Start the next tick
 
