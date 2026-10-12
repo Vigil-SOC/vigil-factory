@@ -164,6 +164,14 @@ export function loadConfig(root: string = projectRoot): FactoryConfig {
   // grown, so a missing one is simply absent. Default to the original
   // one-job-at-a-time throttle rather than failing the next tick.
   config.maxConcurrentJobs ??= 1;
+  // A local tick spends the machine's subscription, not the Cursor budget the
+  // committed value is sized for, so it may run more at once.
+  const maxJobs = process.env['FACTORY_MAX_JOBS']?.trim();
+  if (maxJobs) {
+    const n = Number(maxJobs);
+    if (!Number.isInteger(n) || n < 1) throw new Error(`FACTORY_MAX_JOBS must be a positive integer, got ${JSON.stringify(maxJobs)}`);
+    config.maxConcurrentJobs = n;
+  }
   // An empty FACTORY_WORKER is "as configured": Actions passes the dispatch
   // input through even when nobody set it.
   config.worker.kind = workerKind(process.env['FACTORY_WORKER']?.trim() || config.worker.kind || 'cursor');

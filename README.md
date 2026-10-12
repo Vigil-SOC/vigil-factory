@@ -804,6 +804,8 @@ is Claude Code's estimate of what the run would have cost on the API, not a bill
 **Falling back.** `FACTORY_WORKER=claude-code npm run factory -- run` overrides
 `worker.kind` for one tick; in Actions, the manual dispatch has a `worker` input that does
 the same. That is the move when the Cursor account is out of usage: nothing else changes.
+`FACTORY_MAX_JOBS=<n>` overrides `maxConcurrentJobs` the same way, for a local tick that
+spends the machine's subscription rather than the Cursor budget the committed value is sized for.
 
 **Switching models.** `worker.models` holds alternatives to `worker.model` by name, and
 `FACTORY_MODEL=<name>` runs one of them for one tick; the manual dispatch's `model` input

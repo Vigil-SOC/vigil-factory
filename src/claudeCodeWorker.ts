@@ -52,6 +52,12 @@ const LIMIT_RECHECK_MS = 15 * 60_000;
 /** Times one run may be cut off by the usage limit and resumed. */
 const MAX_LIMIT_RESUMES = 3;
 const LIMIT_RESUME_NOTE = 'Your previous turn was cut off by a usage limit, which has since reset. Carry on from where you stopped.';
+/** Runs launched together while the login's token expires race to refresh it,
+ *  and the losers end at once with "Not logged in". By the time they are
+ *  resumed the winner has stored the new token. */
+const LOGIN_RETRY_MS = 30_000;
+const MAX_LOGIN_RESUMES = 2;
+const LOGIN_RESUME_NOTE = 'Your previous turn could not start because the login was being refreshed. Carry out the task above from the beginning.';
 
 export interface ClaudeCodeWorkerOptions {
   /** The `claude` executable. launchd and CI rarely have ~/.local/bin on PATH. */
@@ -99,6 +105,8 @@ interface Run {
   priorMs: number;
   /** How many times the usage limit has cut this task off already. */
   limitResumes: number;
+  /** How many times a lost login has ended it and it was resumed. */
+  loginResumes: number;
 }
 
 /** One agent: a clone and every run made in it. */
@@ -202,6 +210,11 @@ export function usageFrom(json: ClaudeResultJson): TokenUsage | null {
 /** Whether a failed run's report says the subscription's usage limit ended it. */
 export function hitUsageLimit(text: string): boolean {
   return /hit your (?:session |weekly |usage )?limit|usage limit reached/i.test(text);
+}
+
+/** Whether a failed run ended because Claude Code found no usable login. */
+export function lostLogin(text: string): boolean {
+  return /not logged in/i.test(text);
 }
 
 /**
@@ -452,7 +465,7 @@ export class ClaudeCodeWorker implements CodingWorker {
     }
   }
 
-  private launch(sessionId: string, session: Session, prompt: string, resume: boolean, carried?: Pick<Run, 'priorMs' | 'limitResumes'>): RunHandle {
+  private launch(sessionId: string, session: Session, prompt: string, resume: boolean, carried?: Pick<Run, 'priorMs' | 'limitResumes' | 'loginResumes'>): RunHandle {
     // The agent gets the MCP servers the target repo declares and no others:
     // not this machine's, whose owner's connectors are not the factory's to
     // hand out. The counterpart of Cursor's agents having only what the repo's
@@ -480,6 +493,7 @@ export class ClaudeCodeWorker implements CodingWorker {
       startedAt: Date.now(),
       priorMs: carried?.priorMs ?? 0,
       limitResumes: carried?.limitResumes ?? 0,
+      loginResumes: carried?.loginResumes ?? 0,
       exited: new Promise((res) => {
         child.once('error', (err) => { run.stderr.push(String(err.message)); res({ code: null, signal: null }); });
         child.once('close', (code, signal) => res({ code, signal }));
@@ -547,9 +561,16 @@ export class ClaudeCodeWorker implements CodingWorker {
     }
     if (!succeeded && !outcome.signal && hitUsageLimit(resultText) && run.limitResumes < MAX_LIMIT_RESUMES) {
       this.log(`claude session ${handle.agentId} was cut off by the usage limit; resuming it once the limit resets`);
-      const carried = { priorMs: run.priorMs + (Date.now() - run.startedAt), limitResumes: run.limitResumes + 1 };
+      const carried = { priorMs: run.priorMs + (Date.now() - run.startedAt), limitResumes: run.limitResumes + 1, loginResumes: run.loginResumes };
       await this.awaitHeadroom(true);
       const next = this.launch(handle.agentId, session, LIMIT_RESUME_NOTE, true, carried);
+      return this.awaitResult(next);
+    }
+    if (!succeeded && !outcome.signal && lostLogin(resultText) && run.loginResumes < MAX_LOGIN_RESUMES) {
+      this.log(`claude session ${handle.agentId} found no login (a token refresh race); resuming it in ${LOGIN_RETRY_MS / 1000}s`);
+      const carried = { priorMs: run.priorMs + (Date.now() - run.startedAt), limitResumes: run.limitResumes, loginResumes: run.loginResumes + 1 };
+      await sleep(LOGIN_RETRY_MS);
+      const next = this.launch(handle.agentId, session, LOGIN_RESUME_NOTE, true, carried);
       return this.awaitResult(next);
     }
 

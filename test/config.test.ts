@@ -77,6 +77,26 @@ describe('model override', () => {
   });
 });
 
+describe('FACTORY_MAX_JOBS', () => {
+  const withMaxJobs = (value: string | undefined, fn: () => void) => {
+    const prev = process.env['FACTORY_MAX_JOBS'];
+    if (value === undefined) delete process.env['FACTORY_MAX_JOBS']; else process.env['FACTORY_MAX_JOBS'] = value;
+    try { fn(); } finally {
+      if (prev === undefined) delete process.env['FACTORY_MAX_JOBS']; else process.env['FACTORY_MAX_JOBS'] = prev;
+    }
+  };
+
+  it('overrides maxConcurrentJobs, and an empty one leaves it as configured', () => {
+    withMaxJobs('6', () => expect(loadConfig(configDir({}, {}, { maxConcurrentJobs: 3 })).maxConcurrentJobs).toBe(6));
+    withMaxJobs('', () => expect(loadConfig(configDir({}, {}, { maxConcurrentJobs: 3 })).maxConcurrentJobs).toBe(3));
+  });
+
+  it('refuses anything but a positive integer', () => {
+    withMaxJobs('0', () => expect(() => loadConfig(configDir({}))).toThrow(/positive integer/));
+    withMaxJobs('lots', () => expect(() => loadConfig(configDir({}))).toThrow(/positive integer/));
+  });
+});
+
 describe('epic groom model', () => {
   const models = { fable: { id: 'claude-fable-5-1', params: { effort: 'high' } }, sonnet: { id: 'claude-sonnet-5-5' } };
 

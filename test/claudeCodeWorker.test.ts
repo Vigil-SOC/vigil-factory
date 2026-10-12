@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { branchNameFor, headroomWait, hitUsageLimit, machineNote, modelArgs, parseResultJson, parseUsage, prUrlIn, sumUsage, usageFrom } from '../src/claudeCodeWorker.ts';
+import { branchNameFor, headroomWait, hitUsageLimit, lostLogin, machineNote, modelArgs, parseResultJson, parseUsage, prUrlIn, sumUsage, usageFrom } from '../src/claudeCodeWorker.ts';
 
 describe('modelArgs', () => {
   it('passes nothing when the config leaves the model to the runtime', () => {
@@ -28,6 +28,13 @@ describe('hitUsageLimit', () => {
     expect(hitUsageLimit("You've hit your session limit · resets 2:30pm (America/New_York)")).toBe(true);
     expect(hitUsageLimit('Claude AI usage limit reached|1760000000')).toBe(true);
     expect(hitUsageLimit('tests failed: rate limit on the GitHub API')).toBe(false);
+  });
+});
+
+describe('lostLogin', () => {
+  it('recognises a run that found no login', () => {
+    expect(lostLogin('Not logged in · Please run /login')).toBe(true);
+    expect(lostLogin('the login form test failed')).toBe(false);
   });
 });
 

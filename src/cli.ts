@@ -44,6 +44,7 @@ Usage:
 
 Environment: FACTORY_WORKER=cursor|claude-code overrides worker.kind for one invocation.
              FACTORY_MODEL=<name> runs worker.models.<name> instead of worker.model.
+             FACTORY_MAX_JOBS=<n> overrides maxConcurrentJobs.
 `;
 
 async function groom(opts: { limit?: number; force?: boolean }): Promise<void> {
