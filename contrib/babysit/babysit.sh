@@ -40,12 +40,23 @@ for _ in {1..45}; do
   sleep 120
 done
 
+# The interactive login's OAuth session expires and stalled every pass for ~20h
+# on 2026-10-08. A long-lived token from `claude setup-token`, kept in this file,
+# outlives it.
+TOKEN_FILE="$HOME/.config/deeptempo-factory/claude-oauth-token"
+[[ -r "$TOKEN_FILE" ]] && export CLAUDE_CODE_OAUTH_TOKEN="$(<"$TOKEN_FILE")"
+
 LOG="$DIR/pass-$(date -u +%Y%m%dT%H%MZ).log"
 claude -p "$(cat "$ROOT/contrib/babysit/prompt.md")" --model opus --effort medium --dangerously-skip-permissions > "$LOG" 2>&1
 rc=$?
 if (( rc != 0 )) || [[ ! -s "$LOG" ]]; then
+  # The tick needs no judgment to start, so a failed session still dispatches it.
+  dispatched="nothing was dispatched"
+  if [[ -z "$(live_ticks)" ]] && gh workflow run factory-tick -R DeepTempo/deeptempo-factory 2>/dev/null; then
+    dispatched="a tick was dispatched anyway"
+  fi
   "$ROOT/contrib/babysit/alert.sh" "babysitter pass failed" \
-    "claude exited $rc; nothing was merged or dispatched this pass. Log: $LOG"
+    "claude exited $rc; nothing was merged and $dispatched this pass. Log: $LOG"
 fi
 find "$DIR" -name 'pass-*.log' -mtime +14 -delete
 exit $rc

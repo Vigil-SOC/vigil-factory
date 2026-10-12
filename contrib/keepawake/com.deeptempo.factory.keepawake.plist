@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.deeptempo.factory.keepawake</string>
+  <!-- Installed root-owned in /usr/local/sbin: a root daemon must not run a
+       script the user account can rewrite. -->
+  <key>ProgramArguments</key>
+  <array><string>/usr/local/sbin/factory-keepawake.sh</string></array>
+  <key>StartInterval</key><integer>30</integer>
+  <key>RunAtLoad</key><true/>
+</dict>
+</plist>
