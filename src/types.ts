@@ -97,6 +97,9 @@ export interface CodingWorker {
   /** The agent that opened a PR, found again in a later tick; absent where an
    *  agent does not outlive the process that ran it. */
   agentForPr?(prUrl: string): Promise<RunHandle | null>;
+  /** True where a run ends with the process that started it (a local worker):
+   *  what the tick would fire and forget, it has to await instead. */
+  readonly runsEndWithProcess?: boolean;
 }
 
 export interface StartOptions {
@@ -329,4 +332,7 @@ export interface CurrentRun {
   runId: string;
   startedAt: string;
   prUrl: string | null;
+  /** The tick process running it, where the run cannot outlive that process
+   *  (a local worker). Once the process is gone the record holds nothing. */
+  pid?: number;
 }

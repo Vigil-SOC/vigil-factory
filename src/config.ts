@@ -37,6 +37,13 @@ export interface FactoryConfig {
      *  weekly window, at which no agent starts until that window resets.
      *  Default 90; null never waits. */
     pauseAtUsagePercent?: number | null;
+    /** claude-code only: the wall-clock budget of one run. Default
+     *  `maxRunMinutes` + 60. Local sessions share one machine with up to
+     *  `maxConcurrentJobs` others, so the same work takes longer than on a
+     *  cloud VM: on Oct 12–15 runs that landed took up to 93 minutes and
+     *  twelve were cut off at 90. The groomer still sizes against
+     *  `maxRunMinutes`, so an issue is no bigger for running here. */
+    localMaxRunMinutes?: number;
     /** Credentials every agent is handed, by environment variable name. Only
      *  the ones actually set where the tick runs are forwarded (see
      *  agentCredentials); the rest are logged and left out. */
@@ -186,6 +193,7 @@ export function loadConfig(root: string = projectRoot): FactoryConfig {
     config.worker.model = model;
   }
   config.worker.agentEnv ??= [];
+  config.worker.localMaxRunMinutes ??= config.worker.maxRunMinutes + 60;
   if (config.worker.pauseAtUsagePercent === undefined) config.worker.pauseAtUsagePercent = 90;
   const pauseAt = config.worker.pauseAtUsagePercent;
   if (pauseAt !== null && !(typeof pauseAt === 'number' && pauseAt > 0 && pauseAt <= 100)) {

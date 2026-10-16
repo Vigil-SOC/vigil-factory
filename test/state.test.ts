@@ -126,6 +126,18 @@ describe('capacity', () => {
     expect((await state.capacity(() => {})).slots).toBe(1);
   });
 
+  it('reclaims at once the slot of a pipeline whose tick process is gone, and keeps a live one', async () => {
+    listPrsByLabel.mockResolvedValue([]);
+    const { state } = stateFor(2);
+    // Pid 2^22+ is past macOS and Linux pid ranges: nothing runs under it.
+    state.writeRun(run(11, { pid: 4_194_400 }));
+    state.writeRun(run(12, { pid: process.pid }));
+    const capacity = await state.capacity(() => {});
+    expect(capacity.inFlight.map((r) => r.issueNumber)).toEqual([12]);
+    expect(capacity.slots).toBe(1);
+    expect(removeIssueLabels).toHaveBeenCalledWith('o/r', 11, ['factory:wip']);
+  });
+
   it('reclaims the slot of a stale pipeline, recording it as aborted', async () => {
     listPrsByLabel.mockResolvedValue([]);
     const { state, dir } = stateFor(1);

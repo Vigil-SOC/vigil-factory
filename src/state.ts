@@ -16,6 +16,17 @@ import { leakedClaims, orphanedPrs, phaseOrphans, unrecordedOutcomes, withSource
 import { keysIn, securityStamp } from './security.ts';
 import type { Telemetry } from './telemetry.ts';
 
+/** Whether a process with this pid exists on this machine. */
+export function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM: it exists, it is just not ours to signal.
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
 export interface Capacity {
   /** config.maxConcurrentJobs: how many jobs may exist at once. */
   limit: number;
@@ -221,11 +232,16 @@ export class FactoryState {
     const inFlight: CurrentRun[] = [];
     for (const run of this.readRuns()) {
       const ageHours = (Date.now() - Date.parse(run.startedAt)) / 3_600_000;
-      if (ageHours < this.config.staleRunHours) {
+      // A local run died with its tick: on Oct 13 a full disk killed three
+      // pipelines mid-run and their records held three slots until an abort.
+      const dead = run.pid !== undefined && !processAlive(run.pid);
+      if (ageHours < this.config.staleRunHours && !dead) {
         inFlight.push(run);
         continue;
       }
-      log(`stale pipeline (${ageHours.toFixed(1)}h old) for ${run.taskId}; recording as failed and cleaning up`);
+      log(dead
+        ? `dead pipeline for ${run.taskId}: its tick (pid ${run.pid}) is gone; recording as failed and cleaning up`
+        : `stale pipeline (${ageHours.toFixed(1)}h old) for ${run.taskId}; recording as failed and cleaning up`);
       this.telemetry.append({
         type: 'run',
         taskId: run.taskId,
@@ -237,7 +253,7 @@ export class FactoryState {
         startedAt: run.startedAt,
         finishedAt: new Date().toISOString(),
         outcome: 'aborted',
-        failureReason: `stale pipeline older than ${this.config.staleRunHours}h (controller crash?)`,
+        failureReason: dead ? `its tick (pid ${run.pid}) exited mid-run` : `stale pipeline older than ${this.config.staleRunHours}h (controller crash?)`,
         prUrl: run.prUrl,
         usage: null,
         durationMs: Date.now() - Date.parse(run.startedAt),

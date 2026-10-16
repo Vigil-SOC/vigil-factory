@@ -94,6 +94,7 @@ export async function buildWorker(config: FactoryConfig): Promise<CodingWorker> 
     case 'claude-code': {
       const worker = new ClaudeCodeWorker({
         ...common,
+        maxRunMinutes: config.worker.localMaxRunMinutes ?? config.worker.maxRunMinutes,
         bin: claudeBin(),
         workRoot: resolve(projectRoot, config.telemetryDir, 'workspaces'),
         ghToken: githubTokenForAgents(),
@@ -1382,7 +1383,7 @@ export async function tick(opts: { dryRun: boolean }): Promise<void> {
   }
 
   const worker = await buildWorker(config);
-  await handBackStuckPrs(ctx, worker);
+  const handbacks = await handBackStuckPrs(ctx, worker);
 
   // 2. Grooming: vet part of the backlog. Deliberately ahead of the
   //    capacity gate — it produces no code, so it cannot collide.
@@ -1429,6 +1430,7 @@ export async function tick(opts: { dryRun: boolean }): Promise<void> {
     log(`environment phase error: ${err.message}`);
     return null;
   });
+  await Promise.all(handbacks);
 }
 
 /**
@@ -1709,6 +1711,7 @@ async function runPipeline(
     runId: handle.runId,
     startedAt,
     prUrl: null,
+    ...(worker.runsEndWithProcess ? { pid: process.pid } : {}),
   };
   state.writeRun(current);
 
@@ -1808,13 +1811,17 @@ export function handbacksSent(comments: { body: string }[], note = HANDBACK_NOTE
  * rounds, died, or the failure came from main after it finished. Either fills
  * a slot until someone acts. Fire and forget — the agent pushes, CI runs, and
  * the PR is merged green or handed back again next tick, up to MAX_HANDBACKS
- * per reason. Workers whose agents do not outlive the tick skip this. A PR
+ * per reason; a local worker's runs are awaited before the tick ends. A PR
  * no agent is known for — the factory opened it, or its run is gone — gets a
  * fresh agent on its branch rather than a human: on Oct 7–8 three local-run
  * PRs sat conflicting with "no agent to hand it back to" and held every slot.
  */
-async function handBackStuckPrs(ctx: FactoryContext, worker: CodingWorker): Promise<void> {
-  if (!worker.agentForPr) return;
+async function handBackStuckPrs(ctx: FactoryContext, worker: CodingWorker): Promise<Promise<void>[]> {
+  // A local worker's runs die with the tick, so those are awaited: the
+  // returned promises settle when they end. On Oct 12–16 the claude-code
+  // worker skipped this, and three conflicting PRs held its slots for days.
+  const running: Promise<void>[] = [];
+  if (!worker.agentForPr && !worker.runsEndWithProcess) return running;
   const { config } = ctx;
   const repo = repoSlug(config);
   // Every label the factory opens PRs under: the review phase's replacements
@@ -1837,22 +1844,27 @@ async function handBackStuckPrs(ctx: FactoryContext, worker: CodingWorker): Prom
         log(`${pr.url}: ${stuck.what} still, after ${sent} handback(s); leaving it to a human`);
         continue;
       }
-      const agent = await worker.agentForPr(pr.url);
-      if (agent) {
-        await worker.continueRun(agent, stuck.prompt);
-      } else {
+      const agent = (await worker.agentForPr?.(pr.url)) ?? null;
+      const handle = agent
+        ? await worker.continueRun(agent, stuck.prompt)
         // The worker knows no agent for it: the factory opened the PR itself (a
         // review's replacement, a dependency batch), or the run that did is
         // gone. A fresh agent on the PR's own branch, with no credentials,
         // fixes it instead — the work is in the PR, not in the lost context.
-        await worker.start(stuck.prompt, { prUrl: pr.url, withholdCredentials: true, name: `factory-handback: #${pr.number}`.slice(0, 100) });
-      }
+        : await worker.start(stuck.prompt, { prUrl: pr.url, withholdCredentials: true, name: `factory-handback: #${pr.number}`.slice(0, 100) });
       await commentOnPr(repo, pr.url, factoryComment(`🏭 ${stuck.note} (${sent + 1} of ${MAX_HANDBACKS}): ${stuck.what}.`));
       log(`${pr.url}: handed ${stuck.what} back to ${agent ? 'its agent' : 'a fresh agent on its branch'}`);
+      if (worker.runsEndWithProcess) {
+        running.push(worker.awaitResult(handle).then(
+          (r) => log(`${pr.url}: handback ended ${r.status}`),
+          (err: Error) => log(`${pr.url}: handback failed — ${err.message}`),
+        ));
+      }
     } catch (err) {
       log(`${pr.url}: could not hand it back — ${(err as Error).message}`);
     }
   }
+  return running;
 }
 
 /**

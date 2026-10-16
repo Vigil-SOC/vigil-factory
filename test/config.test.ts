@@ -126,6 +126,13 @@ describe('epic groom model', () => {
   });
 });
 
+describe('local run budget', () => {
+  it('gives a claude-code run an hour past the groom-sized budget unless set', () => {
+    expect(loadConfig(configDir({})).worker.localMaxRunMinutes).toBe(loadConfig(configDir({})).worker.maxRunMinutes + 60);
+    expect(loadConfig(configDir({ localMaxRunMinutes: 200 })).worker.localMaxRunMinutes).toBe(200);
+  });
+});
+
 describe('usage pause', () => {
   it('defaults to 90%, takes null for never, and refuses what is not a percentage', () => {
     expect(loadConfig(configDir({})).worker.pauseAtUsagePercent).toBe(90);

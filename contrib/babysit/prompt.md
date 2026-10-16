@@ -131,6 +131,21 @@ Leave it alone when the comment says it changes `.github/` and its author has no
 access, or the agent itself answered leave or close. Those are a human's call, and the
 review already told them.
 
+### Issues an attempt retracted because of the machine
+
+An implementer that ends without a PR retracts the issue's groom to needs-work, with a
+comment headed "Factory attempt — needs work". That retraction is the factory judging
+the issue too big or not buildable. When the attempt died of the machine instead, it is
+wrong: a full disk (ENOSPC, "disk is full"), a lost login, a usage limit, a tick that was
+killed, or the run budget during a pass where most runs hit it together (Oct 12: six
+local sessions at once, nine of eleven cut off at 90 minutes). Each one is a
+groomed issue the factory dropped, and nothing will pick it up again. Reply on the issue
+once, in one or two plain sentences saying what failed on the machine and that the
+attempt says nothing about the issue's size. Any reply queues a fresh groom, which sees
+the attempt and decides. Do this only when the cause is plain from the attempt's comment
+or the tick log. An agent's own report that the issue is too big, unclear, or already done
+is the factory's verdict; leave it. Never relabel the issue yourself.
+
 ## 3. Start the next tick
 
 If no `factory-tick` run is queued or in progress, dispatch one with every input left at

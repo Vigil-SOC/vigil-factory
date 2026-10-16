@@ -58,6 +58,11 @@ const LIMIT_RESUME_NOTE = 'Your previous turn was cut off by a usage limit, whic
 const LOGIN_RETRY_MS = 30_000;
 const MAX_LOGIN_RESUMES = 2;
 const LOGIN_RESUME_NOTE = 'Your previous turn could not start because the login was being refreshed. Carry out the task above from the beginning.';
+/** An implementer that ends its turn with no PR is asked once more: in -p
+ *  mode the turn is the whole session, and on Oct 13 one ended "waiting for
+ *  the live stack test" with a finished fix that was never pushed. */
+const MAX_NO_PR_RESUMES = 1;
+const NO_PR_RESUME_NOTE = 'Your turn ended without a pull request. This session ends when your turn does, so nothing you were waiting for (a background command, a test run, a server) is still going, and nobody will answer a question. If the work is done or nearly so, finish it now: verify in the foreground, commit, push, open the PR, and end with its URL. If you concluded the issue should not be built as scoped, say so again in a few lines and stop.';
 
 export interface ClaudeCodeWorkerOptions {
   /** The `claude` executable. launchd and CI rarely have ~/.local/bin on PATH. */
@@ -107,12 +112,17 @@ interface Run {
   limitResumes: number;
   /** How many times a lost login has ended it and it was resumed. */
   loginResumes: number;
+  /** How many times it ended with no PR and was asked to finish. */
+  noPrResumes: number;
 }
 
 /** One agent: a clone and every run made in it. */
 interface Session {
   workspace: string;
   branch: string | null;
+  /** The existing PR whose branch this session works on, when it was started
+   *  on one; its pushes update that PR rather than opening another. */
+  prUrl: string | null;
   /** The model this session runs, follow-ups included. */
   model: ModelSpec | null;
   usage: TokenUsage[];
@@ -317,15 +327,22 @@ export function branchNameFor(name: string | undefined, sessionId: string): stri
  * environment Cursor's agents got for free. Appended to the system prompt,
  * never to the factory's prompts, which stay worker-agnostic.
  */
-export function machineNote(opts: { repoUrl: string; ref: string | null; branch: string | null }): string {
+export function machineNote(opts: { repoUrl: string; ref: string | null; branch: string | null; prUrl?: string | null }): string {
+  // -p mode: the turn is the session. A test left running in the background
+  // dies with it, and an agent that stops to wait for one loses its work.
+  const foreground = 'This session ends when your turn ends: run every check in the foreground and wait for it, never stop to wait for something still running.';
+  if (opts.prUrl && opts.branch) {
+    return `You are working in a local clone of ${opts.repoUrl}, on branch \`${opts.branch}\`: the head of ${opts.prUrl}. Stay on it. Commit your work there and \`git push origin ${opts.branch}\`; that updates the PR. \`gh\` and \`git push\` are already authenticated. Do not open another PR, and do not merge this one. ${foreground}`;
+  }
   const where = `You are working in a local clone of ${opts.repoUrl}${opts.ref ? ` checked out at ${opts.ref}` : ''}.`;
   if (!opts.branch) {
     return `${where} Read and run what you need, but this session makes no changes to the repository and pushes nothing. Put your report in your final message; it is read by a program, so end with the lines it asks for.`;
   }
-  return `${where} You are on branch \`${opts.branch}\`; stay on it. Commit your work there, push it to origin, and open the pull request with \`gh pr create\` — \`gh\` and \`git push\` are already authenticated. The PR must exist before you finish, and your final message must include its URL. Do not merge it.`;
+  return `${where} You are on branch \`${opts.branch}\`; stay on it. Commit your work there, push it to origin, and open the pull request with \`gh pr create\` — \`gh\` and \`git push\` are already authenticated. The PR must exist before you finish, and your final message must include its URL. Do not merge it. ${foreground}`;
 }
 
 export class ClaudeCodeWorker implements CodingWorker {
+  readonly runsEndWithProcess = true;
   private readonly runs = new Map<string, Run>();
   private readonly sessions = new Map<string, Session>();
   private readonly owner: string;
@@ -409,7 +426,11 @@ export class ClaudeCodeWorker implements CodingWorker {
     if (this.opts.ghToken) {
       await this.git(['config', 'credential.helper', '!f() { echo username=x-access-token; echo "password=$GH_TOKEN"; }; f'], workspace);
     }
-    if (this.opts.startingRef) {
+    // An existing PR's branch, for a handback; otherwise the pinned commit.
+    const prBranch = opts.prUrl ? await this.prBranch(opts.prUrl) : null;
+    if (prBranch) {
+      await this.git(['checkout', '--quiet', '-B', prBranch, `origin/${prBranch}`], workspace);
+    } else if (this.opts.startingRef) {
       await this.git(['checkout', '--quiet', '--detach', this.opts.startingRef], workspace);
     }
     // Commits need an author; a CI runner has none configured.
@@ -418,14 +439,36 @@ export class ClaudeCodeWorker implements CodingWorker {
       await this.git(['config', 'user.name', 'deeptempo-factory'], workspace);
       await this.git(['config', 'user.email', 'deeptempo-factory@users.noreply.github.com'], workspace);
     }
-    let branch: string | null = null;
-    if (opts.autoCreatePR) {
+    let branch: string | null = prBranch;
+    if (!branch && opts.autoCreatePR) {
       branch = branchNameFor(opts.name, sessionId);
       await this.git(['checkout', '--quiet', '-b', branch], workspace);
     }
-    const session: Session = { workspace, branch, model: opts.model ?? this.opts.model, usage: [] };
+    const session: Session = { workspace, branch, prUrl: prBranch ? opts.prUrl! : null, model: opts.model ?? this.opts.model, usage: [] };
     this.sessions.set(sessionId, session);
     return session;
+  }
+
+  /**
+   * The branch of a PR this worker may work on: one in the target repo itself.
+   * A fork's branch is a stranger's code, which this worker would run on the
+   * tick's own machine; reviews of those run on the cursor worker.
+   */
+  private async prBranch(prUrl: string): Promise<string> {
+    const { stdout } = await execFileAsync('gh', ['pr', 'view', prUrl, '--json', 'headRefName,isCrossRepository'], { env: this.childEnv() });
+    const pr = JSON.parse(stdout) as { headRefName: string; isCrossRepository: boolean };
+    if (pr.isCrossRepository) throw new Error(`ClaudeCodeWorker works only on PRs whose branch is in ${this.repo}; ${prUrl} comes from a fork`);
+    return pr.headRefName;
+  }
+
+  /** Whether a PR is open from this branch: the agent may have opened one and not said so. */
+  private async branchHasPr(branch: string): Promise<boolean> {
+    try {
+      const { stdout } = await execFileAsync('gh', ['pr', 'list', '-R', this.repo, '--head', branch, '--state', 'open', '--json', 'url'], { env: this.childEnv() });
+      return (JSON.parse(stdout) as unknown[]).length > 0;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -465,7 +508,7 @@ export class ClaudeCodeWorker implements CodingWorker {
     }
   }
 
-  private launch(sessionId: string, session: Session, prompt: string, resume: boolean, carried?: Pick<Run, 'priorMs' | 'limitResumes' | 'loginResumes'>): RunHandle {
+  private launch(sessionId: string, session: Session, prompt: string, resume: boolean, carried?: Pick<Run, 'priorMs' | 'limitResumes' | 'loginResumes' | 'noPrResumes'>): RunHandle {
     // The agent gets the MCP servers the target repo declares and no others:
     // not this machine's, whose owner's connectors are not the factory's to
     // hand out. The counterpart of Cursor's agents having only what the repo's
@@ -477,7 +520,7 @@ export class ClaudeCodeWorker implements CodingWorker {
       '--dangerously-skip-permissions',
       '--strict-mcp-config', ...(existsSync(repoMcp) ? ['--mcp-config', repoMcp] : []),
       resume ? '--resume' : '--session-id', sessionId,
-      '--append-system-prompt', machineNote({ repoUrl: this.opts.repoUrl, ref: this.opts.startingRef, branch: session.branch }),
+      '--append-system-prompt', machineNote({ repoUrl: this.opts.repoUrl, ref: this.opts.startingRef, branch: session.branch, prUrl: session.prUrl }),
       ...modelArgs(session.model),
     ];
     const child = spawn(this.opts.bin, args, {
@@ -494,6 +537,7 @@ export class ClaudeCodeWorker implements CodingWorker {
       priorMs: carried?.priorMs ?? 0,
       limitResumes: carried?.limitResumes ?? 0,
       loginResumes: carried?.loginResumes ?? 0,
+      noPrResumes: carried?.noPrResumes ?? 0,
       exited: new Promise((res) => {
         child.once('error', (err) => { run.stderr.push(String(err.message)); res({ code: null, signal: null }); });
         child.once('close', (code, signal) => res({ code, signal }));
@@ -512,9 +556,6 @@ export class ClaudeCodeWorker implements CodingWorker {
   }
 
   async start(prompt: string, opts: StartOptions = {}): Promise<RunHandle> {
-    // A PR review runs a stranger's code, and this worker runs agents on the
-    // tick's own machine; the review phase is Cursor-only for that reason.
-    if (opts.prUrl) throw new Error('ClaudeCodeWorker does not work on existing PRs; reviews run on the cursor worker');
     // Only the environment boot check starts elsewhere, and that phase is Cursor's.
     if (opts.startingRef) throw new Error('ClaudeCodeWorker starts every agent from the tick\'s pinned commit');
     await this.awaitHeadroom();
@@ -561,16 +602,24 @@ export class ClaudeCodeWorker implements CodingWorker {
     }
     if (!succeeded && !outcome.signal && hitUsageLimit(resultText) && run.limitResumes < MAX_LIMIT_RESUMES) {
       this.log(`claude session ${handle.agentId} was cut off by the usage limit; resuming it once the limit resets`);
-      const carried = { priorMs: run.priorMs + (Date.now() - run.startedAt), limitResumes: run.limitResumes + 1, loginResumes: run.loginResumes };
+      const carried = { priorMs: run.priorMs + (Date.now() - run.startedAt), limitResumes: run.limitResumes + 1, loginResumes: run.loginResumes, noPrResumes: run.noPrResumes };
       await this.awaitHeadroom(true);
       const next = this.launch(handle.agentId, session, LIMIT_RESUME_NOTE, true, carried);
       return this.awaitResult(next);
     }
     if (!succeeded && !outcome.signal && lostLogin(resultText) && run.loginResumes < MAX_LOGIN_RESUMES) {
       this.log(`claude session ${handle.agentId} found no login (a token refresh race); resuming it in ${LOGIN_RETRY_MS / 1000}s`);
-      const carried = { priorMs: run.priorMs + (Date.now() - run.startedAt), limitResumes: run.limitResumes, loginResumes: run.loginResumes + 1 };
+      const carried = { priorMs: run.priorMs + (Date.now() - run.startedAt), limitResumes: run.limitResumes, loginResumes: run.loginResumes + 1, noPrResumes: run.noPrResumes };
       await sleep(LOGIN_RETRY_MS);
       const next = this.launch(handle.agentId, session, LOGIN_RESUME_NOTE, true, carried);
+      return this.awaitResult(next);
+    }
+
+    const expectsPr = session.branch !== null && session.prUrl === null;
+    if (succeeded && expectsPr && !prUrlIn(resultText, this.opts.repoUrl) && run.noPrResumes < MAX_NO_PR_RESUMES && !(await this.branchHasPr(session.branch!))) {
+      this.log(`claude session ${handle.agentId} ended its turn with no PR; asking it once to finish`);
+      const carried = { priorMs: run.priorMs + (Date.now() - run.startedAt), limitResumes: run.limitResumes, loginResumes: run.loginResumes, noPrResumes: run.noPrResumes + 1 };
+      const next = this.launch(handle.agentId, session, NO_PR_RESUME_NOTE, true, carried);
       return this.awaitResult(next);
     }
 

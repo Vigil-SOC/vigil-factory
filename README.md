@@ -77,7 +77,8 @@ reconcile with GitHub: record the verdict on every factory PR that has closed, r
    out of draft, and adopt the PRs a dead pipeline opened but never labelled (a
    cursor/factory-N-… branch closing #N), or close one another PR already answers
 → hand every open factory PR that cannot merge back to the agent that opened it: merge
-   conflicts to resolve, else red checks to fix (Cursor worker; three ticks per PR for each)
+   conflicts to resolve, else red checks to fix (three ticks per PR for each; a local
+   worker's handbacks finish before the tick ends)
 → GROOM agents (up to groom.maxPerTick, in parallel; epics, then blockers, then oldest
    first): vet issues against
    principles.md — "groomed" or "needs-work", recorded as a label, alongside a comment
@@ -789,7 +790,10 @@ to. Everything else — prompts, phases, labels, telemetry — is the same eithe
   puts the agent on a `factory/…` branch, and runs `claude -p` there with
   `--dangerously-skip-permissions` — the same latitude a Cursor agent has in its VM, but
   on this machine, so run it somewhere you would let an agent run. The agent pushes and
-  opens the PR with `gh`; a CI fix round is `claude --resume` in the same clone. Auth is
+  opens the PR with `gh`; a CI fix round is `claude --resume` in the same clone, and a
+  later tick's handback is a fresh session on the PR's own branch (never a fork's). A run
+  gets `worker.localMaxRunMinutes` (default `maxRunMinutes` + 60), since sessions share one
+  machine; the groomer still sizes against `maxRunMinutes`. Auth is
   the machine's claude.ai login, so runs draw on the team subscription rather than API
   keys; where there is no browser, `claude setup-token` prints a one-year token for
   `CLAUDE_CODE_OAUTH_TOKEN`. The agents see only the MCP servers the target repo's

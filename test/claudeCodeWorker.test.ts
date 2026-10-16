@@ -155,6 +155,19 @@ describe('machineNote', () => {
     expect(note).toContain('abc123');
   });
 
+  it('puts a handback on the PR it fixes: push to its branch, open no other', () => {
+    const note = machineNote({ repoUrl: 'https://github.com/o/r', ref: 'abc123', branch: 'factory/1-x-deadbeef', prUrl: 'https://github.com/o/r/pull/9' });
+    expect(note).toContain('https://github.com/o/r/pull/9');
+    expect(note).toContain('git push origin factory/1-x-deadbeef');
+    expect(note).toContain('Do not open another PR');
+    expect(note).not.toContain('gh pr create');
+  });
+
+  it('tells every agent that changes code to run its checks in the foreground', () => {
+    expect(machineNote({ repoUrl: 'https://github.com/o/r', ref: null, branch: 'b' })).toContain('in the foreground');
+    expect(machineNote({ repoUrl: 'https://github.com/o/r', ref: null, branch: 'b', prUrl: 'https://github.com/o/r/pull/9' })).toContain('in the foreground');
+  });
+
   it('tells a read-only agent to change nothing', () => {
     const note = machineNote({ repoUrl: 'https://github.com/o/r', ref: null, branch: null });
     expect(note).toContain('pushes nothing');
