@@ -53,10 +53,19 @@ export interface IssueData {
   assignees: { login: string }[];
 }
 
-export async function listOpenIssues(repo: string, limit: number): Promise<IssueData[]> {
+/**
+ * Past any backlog the factory will meet. `gh` pages through the open issues
+ * until it has this many, and it lists newest first: a cap the backlog
+ * outgrows hides the oldest issues, which are the ones every queue takes first.
+ * 156 open issues with bodies and comments come back in about four seconds.
+ */
+const ALL_OPEN_ISSUES = 10_000;
+
+/** Every open issue, which is the set grooming, picking and blocked verdicts all read. */
+export async function listOpenIssues(repo: string): Promise<IssueData[]> {
   return ghJson<IssueData[]>([
     'issue', 'list', '-R', repo, '--state', 'open',
-    '--limit', String(limit), '--json', 'number,title,body,url,labels,comments,assignees',
+    '--limit', String(ALL_OPEN_ISSUES), '--json', 'number,title,body,url,labels,comments,assignees',
   ]);
 }
 

@@ -63,6 +63,34 @@ const LOGIN_RESUME_NOTE = 'Your previous turn could not start because the login 
  *  the live stack test" with a finished fix that was never pushed. */
 const MAX_NO_PR_RESUMES = 1;
 const NO_PR_RESUME_NOTE = 'Your turn ended without a pull request. This session ends when your turn does, so nothing you were waiting for (a background command, a test run, a server) is still going, and nobody will answer a question. If the work is done or nearly so, finish it now: verify in the foreground, commit, push, open the PR, and end with its URL. If you concluded the issue should not be built as scoped, say so again in a few lines and stop.';
+/** Waits before each clone retry. On Oct 19 four grooms' clones failed in the
+ *  same second (`RPC failed; curl 56`): GitHub dropped the connections, and a
+ *  moment later would have served them. Each wait is jittered so clones that
+ *  failed together do not retry together. */
+const CLONE_RETRY_DELAYS_MS = [5_000, 15_000, 45_000];
+
+/**
+ * Runs `attempt`, and on failure waits and runs it again, once per delay. Each
+ * delay is stretched by up to half again at random. The last failure is the
+ * one thrown.
+ */
+export async function retrying<T>(
+  attempt: () => Promise<T>,
+  delaysMs: number[],
+  onRetry: (err: unknown, delayMs: number) => void = () => {},
+): Promise<T> {
+  for (let i = 0; ; i++) {
+    try {
+      return await attempt();
+    } catch (err) {
+      const base = delaysMs[i];
+      if (base === undefined) throw err;
+      const delay = base * (1 + Math.random() / 2);
+      onRetry(err, delay);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+}
 
 export interface ClaudeCodeWorkerOptions {
   /** The `claude` executable. launchd and CI rarely have ~/.local/bin on PATH. */
@@ -422,7 +450,14 @@ export class ClaudeCodeWorker implements CodingWorker {
     const credential = this.opts.ghToken
       ? ['-c', 'credential.helper=!f() { echo username=x-access-token; echo "password=$GH_TOKEN"; }; f']
       : [];
-    await this.git(['clone', '--quiet', ...credential, this.opts.repoUrl, workspace]);
+    await retrying(
+      () => this.git(['clone', '--quiet', ...credential, this.opts.repoUrl, workspace]),
+      CLONE_RETRY_DELAYS_MS,
+      (err, delayMs) => {
+        this.log(`clone for session ${sessionId} failed (${(err as Error).message.trim().split('\n').pop()}); retrying in ${Math.round(delayMs / 1000)}s`);
+        rmSync(workspace, { recursive: true, force: true });
+      },
+    );
     if (this.opts.ghToken) {
       await this.git(['config', 'credential.helper', '!f() { echo username=x-access-token; echo "password=$GH_TOKEN"; }; f'], workspace);
     }

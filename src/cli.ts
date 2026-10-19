@@ -2,7 +2,7 @@
 // factory CLI — the daily trigger runs `factory run`; everything else is
 // for humans operating the factory.
 
-import { admissible, buildContext, buildWorker, candidateTasks, depsInputs, environmentInputs, implementIssues, log, openSet, reviewInputs, runEnvironmentPhase, runDepsPhase, runGroomPhase, runReviewPhase, runSecurityPhase, runSelector, runSimplifyPhase, securityInputs, simplifySkip, tick } from './controller.ts';
+import { admissible, buildContext, buildWorker, candidateTasks, depsInputs, environmentInputs, implementIssues, log, openSet, reviewInputs, runEnvironmentPhase, runDepsPhase, runGroomPhase, runReviewPhase, runSecurityPhase, runSelector, runSimplifyPhase, selectorCandidates, securityInputs, simplifySkip, tick } from './controller.ts';
 import { repoSlug } from './config.ts';
 import { isEpic, isGroomed, needsGroom, verdict } from './groom.ts';
 import { defaultBranchHead } from './github.ts';
@@ -193,8 +193,9 @@ async function select(): Promise<void> {
     log('no groomed issues. Run `factory groom` first.');
     return;
   }
-  log(`handing ${tasks.length} groomed issue(s) to the selector agent`);
-  const picked = await runSelector(await buildWorker(ctx.config), tasks);
+  const offered = selectorCandidates(tasks, ctx.config.labels, ctx.config.selector.maxCandidates);
+  log(`handing ${offered.length} of ${tasks.length} groomed issue(s) to the selector agent`);
+  const picked = await runSelector(await buildWorker(ctx.config), offered);
   console.log(`\n${picked.reply}\n`);
   if (picked.selection.kind === 'picked') {
     log(`pick: #${picked.selection.task.issueNumber} "${picked.selection.task.title}"`);

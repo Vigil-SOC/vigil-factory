@@ -43,6 +43,32 @@ describe('CursorWorker API retries', () => {
     expect(fetch).toHaveBeenCalledTimes(1);
   });
 
+  it('does not repeat a launch that timed out waiting for an answer: Cursor may have it', async () => {
+    const fetch = vi.fn().mockImplementation(() => Promise.reject(new TypeError('fetch failed', { cause: Object.assign(new Error('Headers Timeout Error'), { code: 'UND_ERR_HEADERS_TIMEOUT' }) })));
+    vi.stubGlobal('fetch', fetch);
+    await expect(worker().start('prompt')).rejects.toThrow('UND_ERR_HEADERS_TIMEOUT');
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('repeats a launch whose connection never opened, since nothing was sent', async () => {
+    const fetch = vi.fn()
+      .mockImplementationOnce(() => Promise.reject(new TypeError('fetch failed', { cause: Object.assign(new Error('Connect Timeout Error'), { code: 'UND_ERR_CONNECT_TIMEOUT' }) })))
+      .mockImplementationOnce(() => Promise.reject(new TypeError('fetch failed', { cause: Object.assign(new Error('getaddrinfo EAI_AGAIN api.cursor.com'), { code: 'EAI_AGAIN' }) })))
+      .mockImplementationOnce(() => json({ agent: { id: 'bc-1' }, run: { id: 'run-1' } }));
+    vi.stubGlobal('fetch', fetch);
+    const handle = worker().start('prompt');
+    await vi.runAllTimersAsync();
+    await expect(handle).resolves.toEqual({ agentId: 'bc-1', runId: 'run-1' });
+    expect(fetch).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not repeat a launch refused for usage: that is an answer, not a dropped line', async () => {
+    const fetch = vi.fn().mockImplementation(() => json({ error: 'usage_limit_exceeded' }, 402));
+    vi.stubGlobal('fetch', fetch);
+    await expect(worker().start('prompt')).rejects.toThrow('402');
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
   it('runs the model a start asks for, else the worker\'s own', async () => {
     const fetch = vi.fn().mockImplementation(() => json({ agent: { id: 'bc-1' }, run: { id: 'run-1' } }));
     vi.stubGlobal('fetch', fetch);

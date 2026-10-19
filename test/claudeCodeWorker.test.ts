@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { branchNameFor, headroomWait, hitUsageLimit, lostLogin, machineNote, modelArgs, parseResultJson, parseUsage, prUrlIn, sumUsage, usageFrom } from '../src/claudeCodeWorker.ts';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { branchNameFor, headroomWait, hitUsageLimit, lostLogin, machineNote, modelArgs, parseResultJson, parseUsage, prUrlIn, retrying, sumUsage, usageFrom } from '../src/claudeCodeWorker.ts';
 
 describe('modelArgs', () => {
   it('passes nothing when the config leaves the model to the runtime', () => {
@@ -172,5 +172,30 @@ describe('machineNote', () => {
     const note = machineNote({ repoUrl: 'https://github.com/o/r', ref: null, branch: null });
     expect(note).toContain('pushes nothing');
     expect(note).not.toContain('gh pr create');
+  });
+});
+
+describe('retrying', () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('clones again after a dropped connection, and gives up with the last error', async () => {
+    vi.useFakeTimers();
+    const flaky = vi.fn()
+      .mockRejectedValueOnce(new Error('RPC failed; curl 56'))
+      .mockResolvedValueOnce('cloned');
+    const waits: number[] = [];
+    const ok = retrying(flaky, [5_000, 15_000], (_, ms) => waits.push(ms));
+    await vi.runAllTimersAsync();
+    await expect(ok).resolves.toBe('cloned');
+    expect(waits).toHaveLength(1);
+    expect(waits[0]).toBeGreaterThanOrEqual(5_000);
+    expect(waits[0]).toBeLessThanOrEqual(7_500);
+
+    const dead = vi.fn().mockRejectedValue(new Error('early EOF'));
+    const failed = retrying(dead, [5_000, 15_000]);
+    const settled = expect(failed).rejects.toThrow('early EOF');
+    await vi.runAllTimersAsync();
+    await settled;
+    expect(dead).toHaveBeenCalledTimes(3);
   });
 });

@@ -129,4 +129,9 @@ describe('selectorCandidates', () => {
     const { selectorCandidates } = await import('../src/controller.ts');
     expect(selectorCandidates([t(7), t(40)], LABELS).map((x) => x.issueNumber)).toEqual([7, 40]);
   });
+
+  it('offers the oldest when the groomed set is past what one prompt takes', async () => {
+    const { selectorCandidates } = await import('../src/controller.ts');
+    expect(selectorCandidates([t(2100), t(40), t(1500), t(7)], LABELS, 2).map((x) => x.issueNumber)).toEqual([7, 40]);
+  });
 });

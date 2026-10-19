@@ -904,7 +904,8 @@ committed.
 - `factory.config.json` → `selector` — `enabled` (default false): whether an agent ranks
   the groomed issues before each implementer run. Off, the oldest groomed issue is
   implemented next; see [One judge of size](#one-judge-of-size) for why that is the
-  default. `maxCandidates` (default 100) bounds the open-issue fetch either way.
+  default. `maxCandidates` (default 100) bounds how many groomed issues one selector prompt
+  is offered, oldest first; the factory fetches and grooms every open issue regardless.
 - `src/prompts.ts` — all eight prompts (groom / selector / implementer / environment /
   simplify / review / deps / security), each a few lines. The implementer and simplifier share one block of working
   rules so a simplification is held to exactly the standard the code it removes was built to. Add lines only for specific opinions where the model's default behavior isn't

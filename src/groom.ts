@@ -36,7 +36,7 @@
 // after #N is no longer open — the same move a human reply makes, without a
 // human having to make it. "No longer open" is checked against every open
 // issue in the repo, and #N is not always one of those: the groomer may name a
-// pull request, or an issue past the fetch cap. A number the open issues do
+// pull request, or an issue filed since the list was read. A number the open issues do
 // not account for is looked up on its own and held open until GitHub says it
 // is closed, so a verdict blocked on an open PR stays current instead of
 // going stale every tick and being groomed again to the same conclusion.
@@ -294,9 +294,9 @@ export function verdict(task: Task, labels: GroomLabels): GroomVerdict | null {
 /**
  * Every open issue in the repo, claimed or not, by number — plus `heldOpen`:
  * numbers a verdict is blocked on that are not among those issues but are not
- * known to be closed either. A pull request, an issue past the fetch cap, or a
- * reference the lookup could not settle. Absence from the map is only evidence
- * of closure for the numbers this set does not hold.
+ * known to be closed either. A pull request, an issue filed since the list was
+ * read, or a reference the lookup could not settle. Absence from the map is
+ * only evidence of closure for the numbers this set does not hold.
  */
 export type OpenIssues = Map<number, Task> & { readonly heldOpen: ReadonlySet<number> };
 

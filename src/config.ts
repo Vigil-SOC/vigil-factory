@@ -100,7 +100,8 @@ export interface FactoryConfig {
    *  judged each one buildable, and a ranking agent that reads the whole
    *  groomed backlog per slot costs more as the backlog grows without changing
    *  what lands. On, a selector agent ranks the groomed issues and picks.
-   *  `maxCandidates` bounds the open-issue fetch either way. */
+   *  `maxCandidates` bounds how many groomed issues one selector prompt is
+   *  offered, oldest first; every open issue is fetched and groomed regardless. */
   selector: { enabled: boolean; maxCandidates: number };
   /** The environment phase: an agent that reads the factory's own PRs looking
    *  for checks the implementer could not run, and fixes the cloud-agent

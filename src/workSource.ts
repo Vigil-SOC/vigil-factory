@@ -17,7 +17,7 @@ export class GitHubIssueSource implements WorkSource {
   }
 
   async eligibleTasks(): Promise<Task[]> {
-    const issues = await listOpenIssues(this.repo, this.config.selector.maxCandidates);
+    const issues = await listOpenIssues(this.repo);
     return issues.map((i) => ({
       id: `${this.repo}#${i.number}`,
       issueNumber: i.number,

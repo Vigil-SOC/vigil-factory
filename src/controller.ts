@@ -119,7 +119,7 @@ export async function candidateTasks(ctx: FactoryContext): Promise<Task[]> {
 /**
  * The open set a blocked verdict is checked against. Starts as the open
  * issues; then every blocker a verdict names that is not one of them — a pull
- * request, an issue past the fetch cap — is looked up, and held open unless
+ * request, an issue filed since the list was read — is looked up, and held open unless
  * GitHub says it is closed. Without this a verdict blocked on an open PR reads
  * as cleared every tick and is groomed again, to the same verdict, forever.
  */
@@ -1492,11 +1492,12 @@ export function oldestFirst(tasks: Task[], labels: GroomLabels): Task[] {
 /**
  * What the selector is given: only the blockers while any stand, the whole
  * groomed set otherwise. The selector ranks by definition, not urgency, and a
- * blocker's urgency is the factory's call, not the agent's.
+ * blocker's urgency is the factory's call, not the agent's. `max` bounds one
+ * prompt, not what the factory sees: past it, the oldest are the ones offered.
  */
-export function selectorCandidates(tasks: Task[], labels: GroomLabels): Task[] {
+export function selectorCandidates(tasks: Task[], labels: GroomLabels, max = Infinity): Task[] {
   const blockers = tasks.filter((t) => isBlocker(t, labels));
-  return blockers.length > 0 ? blockers : tasks;
+  return oldestFirst(blockers.length > 0 ? blockers : tasks, labels).slice(0, max);
 }
 
 /** The implementation half of a tick: capacity gate, picks, implementers. */
@@ -1580,8 +1581,9 @@ async function pickTasks(
   let remaining = tasks;
 
   while (picks.length < slots && remaining.length > 0) {
-    const offered = selectorCandidates(remaining, ctx.config.labels);
-    log(`handing ${offered.length} groomed issue(s)${offered.length < remaining.length ? ' (blockers only)' : ''} to the selector agent (slot ${picks.length + 1} of ${slots})`);
+    const offered = selectorCandidates(remaining, ctx.config.labels, ctx.config.selector.maxCandidates);
+    const blockersOnly = remaining.some((t) => isBlocker(t, ctx.config.labels));
+    log(`handing ${offered.length} of ${remaining.length} groomed issue(s)${blockersOnly ? ' (blockers only)' : ''} to the selector agent (slot ${picks.length + 1} of ${slots})`);
     const picked = await runSelector(worker, offered);
 
     if (picked.selection.kind === 'none') {
@@ -1635,7 +1637,7 @@ async function dryRun(ctx: FactoryContext, allCandidates: Task[]): Promise<void>
   }
   if (groomed.length > 0 && ctx.config.selector.enabled) {
     log('selector prompt would be:');
-    console.log(`\n${selectPrompt(selectorCandidates(groomed, labels))}\n`);
+    console.log(`\n${selectPrompt(selectorCandidates(groomed, labels, ctx.config.selector.maxCandidates))}\n`);
   } else if (groomed.length > 0) {
     log(`selector off: would implement blockers first, then oldest — ${oldestFirst(groomed, labels).slice(0, ctx.config.maxConcurrentJobs).map((t) => `#${t.issueNumber}`).join(' ')}`);
   }
