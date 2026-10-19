@@ -73,9 +73,12 @@ Plenty of tools point an agent at a backlog. This one takes positions:
 
 ```
 reconcile with GitHub: record the verdict on every factory PR that has closed, release the
-   in-progress label on every issue nothing is working on any more, take any factory PR
-   out of draft, and adopt the PRs a dead pipeline opened but never labelled (a
-   cursor/factory-N-… branch closing #N), or close one another PR already answers
+   in-progress label on every issue nothing is working on any more (its PR closed since it
+   was claimed, or the claim is older than staleRunHours — short of that, a pipeline on
+   another runner may hold it), take any factory PR out of draft, and adopt the PRs a dead
+   pipeline opened but never labelled (a cursor/factory-N-… branch closing #N, older than
+   the run budget), or close one another PR already answers. An issue still open after its
+   factory PR merged loses factory:groomed, so what remains is groomed before it is built
 → hand every open factory PR that cannot merge back to the agent that opened it: merge
    conflicts to resolve, else red checks to fix (three ticks per PR for each; a local
    worker's handbacks finish before the tick ends)
@@ -180,6 +183,11 @@ again when a human replies or edits, and that groom is told to weigh the failed
 attempt. Failures that say nothing about the issue (a worker error, a cancelled run, a
 GitHub hiccup) only release it for a later tick.
 
+A merge spends the verdict too. A groom may scope one slice of a large issue, and its PR
+then says "Part of #N" rather than closing it. When that PR merges and the issue stays
+open, `factory:groomed` comes off with a comment naming the PR, so the issue is groomed
+again — the remainder, judged as it now stands — before anything builds it a second time.
+
 ## Grooming
 
 Grooming is the one place the factory is opinionated about **what** to build. It is not
@@ -272,6 +280,13 @@ free takes two groomed issues and runs two implementers concurrently — they wo
 branches, so the only collisions are ones a human resolves at review time. Crashed
 pipelines are detected via stale records in the local `telemetry/current-runs.json`
 (> `staleRunHours`), recorded as aborted, and cleaned up, so a crash cannot leak a slot.
+
+Ticks on two machines — the local one and the Actions one — may run at once, and each
+sees only its own pipelines. So a tick releases a claim it cannot account for only once
+the claim's PR has closed since it was claimed, or the claim is older than
+`staleRunHours`: the age at which the runner holding the pipeline counts it dead itself.
+Neither tick ever strips the other's in-flight work; the price is that a claim a cancelled
+Actions runner leaked waits out `staleRunHours` before its issue is picked again.
 
 ## Epics: where direction comes from
 
@@ -853,8 +868,9 @@ Two options; both just invoke the idempotent tick.
 **Local (launchd, macOS):** copy `contrib/com.deeptempo.factory.plist` to
 `~/Library/LaunchAgents/`, adjust paths, then `launchctl load` it.
 
-**GitHub Actions:** `.github/workflows/factory.yml` (manual dispatch only; its
-daily cron is disabled — add a `schedule` trigger back to run it on a timer). Requires `FACTORY_GH_TOKEN` (a PAT with `repo` scope on the target
+**GitHub Actions:** `.github/workflows/factory.yml` (dispatched by the babysitter, and
+scheduled every two hours as a backstop for when the Mac sleeps; it may overlap the local
+tick safely, see above). Requires `FACTORY_GH_TOKEN` (a PAT with `repo` scope on the target
 repo — the default `GITHUB_TOKEN` is scoped to this repo and cannot touch the
 target repo; the `claude-code` worker's agents push with it too) plus the
 worker's own secret: `CURSOR_API_KEY` for `cursor`, `CLAUDE_CODE_OAUTH_TOKEN`

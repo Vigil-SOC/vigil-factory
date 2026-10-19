@@ -16,6 +16,10 @@ const commentOnIssue = vi.fn(async (_repo: string, _issue: number, _body: string
 const commentOnPr = vi.fn(async (_repo: string, _url: string, _body: string) => {});
 const ensureLabel = vi.fn(async (..._args: unknown[]) => {});
 const prMergeable = vi.fn(async (_repo: string, _url: string) => ({ mergeable: 'MERGEABLE' as 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN', baseRefName: 'main' }));
+/** By default every issue was claimed two days ago, past any runner's pipeline. */
+const twoDaysAgo = () => new Date(Date.now() - 48 * 3_600_000).toISOString();
+const labelHistory = vi.fn(async (_repo: string, issues: number[]) =>
+  new Map<number, LabelHistory>(issues.map((n) => [n, { open: true, labels: ['factory:wip'], labelledAt: { 'factory:wip': twoDaysAgo() } }])));
 vi.mock('../src/github.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../src/github.ts')>()),
   listOpenPrs: (...args: unknown[]) => listOpenPrs(...args),
@@ -28,6 +32,7 @@ vi.mock('../src/github.ts', async (importOriginal) => ({
   commentOnPr: (repo: string, url: string, body: string) => commentOnPr(repo, url, body),
   ensureLabel: (...args: unknown[]) => ensureLabel(...args),
   prMergeable: (repo: string, url: string) => prMergeable(repo, url),
+  labelHistory: (repo: string, issues: number[]) => labelHistory(repo, issues),
   listPrsByLabel: (...args: unknown[]) => listPrsByLabel(...args),
   listIssuesByLabel: (...args: unknown[]) => listIssuesByLabel(...args as [string, string]),
   removeIssueLabels: (repo: string, issue: number, labels: string[]) => removeIssueLabels(repo, issue, labels),
@@ -36,6 +41,7 @@ vi.mock('../src/github.ts', async (importOriginal) => ({
 const { FactoryState } = await import('../src/state.ts');
 const { Telemetry } = await import('../src/telemetry.ts');
 import type { FactoryConfig } from '../src/config.ts';
+import type { LabelHistory } from '../src/github.ts';
 import type { CurrentRun } from '../src/types.ts';
 
 function config(maxConcurrentJobs: number): FactoryConfig {
@@ -191,6 +197,7 @@ describe('reconcileOutcomes', () => {
     listIssuesByLabel.mockReset();
     listIssuesByLabel.mockResolvedValue([]);
     removeIssueLabels.mockClear();
+    labelHistory.mockClear();
   });
 
   const pr = (n: number, state: 'OPEN' | 'MERGED' | 'CLOSED', body = '') => ({
@@ -265,6 +272,38 @@ describe('reconcileOutcomes', () => {
     await state.reconcileOutcomes(() => {});
     expect(removeIssueLabels).toHaveBeenCalledWith('o/r', 44, ['factory:wip']);
   });
+
+  it('holds a fresh claim nothing here holds: a pipeline on another runner may be building it', async () => {
+    const { state } = stateFor(1);
+    github({});
+    listIssuesByLabel.mockResolvedValue([{ number: 2269 }]);
+    labelHistory.mockImplementationOnce(async () => new Map([[2269, { open: true, labels: ['factory:wip'], labelledAt: { 'factory:wip': new Date(Date.now() - 3_600_000).toISOString() } }]]));
+
+    await state.reconcileOutcomes(() => {});
+    expect(removeIssueLabels).not.toHaveBeenCalled();
+  });
+
+  it('releases a fresh claim at once when its factory PR has closed since', async () => {
+    const { state } = stateFor(1);
+    const claimed = new Date(Date.now() - 3_600_000).toISOString();
+    github({ factory: [{ ...pr(8, 'CLOSED', 'Closes #42'), closedAt: new Date().toISOString() }] });
+    listIssuesByLabel.mockResolvedValue([{ number: 42 }]);
+    labelHistory.mockImplementationOnce(async () => new Map([[42, { open: true, labels: ['factory:wip'], labelledAt: { 'factory:wip': claimed } }]]));
+
+    await state.reconcileOutcomes(() => {});
+    expect(removeIssueLabels).toHaveBeenCalledWith('o/r', 42, ['factory:wip']);
+  });
+
+  it('retires the groom verdict of an issue a merged factory PR left open, and says why', async () => {
+    const { state } = stateFor(1);
+    github({ factory: [{ ...pr(1775, 'MERGED', 'Part of #1712'), mergedAt: new Date().toISOString() }] });
+    labelHistory.mockImplementationOnce(async () => new Map([[1712, { open: true, labels: ['factory:groomed'], labelledAt: { 'factory:groomed': twoDaysAgo() } }]]));
+
+    await state.reconcileOutcomes(() => {});
+    expect(labelHistory).toHaveBeenLastCalledWith('o/r', [1712]);
+    expect(removeIssueLabels).toHaveBeenCalledWith('o/r', 1712, ['factory:groomed']);
+    expect(commentOnIssue.mock.calls.at(-1)![2]).toContain('pull/1775 merged and this issue is still open');
+  });
 });
 
 describe('reconcileOutcomes: what a dead pipeline left behind', () => {
@@ -292,6 +331,20 @@ describe('reconcileOutcomes: what a dead pipeline left behind', () => {
     expect(addIssueLabels).toHaveBeenCalledWith('o/r', 42, ['factory:wip']);
     expect(commentOnIssue.mock.calls[0]![2]).toContain('nobody watched its CI');
     expect(closePr).not.toHaveBeenCalled();
+  });
+
+  it('leaves alone an unlabelled PR younger than the run budget, and holds its issue: another runner\'s pipeline may be about to label it', async () => {
+    const { state } = stateFor(3);
+    const createdAt = new Date().toISOString();
+    listOpenPrs.mockResolvedValue([open(9, { createdAt }), open(23, { createdAt, headRefName: 'cursor/factory-review-1493-test-drop-ab06' })]);
+    listIssuesByLabel.mockResolvedValue([{ number: 42 }]);
+    removeIssueLabels.mockClear();
+
+    await state.reconcileOutcomes(() => {});
+    expect(addPrLabels).not.toHaveBeenCalled();
+    expect(closePr).not.toHaveBeenCalled();
+    expect(removeIssueLabels).not.toHaveBeenCalled();
+    listIssuesByLabel.mockResolvedValue([]);
   });
 
   it('closes an orphan whose issue another factory PR already answers', async () => {

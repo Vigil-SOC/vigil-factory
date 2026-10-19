@@ -10,9 +10,9 @@ import { resolve } from 'node:path';
 import type { CurrentRun } from './types.ts';
 import type { FactoryConfig } from './config.ts';
 import { repoSlug } from './config.ts';
-import { addIssueLabels, addPrLabels, closePr, commentOnIssue, commentOnPr, ensureLabel, linkedIssueNumber, listIssuesByLabel, listOpenPrs, listPrsByLabel, markPrReady, prMergeable, referenceState, removeIssueLabels } from './github.ts';
+import { addIssueLabels, addPrLabels, closePr, commentOnIssue, commentOnPr, ensureLabel, labelHistory, linkedIssueNumber, listIssuesByLabel, listOpenPrs, listPrsByLabel, markPrReady, prMergeable, referenceState, removeIssueLabels, type PrData } from './github.ts';
 import { factoryComment } from './groom.ts';
-import { leakedClaims, orphanedPrs, phaseOrphans, unrecordedOutcomes, withSource, type OrphanPhase } from './outcomes.ts';
+import { leakedClaims, orphanedPrs, pastGrace, phaseOrphans, spentVerdicts, unheldClaims, unrecordedOutcomes, withSource, type OrphanPhase } from './outcomes.ts';
 import { keysIn, securityStamp } from './security.ts';
 import type { Telemetry } from './telemetry.ts';
 
@@ -92,13 +92,14 @@ export class FactoryState {
 
   /**
    * Reconcile with GitHub: record the verdict on every factory PR that has
-   * closed and is not yet in the record, and release the in-progress label on
-   * every issue nothing is working on any more. Returns the number of outcomes
+   * closed and is not yet in the record, release the in-progress label on
+   * every issue nothing is working on any more, and take the groomed label off
+   * every issue a merged factory PR left open. Returns the number of outcomes
    * recorded. See outcomes.ts for why the decision and the record are separate.
    */
   async reconcileOutcomes(log: (msg: string) => void): Promise<number> {
     const { labels } = this.config;
-    await this.adoptOrphans(log);
+    const unadopted = await this.adoptOrphans(log);
     const [implementer, environment, simplify, security, claimed] = await Promise.all([
       listPrsByLabel(this.repo, labels.factoryPr, 'all'),
       listPrsByLabel(this.repo, labels.environmentPr, 'all'),
@@ -128,10 +129,29 @@ export class FactoryState {
         .catch((err: Error) => log(`could not mark ${pr.url} ready for review: ${err.message}`));
     }
 
-    const openPrs = implementer.filter((pr) => pr.state === 'OPEN');
-    for (const issue of leakedClaims(claimed, openPrs, this.readRuns())) {
-      log(`releasing #${issue}: no open factory PR or running pipeline claims it`);
+    // An orphan too young to adopt may be a live pipeline's PR, and holds its issue as one.
+    const openPrs = [...implementer.filter((pr) => pr.state === 'OPEN'), ...unadopted];
+    const closedPrs = implementer.filter((pr) => pr.state !== 'OPEN');
+    const unheld = unheldClaims(claimed, openPrs, this.readRuns());
+    const merged = closedPrs.filter((pr) => pr.state === 'MERGED').map((pr) => linkedIssueNumber(pr.body)).filter((n): n is number => n !== null);
+    const history = unheld.length + merged.length ? await labelHistory(this.repo, [...unheld, ...merged]) : new Map();
+    const leaked = leakedClaims(unheld, history, closedPrs, labels.issueInProgress, this.config.staleRunHours * 3_600_000);
+    for (const issue of leaked) {
+      log(`releasing #${issue}: no open factory PR or running pipeline here claims it, and its claim is settled or older than ${this.config.staleRunHours}h`);
       await removeIssueLabels(this.repo, issue, [labels.issueInProgress]).catch(() => {});
+    }
+    const held = unheld.filter((n) => !leaked.includes(n));
+    if (held.length) log(`holding ${held.map((n) => `#${n}`).join(' ')}: claimed with no PR yet, perhaps by a pipeline on another runner; released at ${this.config.staleRunHours}h`);
+
+    for (const { issue, prUrl } of spentVerdicts(closedPrs, history, labels)) {
+      try {
+        await removeIssueLabels(this.repo, issue, [labels.groomed]);
+        await commentOnIssue(this.repo, issue, factoryComment(
+          `🏭 ${prUrl} merged and this issue is still open, so the groom verdict it was built on is spent. The factory grooms what remains on a later tick.`));
+        log(`#${issue} is still open after ${prUrl} merged: its groom verdict is spent, and it is groomed again`);
+      } catch (err) {
+        log(`could not retire the groom verdict on #${issue}: ${(err as Error).message}`);
+      }
     }
     return rows.length;
   }
@@ -143,11 +163,17 @@ export class FactoryState {
    * since, is a duplicate and is closed. The rest are labelled, readied, and
    * their issues claimed, as the pipeline would have done; nobody watched their
    * CI, and the issue comment says so.
+   *
+   * Only a PR older than the run budget, plus half an hour, is taken for an
+   * orphan (see `pastGrace`). Returns the implementer PRs left alone for being
+   * younger, whose issues they hold.
    */
-  private async adoptOrphans(log: (msg: string) => void): Promise<void> {
+  private async adoptOrphans(log: (msg: string) => void): Promise<PrData[]> {
     const { labels } = this.config;
     const factoryLabels = [labels.factoryPr, labels.environmentPr, labels.simplifyPr, labels.reviewPr, labels.depsPr, labels.securityPr];
-    const open = await listOpenPrs(this.repo);
+    const graceMs = (this.config.worker.maxRunMinutes + 30) * 60_000;
+    const all = await listOpenPrs(this.repo);
+    const open = all.filter((pr) => pr.labels.some((l) => factoryLabels.includes(l.name)) || pastGrace(pr, graceMs));
     const answered = new Map<number, string>();
     for (const pr of open) {
       const issue = pr.labels.some((l) => l.name === labels.factoryPr) ? linkedIssueNumber(pr.body) : null;
@@ -174,6 +200,7 @@ export class FactoryState {
       }
     }
     await this.adoptPhaseOrphans(open, factoryLabels, log);
+    return orphanedPrs(all.filter((pr) => !open.includes(pr)), factoryLabels).map((o) => o.pr);
   }
 
   /**
