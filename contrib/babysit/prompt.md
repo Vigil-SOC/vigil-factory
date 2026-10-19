@@ -63,8 +63,10 @@ went green, a run that ended without a PR once.
 Open PRs on the target repo carrying any of the labels `factory`, `factory:env`,
 `factory:simplify`, `factory:deps`, `factory:review`, `factory:security` are the factory's, and Sam merges
 all of them without review. PRs from people are the tick's review phase's, except the
-ones it decided to merge and could not (below). Dependabot's are the deps phase's, and
-release-please's are Sam's call on releasing; leave those two alone.
+ones it decided to merge and could not (below). Dependabot's are the deps phase's, except
+GitHub Actions bumps (they touch only `.github/workflows/`), which no phase takes and
+which wait for Sam; release-please's are Sam's call on releasing. Leave all of those
+alone, and list an Actions bump as Sam's, not the deps phase's.
 
 Oldest first, for each:
 - A draft: `gh pr ready` it first. This happens now and then; it is not an alert unless
