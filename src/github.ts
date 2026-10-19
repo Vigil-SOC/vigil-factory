@@ -88,6 +88,52 @@ export async function listAllIssuesByLabel(repo: string, label: string, limit = 
   return ghJson(['issue', 'list', '-R', repo, '--state', 'all', '--label', label, '--limit', String(limit), '--json', 'number,url,state,stateReason,body']);
 }
 
+/** An issue's labels as they stand, and when each was last put on. */
+export interface LabelHistory {
+  open: boolean;
+  labels: string[];
+  /** Label name → when it was last applied, from the issue's timeline. */
+  labelledAt: Record<string, string>;
+}
+
+/**
+ * The label history of each issue named, fifty to a GraphQL call. A number
+ * GitHub cannot resolve as an issue — a pull request, a deleted issue — is
+ * left out, and so is every number in a batch whose call failed outright:
+ * what a caller cannot see, it holds rather than acts on.
+ */
+export async function labelHistory(repo: string, issues: number[]): Promise<Map<number, LabelHistory>> {
+  const [owner, name] = repo.split('/');
+  const unique = [...new Set(issues)];
+  const history = new Map<number, LabelHistory>();
+  for (let i = 0; i < unique.length; i += 50) {
+    const batch = unique.slice(i, i + 50);
+    const fields = batch.map((n) =>
+      `i${n}: issue(number: ${n}) { state labels(first: 50) { nodes { name } } timelineItems(itemTypes: [LABELED_EVENT], last: 100) { nodes { ... on LabeledEvent { createdAt label { name } } } } }`);
+    const query = `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { ${fields.join(' ')} } }`;
+    // GitHub answers what it can resolve and errors on the rest, and gh then
+    // exits non-zero with the partial answer on stdout.
+    const stdout = await execFileAsync('gh', ['api', 'graphql', '-f', `owner=${owner}`, '-f', `name=${name}`, '-f', `query=${query}`], { maxBuffer: 32 * 1024 * 1024 })
+      .then((r) => r.stdout, (err: { stdout?: string }) => err.stdout ?? '');
+    type Node = { state: string; labels: { nodes: { name: string }[] }; timelineItems: { nodes: { createdAt?: string; label?: { name: string } }[] } } | null;
+    let found: Record<string, Node> | undefined;
+    try {
+      found = (JSON.parse(stdout) as { data?: { repository?: Record<string, Node> } }).data?.repository;
+    } catch {
+      continue;
+    }
+    for (const n of batch) {
+      const issue = found?.[`i${n}`];
+      if (!issue) continue;
+      const labelledAt: Record<string, string> = {};
+      // Oldest first, so the last event for a label is the one that stands.
+      for (const e of issue.timelineItems.nodes) if (e.label && e.createdAt) labelledAt[e.label.name] = e.createdAt;
+      history.set(n, { open: issue.state === 'OPEN', labels: issue.labels.nodes.map((l) => l.name), labelledAt });
+    }
+  }
+  return history;
+}
+
 export interface PrData {
   number: number;
   url: string;

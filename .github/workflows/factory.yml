@@ -1,8 +1,14 @@
 name: factory-tick
 
-# Manual dispatch only: the tick runs locally under launchd. To schedule it
-# here again, add `schedule: [{ cron: '0 14 * * 1-5' }]` (14:00 UTC weekdays).
+# The babysitter on the Mac dispatches this tick; the schedule is the backstop
+# for when the Mac sleeps. It may overlap a local tick under launchd: a claim
+# neither can see the pipeline of is held until it is `staleRunHours` old, and
+# an unlabelled PR younger than the run budget is not taken for an orphan (see
+# outcomes.ts). Overlap with a dispatch is the concurrency group's: one tick
+# runs, and at most one more waits.
 on:
+  schedule:
+    - cron: '17 */2 * * *'
   workflow_dispatch:
     inputs:
       worker:
