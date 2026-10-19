@@ -45,7 +45,7 @@ import { ENV_AGENT_MARK, environmentChangedAt, filedIssueBody, parseEnvReport, r
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
 import { carried, depsQueue, depsStamp, droppedReasons, skipReason as depsSkipReason, upgradeIssue, upgradeKey, upgradeKeyOf, type DepsPr } from './deps.ts';
 import { alertKey, fixedReports, keysIn, offeredLine, openReports, parseFixReply, securityQueue, securityStamp, skipReason as securitySkipReason, type FixReply, type OfferedAlert, type SecurityAlert } from './security.ts';
-import { coAuthorTrailer, isBot, latestReview, mayMergeGithub, parseReviewReply, reviewComment, reviewQueue, reviewStamp, sameCommit, skipReason as reviewSkipReason, touchesGithub, type ReviewOutcome, type ReviewPr, type ReviewReply } from './review.ts';
+import { closingRefs, coAuthorTrailer, isBot, latestReview, mayMergeGithub, parseReviewReply, reviewComment, reviewFailedMarker, reviewQueue, reviewStamp, sameCommit, skipReason as reviewSkipReason, supersedesBody, touchesGithub, type ReviewOutcome, type ReviewPr, type ReviewReply } from './review.ts';
 
 export function log(msg: string): void {
   console.log(`[${new Date().toISOString()}] ${msg}`);
@@ -620,11 +620,14 @@ export async function reviewInputs(config: FactoryConfig): Promise<{ skip: strin
   const gate = reviewSkipReason(config.review.enabled, config.worker.kind);
   if (gate) return { skip: gate, open: [], reopen: [], merge: [] };
   const repo = repoSlug(config);
-  const [open, closed] = await Promise.all([
-    listPrsForReview(repo, 'open', 100),
+  // Every open PR, since the queue is oldest first; the closed ones only as far
+  // back as an author might still be replying.
+  const [open, closed, main] = await Promise.all([
+    listPrsForReview(repo, 'open', 1000),
     listPrsForReview(repo, 'closed', 50),
+    defaultBranchHead(repo),
   ]);
-  const queue = reviewQueue([...open, ...closed], factoryPrLabels(config));
+  const queue = reviewQueue([...open, ...closed], factoryPrLabels(config), main.sha);
   const skip = queue.open.length + queue.reopen.length + queue.merge.length === 0 ? 'no PR from outside the factory is new or changed since the factory last reviewed it, or waiting on a merge it decided' : null;
   return { skip, ...queue };
 }
@@ -666,11 +669,19 @@ export async function runReviewPhase(ctx: FactoryContext, worker: CodingWorker, 
 
   log(`review: ${picks.length} PR(s) from outside the factory: ${picks.map((p) => `#${p.pr.number}${p.reopened ? ' (author replied to a close)' : ''}`).join(' ')}`);
   const principles = loadPrinciples(config);
-  const records = await Promise.all(picks.map((p) =>
-    reviewOne(ctx, worker, p.pr, p.reopened, principles).catch((err: Error) => {
+  const records = await Promise.all(picks.map(async (p) => {
+    const r = await reviewOne(ctx, worker, p.pr, p.reopened, principles).catch((err: Error) => {
       log(`review of #${p.pr.number} failed: ${err.message}`);
       return null;
-    })));
+    });
+    // No stamp, so the PR is due again; the marker is how a later tick knows
+    // this one keeps failing, and sends it to the back (review.ts).
+    if (r === null || r.outcome === 'failed') {
+      await commentOnPr(repoSlug(config), p.pr.url, factoryComment(`${reviewFailedMarker(p.pr)}\n🏭 The factory's review of this PR did not finish; it tries again on a later tick.`))
+        .catch((err: Error) => log(`review of #${p.pr.number}: could not mark the failure — ${err.message}`));
+    }
+    return r;
+  }));
   return records.filter((r): r is ReviewRecord => r !== null);
 }
 
@@ -680,14 +691,17 @@ export async function runReviewPhase(ctx: FactoryContext, worker: CodingWorker, 
  * since the review (`mergeDue`), so its head is the commit the agent verified,
  * and the rules are the ones `mergeVerified` holds every merge to: `.github/`
  * only from an author who could run it anyway, green checks, no admin bypass.
- * Anything short of a merge leaves the stamp as it is, and the next tick tries
- * again.
+ * Checks still running, or GitHub refusing, leaves the stamp as it is, and the
+ * next tick tries again. A conflict or red checks on the PR itself are not
+ * waited out — nothing would change them — so the stamp is superseded by one
+ * that sends the PR to a fresh review, which fixes them.
  *
  * When the review's fixes went to a replacement PR, that is what gets merged
  * (the stamp names it), with the author credited, and this PR is closed as
  * superseded. The replacement's head may have moved since the review: a
  * conflict or a red check on it is handed back to the review's own agent
- * (`handBackStuckPrs`), and what lands is what that agent pushed, green.
+ * (`handBackStuckPrs`), and what lands is what that agent pushed, green. Once
+ * its hand-backs run out, the replacement is closed and this PR reviewed afresh.
  */
 async function retryMerge(config: FactoryConfig, pr: ReviewPr): Promise<void> {
   const repo = repoSlug(config);
@@ -713,20 +727,36 @@ async function retryMerge(config: FactoryConfig, pr: ReviewPr): Promise<void> {
     log(`review: #${pr.number} is pending a merge but changes .github/ and @${pr.author.login} has no write access; the factory does not merge it`);
     return;
   }
+  const conflicting = (await prMergeable(repo, target)).mergeable === 'CONFLICTING';
   const checks = await prChecks(repo, target);
-  const failed = checks.filter((c) => c.bucket === 'fail');
+  const red = conflicting ? null : redChecks(checks);
+  if (conflicting || red) {
+    const what = conflicting ? 'it conflicts with the default branch' : `${red!.map((c) => c.name).join(', ')} failed on it`;
+    if (replacement) {
+      const sent = handbacksSent(view.comments, conflicting ? CONFLICT_NOTE : HANDBACK_NOTE);
+      if (sent < MAX_HANDBACKS) {
+        log(`review: #${pr.number} is pending a merge of #${replacement}, but ${what}; it is handed back to an agent (${sent} of ${MAX_HANDBACKS} so far)`);
+        return;
+      }
+      await closePr(repo, target, factoryComment(`🏭 Closed: ${what} after ${sent} hand-backs, so ${pr.url} is reviewed afresh.`));
+    }
+    const now = await viewPrForReview(repo, pr.url);
+    const report = replacement
+      ? `The review's replacement #${replacement} could not be merged: ${what} after ${MAX_HANDBACKS} hand-backs, so it is closed.`
+      : `The merge the review above decided on could not go through: ${what}.`;
+    await commentOnPr(repo, pr.url, factoryComment(`${reviewStamp(now, 'left', { again: 'now' })}\n${reviewComment('left', report, undefined, { again: 'now' })}`));
+    log(`review: #${pr.number} was pending a merge${replacement ? ` of #${replacement}` : ''}, but ${what}; it is reviewed afresh next tick`);
+    return;
+  }
   const wait = checks.length === 0
     ? (view.isCrossRepository && (await approveHeldRuns(repo, view.headRefOid)) > 0 ? 'its held workflow runs were just approved' : 'no CI has reported on it')
-    : checks.some((c) => c.bucket === 'pending') ? 'its checks are still running'
-      : failed.length > 0 ? `${failed.map((c) => c.name).join(', ')} failed on it` : null;
+    : checks.some((c) => c.bucket === 'pending') ? 'its checks are still running' : null;
   if (wait) {
     log(`review: #${pr.number} is pending a merge${replacement ? ` of #${replacement}` : ''}, but ${wait}; the next tick tries again`);
     return;
   }
   try {
-    const body = replacement
-      ? `Supersedes #${pr.number} by @${pr.author.login}: the author's commits with the factory review's fixes.\n\n${coAuthorTrailer(pr.author, await userId(pr.author.login))}`
-      : undefined;
+    const body = replacement ? supersedesBody(pr, coAuthorTrailer(pr.author, await userId(pr.author.login))) : undefined;
     await mergePr(repo, target, view.headRefOid, body);
   } catch (err) {
     log(`review: #${pr.number} is pending a merge${replacement ? ` of #${replacement}` : ''}; GitHub refused again, so the next tick tries again — ${(err as Error).message.slice(0, 300)}`);
@@ -816,9 +846,10 @@ async function reviewOne(ctx: FactoryContext, worker: CodingWorker, pr: ReviewPr
   // Stamped against the PR as it stands now, so a push or a reply after this
   // comment is what brings it back. An unstamped note means "look again".
   const now = await viewPrForReview(repo, pr.url);
-  const pending = { mergePending: act.mergePending === true, ...(act.mergePending && act.replacement ? { replacement: act.replacement } : {}) };
+  const pending = { mergePending: act.mergePending === true, ...(act.mergePending && act.replacement ? { replacement: act.replacement } : {}), ...(act.again ? { again: act.again } : {}) };
   const body = reviewComment(act.outcome, reply.report, act.note, pending);
-  await commentOnPr(repo, pr.url, factoryComment(act.stamped ? `${reviewStamp(now, act.outcome, pending)}\n${body}` : body));
+  // Unstamped, it is reviewed again next tick — counted, like a failed review.
+  await commentOnPr(repo, pr.url, factoryComment(`${act.stamped ? reviewStamp(now, act.outcome, pending) : reviewFailedMarker(pr)}\n${body}`));
   if (act.outcome === 'closed' || act.outcome === 'superseded') await closePrQuietly(repo, pr.url);
   log(`review of #${pr.number}: agent answered ${reply.verdict}; ${act.outcome}${act.reason ? ` (${act.reason})` : ''}${replacement ? ` via ${replacement}` : ''} — ${pr.url}`);
   return record({ verdict: reply.verdict, outcome: act.outcome, ...(act.reason ? { reason: act.reason } : {}), ...(act.ci ?? {}), ...(replacement ? { replacementUrl: replacement } : {}) });
@@ -835,16 +866,20 @@ async function replacementPr(config: FactoryConfig, pr: ReviewPr, result: RunRes
   const opened = await openedPr(config, result);
   if (opened || !result.branch) return opened;
   try {
+    const refs = closingRefs(pr.body);
     return await createPr(repoSlug(config), result.branch, `${pr.title} (review fixes for #${pr.number})`,
-      `🏭 Replacement for ${pr.url} by @${pr.author.login}: the author's commits with the factory review's fixes. The factory merges this in place of #${pr.number}, crediting the author, or closes it.`);
+      `🏭 Replacement for ${pr.url} by @${pr.author.login}: the author's commits with the factory review's fixes. The factory merges this in place of #${pr.number}, crediting the author, or closes it.${refs.length ? `\n\n${refs.join('\n')}` : ''}`);
   } catch (err) {
     log(`review of #${pr.number}: no replacement from ${result.branch} — ${(err as Error).message.trim()}`);
     return null;
   }
 }
 
-/** `mergePending`: the agent answered merge, and only something mechanical held it back — the merge is retried each tick (review.ts). */
-type ReviewAct = { outcome: ReviewOutcome; stamped: boolean; mergePending?: boolean; replacement?: number; note?: string; reason?: string; ci?: { fixRounds: number; checks: NonNullable<RunRecord['checks']> } };
+/**
+ * `mergePending`: the agent answered merge, and only something mechanical held it back — the merge is retried each tick (review.ts).
+ * `again`: the default branch head a red review saw; the PR is reviewed again once it moves.
+ */
+type ReviewAct = { outcome: ReviewOutcome; stamped: boolean; mergePending?: boolean; replacement?: number; again?: string; note?: string; reason?: string; ci?: { fixRounds: number; checks: NonNullable<RunRecord['checks']> } };
 
 /**
  * What the factory does with a review's verdict. Close and leave are the
@@ -897,13 +932,16 @@ async function actOnReview(
     return headMoved(sha, rep.headRefOid);
   }
   const trailer = coAuthorTrailer(pr.author, await userId(pr.author.login));
-  const merged = await mergeVerified(config, worker, handle, replacement, rep, authorMayChangeGithub,
-    `Supersedes #${pr.number} by @${pr.author.login}: the author's commits with the factory review's fixes.\n\n${trailer}`);
+  const merged = await mergeVerified(config, worker, handle, replacement, rep, authorMayChangeGithub, supersedesBody(pr, trailer));
   if (merged.outcome !== 'merged') {
     // The fixes are on the replacement, so the pending merge is of that PR:
     // the stamp names it, and the retry each tick merges it and closes this one.
+    // Red is pending too: the replacement is the factory's own PR, so its
+    // checks are handed back (handBackStuckPrs) and the retry merges it green.
     const number = Number(replacement.match(/\/pull\/(\d+)$/)?.[1]);
-    return { ...merged, ...(merged.mergePending && number ? { replacement: number } : {}), note: `${merged.note ?? ''} The review's fixes are in ${replacement}, left open.`.trim() };
+    const pending = number > 0 && (merged.mergePending === true || merged.reason === 'checks red');
+    const { again: _again, ...rest } = merged;
+    return { ...(pending ? { ...rest, mergePending: true, replacement: number } : merged), note: `${merged.note ?? ''} The review's fixes are in ${replacement}, left open.`.trim() };
   }
   return { ...merged, outcome: 'superseded', note: `Merged as ${replacement}, which carries your commits and the review's fixes; you are credited as co-author on the commit.` };
 }
@@ -963,7 +1001,10 @@ async function mergeVerified(
   // push nobody verified.
   if (ci.fixRounds === 0 && after.headRefOid !== before.headRefOid) return { ...headMoved(before.headRefOid, after.headRefOid), ci };
   if (blockedGithub(after.files).length > 0) return { ...github(blockedGithub(after.files)), ci };
-  if (ci.checks === 'red') return { outcome: 'left', stamped: true, reason: 'checks red', note: 'The factory would merge it, but CI is still red after the agent\'s fix round.', ci };
+  if (ci.checks === 'red') {
+    const { sha } = await defaultBranchHead(repo);
+    return { outcome: 'left', stamped: true, again: sha.slice(0, 12), reason: 'checks red', note: 'The factory would merge it, but CI is still red after the agent\'s fix round.', ci };
+  }
   if (ci.checks === 'none') return { outcome: 'left', stamped: true, mergePending: true, reason: 'no checks', note: 'The factory will merge it, but no CI has reported on it yet, and the factory merges only on green checks.', ci };
   if (ci.checks === 'unsettled') return { outcome: 'left', stamped: true, mergePending: true, reason: 'checks unsettled', note: `The factory will merge it, but CI had not finished within ${CHECKS_WAIT_MS / 60_000} minutes.`, ci };
 
