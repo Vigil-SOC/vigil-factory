@@ -42,7 +42,7 @@
         "params": {
           "thinking": "true",
           "context": "300k",
-          "effort": "high"
+          "effort": "medium"
         }
       }
     },
