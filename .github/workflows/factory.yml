@@ -1,7 +1,8 @@
 name: factory-tick
 
 # The babysitter on the Mac dispatches this tick; the schedule is the backstop
-# for when the Mac sleeps. It may overlap a local tick under launchd: a claim
+# for when the Mac sleeps, and stands down while any tick started in the last
+# three hours (the babysitter dispatches every 90 minutes). It may overlap a local tick under launchd: a claim
 # neither can see the pipeline of is held until it is `staleRunHours` old, and
 # an unlabelled PR younger than the run budget is not taken for an orphan (see
 # outcomes.ts). Overlap with a dispatch is the concurrency group's: one tick
@@ -34,7 +35,27 @@ permissions:
   contents: write
 
 jobs:
+  due:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      run: ${{ steps.due.outputs.run }}
+    steps:
+      - id: due
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [[ "${{ github.event_name }}" != schedule ]]; then echo run=true >> "$GITHUB_OUTPUT"; exit 0; fi
+          since=$(date -u -d '3 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          recent=$(gh run list -R "$GITHUB_REPOSITORY" -w factory-tick -L 20 --json databaseId,createdAt \
+            -q "[.[] | select(.databaseId != ${{ github.run_id }} and .createdAt > \"$since\")] | length")
+          echo "ticks started since $since: $recent"
+          [[ "$recent" == 0 ]] && echo run=true >> "$GITHUB_OUTPUT" || echo run=false >> "$GITHUB_OUTPUT"
+
   tick:
+    needs: due
+    if: needs.due.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 350
     steps:

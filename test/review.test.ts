@@ -184,7 +184,9 @@ describe('a review that keeps failing goes to the back of the queue', () => {
     let stuck = pr(1);
     for (let i = 0; i < FAILURES_TO_THE_BACK; i++) stuck = failed(stuck);
     expect(needsReview(stuck, FACTORY)).toBe(true);
-    expect(reviewQueue([stuck, pr(9), failed(pr(2))], FACTORY).open.map((p) => p.number)).toEqual([2, 9, 1]);
+    expect(reviewQueue([stuck, pr(9), pr(2)], FACTORY).open.map((p) => p.number)).toEqual([2, 9, 1]);
+    // A push since the failure brings it back to its place.
+    expect(reviewQueue([{ ...stuck, headRefOid: 'b'.repeat(40) }, pr(9)], FACTORY).open.map((p) => p.number)).toEqual([1, 9]);
   });
 });
 

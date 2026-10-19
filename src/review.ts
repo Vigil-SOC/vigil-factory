@@ -53,8 +53,9 @@
 // every tick on the same commit, and not never.
 //
 // A review that fails — no verdict, a run that died — leaves no stamp, only
-// a `<!-- factory-review-failed sha=… -->` marker. A PR whose review has failed
-// FAILURES_TO_THE_BACK times as it stands goes to the back of the queue, so
+// a `<!-- factory-review-failed sha=… -->` marker, at most one per PR as it
+// stands. A PR whose review has failed FAILURES_TO_THE_BACK times as it stands
+// goes to the back of the queue, so
 // a PR no agent can get through does not take a slot from every other one.
 //
 // The `.github/` rule is about who could already run workflows with the repo's
@@ -156,7 +157,7 @@ export function reviewStamp(pr: Pick<ReviewPr, 'headRefOid' | 'body' | 'comments
 const FAILED_RE = /<!--\s*factory-review-failed\s+sha=(\S+)\s*-->/;
 
 /** Reviews that failed on a PR as it stands, before it goes to the back of the queue. */
-export const FAILURES_TO_THE_BACK = 2;
+export const FAILURES_TO_THE_BACK = 1;
 
 /** The marker a review that reached no stamp leaves, so the next tick can tell. */
 export function reviewFailedMarker(pr: Pick<ReviewPr, 'headRefOid' | 'body' | 'comments'>): string {

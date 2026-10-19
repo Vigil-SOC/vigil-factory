@@ -869,8 +869,9 @@ Two options; both just invoke the idempotent tick.
 `~/Library/LaunchAgents/`, adjust paths, then `launchctl load` it.
 
 **GitHub Actions:** `.github/workflows/factory.yml` (dispatched by the babysitter, and
-scheduled every two hours as a backstop for when the Mac sleeps; it may overlap the local
-tick safely, see above). Requires `FACTORY_GH_TOKEN` (a PAT with `repo` scope on the target
+scheduled every two hours as a backstop for when the Mac sleeps: a scheduled run stands
+down while any tick started in the last three hours. It may overlap the local tick safely,
+see above). Requires `FACTORY_GH_TOKEN` (a PAT with `repo` scope on the target
 repo — the default `GITHUB_TOKEN` is scoped to this repo and cannot touch the
 target repo; the `claude-code` worker's agents push with it too) plus the
 worker's own secret: `CURSOR_API_KEY` for `cursor`, `CLAUDE_CODE_OAUTH_TOKEN`

@@ -45,7 +45,7 @@ import { ENV_AGENT_MARK, environmentChangedAt, filedIssueBody, parseEnvReport, r
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
 import { carried, depsQueue, depsStamp, droppedReasons, skipReason as depsSkipReason, upgradeIssue, upgradeKey, upgradeKeyOf, type DepsPr } from './deps.ts';
 import { alertKey, fixedReports, keysIn, offeredLine, openReports, parseFixReply, securityQueue, securityStamp, skipReason as securitySkipReason, type FixReply, type OfferedAlert, type SecurityAlert } from './security.ts';
-import { closingRefs, coAuthorTrailer, isBot, latestReview, mayMergeGithub, parseReviewReply, reviewComment, reviewFailedMarker, reviewQueue, reviewStamp, sameCommit, skipReason as reviewSkipReason, supersedesBody, touchesGithub, type ReviewOutcome, type ReviewPr, type ReviewReply } from './review.ts';
+import { closingRefs, coAuthorTrailer, isBot, latestReview, mayMergeGithub, parseReviewReply, reviewComment, failedReviews, reviewFailedMarker, reviewQueue, reviewStamp, sameCommit, skipReason as reviewSkipReason, supersedesBody, touchesGithub, type ReviewOutcome, type ReviewPr, type ReviewReply } from './review.ts';
 
 export function log(msg: string): void {
   console.log(`[${new Date().toISOString()}] ${msg}`);
@@ -669,19 +669,22 @@ export async function runReviewPhase(ctx: FactoryContext, worker: CodingWorker, 
 
   log(`review: ${picks.length} PR(s) from outside the factory: ${picks.map((p) => `#${p.pr.number}${p.reopened ? ' (author replied to a close)' : ''}`).join(' ')}`);
   const principles = loadPrinciples(config);
-  const records = await Promise.all(picks.map(async (p) => {
-    const r = await reviewOne(ctx, worker, p.pr, p.reopened, principles).catch((err: Error) => {
-      log(`review of #${p.pr.number} failed: ${err.message}`);
-      return null;
-    });
-    // No stamp, so the PR is due again; the marker is how a later tick knows
-    // this one keeps failing, and sends it to the back (review.ts).
-    if (r === null || r.outcome === 'failed') {
+  const records = await Promise.all(picks.map((p) => reviewOne(ctx, worker, p.pr, p.reopened, principles).catch((err: Error) => {
+    log(`review of #${p.pr.number} failed: ${err.message}`);
+    return null;
+  })));
+  // No stamp, so the PR is due again; the marker is how a later tick knows
+  // this one fails, and sends it to the back (review.ts). One marker per PR as
+  // it stands, and none when every review failed: that was the machine (a
+  // quota, an outage), not the PR, and an outage would otherwise comment on
+  // the same PRs every tick.
+  const failed = picks.filter((_, i) => records[i] === null || records[i]!.outcome === 'failed');
+  if (failed.length < picks.length) {
+    for (const p of failed.filter((p) => failedReviews(p.pr) === 0)) {
       await commentOnPr(repoSlug(config), p.pr.url, factoryComment(`${reviewFailedMarker(p.pr)}\n🏭 The factory's review of this PR did not finish; it tries again on a later tick.`))
         .catch((err: Error) => log(`review of #${p.pr.number}: could not mark the failure — ${err.message}`));
     }
-    return r;
-  }));
+  }
   return records.filter((r): r is ReviewRecord => r !== null);
 }
 
