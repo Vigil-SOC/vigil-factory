@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { authorReplied, coAuthorTrailer, isBot, latestReview, mayMergeGithub, mergeDue, needsReview, parseReviewReply, reviewComment, reviewFingerprint, reviewQueue, reviewStamp, sameCommit, skipReason, touchesGithub, type ReviewPr } from '../src/review.ts';
+import { FAILURES_TO_THE_BACK, authorReplied, closingRefs, coAuthorTrailer, failedReviews, isBot, latestReview, mayMergeGithub, mergeDue, needsReview, parseReviewReply, reviewComment, reviewFailedMarker, reviewFingerprint, reviewQueue, reviewStamp, sameCommit, skipReason, supersedesBody, touchesGithub, type ReviewPr } from '../src/review.ts';
 import { factoryComment } from '../src/groom.ts';
 import { reviewPrompt } from '../src/prompts.ts';
 
@@ -122,6 +122,82 @@ describe('a merge the review decided on and GitHub refused is retried, not left 
     expect(reviewStamp(pr(1), 'left', { replacement: 1997 })).not.toContain('replacement');
     expect(reviewStamp(pr(1), 'superseded', { mergePending: true, replacement: 1997 })).not.toContain('replacement');
     expect(latestReview(reviewed(pr(1), 'left'))?.replacement).toBeUndefined();
+  });
+});
+
+describe('a PR the factory could not merge is reviewed again, not left waiting', () => {
+  const again = (p: ReviewPr, when: string): ReviewPr => ({
+    ...p,
+    comments: [...p.comments, comment('maintainer', factoryComment(`${reviewStamp(p, 'left', { again: when })}\n${reviewComment('left', 'why', undefined, { again: when })}`))],
+  });
+  const MAIN = 'c'.repeat(40);
+
+  it('a pending merge that went red or conflicts is reviewed afresh at once', () => {
+    const p = again(pr(1), 'now');
+    expect(latestReview(p)).toMatchObject({ outcome: 'left', mergePending: false, again: 'now' });
+    expect(mergeDue(p, FACTORY)).toBe(false);
+    expect(needsReview(p, FACTORY, MAIN)).toBe(true);
+  });
+
+  it('a review that ended red is reviewed again once main moves, not before', () => {
+    const p = again(pr(1), MAIN.slice(0, 12));
+    expect(needsReview(p, FACTORY, MAIN)).toBe(false);
+    expect(needsReview(p, FACTORY, 'd'.repeat(40))).toBe(true);
+    expect(needsReview(p, FACTORY)).toBe(false);
+  });
+
+  it('only on a plain left stamp, and says it is not left for a human', () => {
+    expect(reviewStamp(pr(1), 'left', { again: 'now' })).toMatch(/outcome=left again=now -->$/);
+    expect(reviewStamp(pr(1), 'left', { mergePending: true, replacement: 7, again: 'now' })).not.toContain('again');
+    expect(reviewStamp(pr(1), 'merged', { again: 'now' })).not.toContain('again');
+    expect(latestReview(reviewed(pr(1), 'left'))?.again).toBeUndefined();
+    for (const when of ['now', MAIN.slice(0, 12)]) {
+      const body = reviewComment('left', 'why', undefined, { again: when });
+      expect(body).toContain('to be reviewed again');
+      expect(body).not.toContain('left for a human');
+    }
+  });
+
+  it('a red PR due again only because main moved waits behind new and changed PRs', () => {
+    const red = again(pr(1), MAIN.slice(0, 12));
+    const queue = reviewQueue([red, pr(5), again(pr(3), 'now')], FACTORY, 'd'.repeat(40));
+    expect(queue.open.map((p) => p.number)).toEqual([3, 5, 1]);
+  });
+});
+
+describe('a review that keeps failing goes to the back of the queue', () => {
+  const failed = (p: ReviewPr): ReviewPr => ({ ...p, comments: [...p.comments, comment('maintainer', factoryComment(`${reviewFailedMarker(p)}\n🏭 did not finish`))] });
+
+  it('counts failures on the PR as it stands, since its last stamp', () => {
+    const twice = failed(failed(pr(1)));
+    expect(failedReviews(twice)).toBe(2);
+    // The marker is not a stamp, and not a change to the PR.
+    expect(latestReview(twice)).toBeNull();
+    expect(reviewFingerprint(twice)).toBe(reviewFingerprint(pr(1)));
+    expect(failedReviews({ ...twice, headRefOid: 'b'.repeat(40) })).toBe(0);
+    expect(failedReviews({ ...twice, comments: [...twice.comments, comment('contributor', 'pushed a fix')] })).toBe(0);
+    const stampedAfter = { ...reviewed(twice, 'left'), headRefOid: 'a'.repeat(40) };
+    expect(failedReviews(stampedAfter)).toBe(0);
+  });
+
+  it('still due, but behind every other PR', () => {
+    let stuck = pr(1);
+    for (let i = 0; i < FAILURES_TO_THE_BACK; i++) stuck = failed(stuck);
+    expect(needsReview(stuck, FACTORY)).toBe(true);
+    expect(reviewQueue([stuck, pr(9), failed(pr(2))], FACTORY).open.map((p) => p.number)).toEqual([2, 9, 1]);
+  });
+});
+
+describe('a replacement closes what the original closed', () => {
+  it('carries the original\'s closing references', () => {
+    expect(closingRefs('Fixes #1113.\nAlso closes: o/r#12, and Resolves https://github.com/o/r/issues/1560\nfixes #1113')).toEqual(['Closes #1113', 'Closes o/r#12', 'Closes https://github.com/o/r/issues/1560']);
+    expect(closingRefs('Related to #5; a prefix fixed nothing')).toEqual([]);
+  });
+
+  it('in the squash commit that lands it, between the supersedes line and the author\'s credit', () => {
+    const body = supersedesBody(pr(1560, { body: 'Resolves #1559' }), 'Co-authored-by: x <1+x@users.noreply.github.com>');
+    expect(body).toBe('Supersedes #1560 by @contributor: the author\'s commits with the factory review\'s fixes.\n\nCloses #1559\n\nCo-authored-by: x <1+x@users.noreply.github.com>');
+    expect(supersedesBody(pr(2, { body: 'no refs' }), 'T')).not.toContain('Closes');
   });
 });
 

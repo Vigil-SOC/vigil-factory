@@ -287,9 +287,14 @@ export async function closePr(repo: string, prUrl: string, comment: string): Pro
 
 const REVIEW_PR_FIELDS = 'number,url,title,state,isDraft,body,author,headRefOid,isCrossRepository,labels,comments';
 
-/** PRs in one state, whoever opened them: the review phase's candidates. */
+/**
+ * PRs in one state, whoever opened them: the review phase's candidates. Closed
+ * ones are the unmerged, most recently updated first — an author replying to a
+ * close updates the PR, however old its number.
+ */
 export async function listPrsForReview(repo: string, state: 'open' | 'closed', limit: number): Promise<ReviewPr[]> {
-  return ghJson<ReviewPr[]>(['pr', 'list', '-R', repo, '--state', state, '--limit', String(limit), '--json', REVIEW_PR_FIELDS]);
+  const recent = state === 'closed' ? ['--search', 'is:unmerged sort:updated-desc'] : [];
+  return ghJson<ReviewPr[]>(['pr', 'list', '-R', repo, '--state', state, ...recent, '--limit', String(limit), '--json', REVIEW_PR_FIELDS]);
 }
 
 export async function viewPrForReview(repo: string, prUrl: string): Promise<ReviewPr & { files: { path: string }[] }> {

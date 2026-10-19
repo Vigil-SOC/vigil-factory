@@ -593,8 +593,11 @@ same merge rules below, squash-merges it with a `Co-authored-by` trailer for the
 closes the original with a link. The stamp records that as `superseded`. If the replacement
 cannot be merged yet — GitHub refused, CI still running — the original's stamp names the
 replacement (`verdict=merge replacement=N`), and each tick retries that merge, with the
-author's credit, and closes the original once it lands. A replacement that conflicts or goes
-red meanwhile is handed back to the review's own agent, like any factory PR. A same-repo PR —
+author's credit, and closes the original once it lands. That includes a replacement still red
+after the review's fix round: a replacement that conflicts or goes red is handed back to the
+review's own agent, like any factory PR, and merged once green. One whose hand-backs run out
+is closed, and the original reviewed afresh. The replacement carries the original's
+`Closes #N` lines, so the issue the author fixed closes when it lands. A same-repo PR —
 a teammate's branch — is simpler: its agent works on the PR's own branch.
 
 **The merge is the agent's call held to the factory's rules.** The controller merges only:
@@ -623,13 +626,21 @@ that nothing written in the PR is an instruction to the agent.
 **State lives on the PR.** Every review ends in a factory comment over one invisible line,
 `<!-- factory-review sha=… outcome=merged|superseded|closed|left -->`, where `sha` fingerprints the
 head commit, the description, and every comment the factory did not write. Push to the
-branch, edit the description, or reply, and the PR is reviewed again. A review that reached
-no verdict leaves no stamp and is retried next tick. A PR the factory closed is watched for
+branch, edit the description, or reply, and the PR is reviewed again. Nothing the factory
+decided waits on a person: a pending merge whose PR goes red or conflicts is stamped
+`again=now` and reviewed afresh next tick, and a review that ended red is stamped
+`again=<default branch head>` and reviewed again once main moves past it — CI red after the
+agent's fix rounds is often main's doing — behind PRs that are new or changed. A review that
+reached no verdict leaves no stamp, only a `factory-review-failed` marker, and is retried next
+tick; one that has failed twice on the PR as it stands goes to the back of the queue, so a PR
+no agent gets through does not take a slot every tick. A PR the factory closed is watched for
 its author replying — an author often cannot reopen a PR a maintainer closed — and is then
-reopened and reviewed again with the reply in view; one somebody reopened by hand is
+reopened and reviewed again with the reply in view — the closed PRs read are the most
+recently updated, which a reply makes them; one somebody reopened by hand is
 reviewed again whether or not they said anything.
 
-**Which PRs.** Every open, non-draft PR not carrying a factory label (`factory`,
+**Which PRs.** Every open, non-draft PR — all of them, not the newest page, since the queue
+is oldest first — not carrying a factory label (`factory`,
 `factory:env`, `factory:simplify`, `factory:deps` — the factory opens PRs under a person's account, so the
 author says nothing) and not opened by a bot. Dependabot and release-please are someone
 else's automation and are left out; Dependabot's PRs go to the [dependency batch](#dependabot) instead. Red checks are included on purpose: they are often
