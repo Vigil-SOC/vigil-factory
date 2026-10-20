@@ -96,6 +96,23 @@ ${verdictLines}
 ${principles}`;
 }
 
+/** How an epic's groom writes its children and ends its reply; the same
+ *  whether the groom settles the direction or tracks the work against it. */
+function epicChildren(budget: RunBudget): string {
+  return `A groomed epic is a premise its children inherit, so you also write the children: the next slice of issues the factory can build now. Each is one PR by the same standard as any issue here — a single fresh cloud agent with about ${budget.maxRunMinutes} minutes to read the issue, build the change, verify it, and open the PR. Make each child as large as that standard allows. Most of a run goes to reading the code and verifying the change rather than writing it, and each child pays for that again, so children that would read the same code and be verified the same way — the parts of one screen, one module, one flow — are one child, up to what one run can build and verify. Split where the ground differs or the whole will not fit one run; a piece that builds on a sibling on the same ground is part of that sibling, not a child after it. Do not join unrelated work to make a child bigger. Put each child in its own fenced \`\`\`child block: the first line is the title, the rest is the body, in the repository's own issue style, citing the files it concerns and saying what to reuse and what not to build. Children are not filed yet, so state a dependency on a sibling by describing it, not by number. The slice is everything that can start against the code as it stands or against a sibling in the same slice, however many children that is: write all of it now, since work you hold back costs another review of this epic to write. Hold back only what cannot be written yet because you do not know its shape until something else lands. When held-back work waits on something outside this slice — an issue in another epic, a pull request — add one line after the verdict for each such thing:
+WAITING: #<issue or PR number>
+Name the open issue or pull request whose closing releases the work, not an epic that only closes when all of its own work is done. The factory reviews this epic again when any one of them closes. Each review's lines replace the last, so on a re-review name again whatever still waits. Work that waits only on this slice's own children needs no line; the epic is reviewed again when they land. Issues that already name this epic as their parent are its existing children: read them, do not write them again, and write only what is missing — on a re-review that may be nothing. Write no children for a needs-work or done epic. The factory files them under the epic, each opening with a line that names it.
+
+Everything else you write becomes the factory's comment on the epic.
+
+End your reply with exactly one line:
+VERDICT: groomed
+or
+VERDICT: needs-work
+or
+VERDICT: done`;
+}
+
 /**
  * Grooming an epic. Same agent, same principles, a different question: not
  * "can one PR land this" but "is this a direction worth building toward, and
@@ -120,18 +137,37 @@ On a re-review — the epic already carries a 🏭 Factory groom comment — tha
 
 When the epic changes what a screen renders — a page, a flow, anything a design board or mockup shows — the design is the target its children are measured against, and the record says where this epic stops short of it. Each child is built and judged against its own text, so the screens drift from the design a little with every one that lands; this review is where that drift is caught. On a re-review, before you write the next slice or call the epic done, open the design and the running app at the same state and width (\`agent-browser\` is on this machine; a board in the repo opens from \`file://\`) and compare them, screen by screen: layout, spacing, type, colour, labels, data shown. A difference inside the direction the record settled is the next slice's work, as children; one outside it is named in your comment and left. Done means the screens match the design as far as the record meant them to, not that every child closed.
 
-A groomed epic is a premise its children inherit, so you also write the children: the first slice of issues the factory can build now. Each is one PR by the same standard as any issue here — a single fresh cloud agent with about ${budget.maxRunMinutes} minutes to read the issue, build the change, verify it, and open the PR. Make each child as large as that standard allows. Most of a run goes to reading the code and verifying the change rather than writing it, and each child pays for that again, so children that would read the same code and be verified the same way — the parts of one screen, one module, one flow — are one child, up to what one run can build and verify. Split where the ground differs or the whole will not fit one run; a piece that builds on a sibling on the same ground is part of that sibling, not a child after it. Do not join unrelated work to make a child bigger. Put each child in its own fenced \`\`\`child block: the first line is the title, the rest is the body, in the repository's own issue style, citing the files it concerns and saying what to reuse and what not to build. Children are not filed yet, so state a dependency on a sibling by describing it, not by number. The slice is everything that can start against the code as it stands or against a sibling in the same slice, however many children that is: write all of it now, since work you hold back costs another review of this epic to write. Hold back only what cannot be written yet because you do not know its shape until something else lands. When held-back work waits on something outside this slice — an issue in another epic, a pull request — add one line after the verdict for each such thing:
-WAITING: #<issue or PR number>
-Name the open issue or pull request whose closing releases the work, not an epic that only closes when all of its own work is done. The factory reviews this epic again when any one of them closes. Each review's lines replace the last, so on a re-review name again whatever still waits. Work that waits only on this slice's own children needs no line; the epic is reviewed again when they land. Issues that already name this epic as their parent are its existing children: read them, do not write them again, and write only what is missing — on a re-review that may be nothing. Write no children for a needs-work or done epic. The factory files them under the epic, each opening with a line that names it.
+${epicChildren(budget)}
 
-Everything else you write becomes the factory's comment on the epic.
+## Principles
 
-End your reply with exactly one line:
-VERDICT: groomed
-or
-VERDICT: needs-work
-or
-VERDICT: done
+${principles}`;
+}
+
+/**
+ * Re-reviewing an epic whose direction is settled and that nobody has replied
+ * to since: the factory's own bookkeeping brought it back. It keeps the work
+ * tracking the record rather than settling the direction again, so it starts
+ * from the record and what changed since, and compares only the screens the
+ * landed children touched until it is about to call the epic done. Runs the
+ * ordinary worker model; settling runs `groom.epicModel` (see settlesDirection).
+ */
+export function trackEpicPrompt(task: Task, principles: string, budget: RunBudget): string {
+  return `Re-review GitHub issue #${task.issueNumber} — an epic — for the software factory.
+${task.url}
+
+Its direction is settled. The latest 🏭 Factory groom comment on it is the record its children were written and groomed against, and nobody has replied since. What brought you back is the factory's own bookkeeping: the slice that record wrote has landed or been groomed needs-work, or something it waited on closed. This review keeps the work tracking that record; it does not settle the direction again. You are reviewing, not implementing, so change nothing.
+
+Start from the record and what has happened since it: the children that landed (read their pull requests rather than the whole codebase again), the ones groomed needs-work and what their grooms found, and whatever the record waited on that closed. Read other code only where one of those raises a question about the record. A needs-work child's groom may have found the record wrong against the code, or the child not worth building: weigh what it found — correct the record and write what the child now needs, or let the child go: add a line \`CLOSE: #<issue number>\` after the verdict for each, and the factory closes it as not planned. A child you leave needs-work does not bring you back again. The record ratchets: keep every settled decision unless the code has moved from under it or it now pulls against the principles, and say plainly which decisions changed and which stand.
+
+When the epic changes what a screen renders, the design is the target its children are measured against, and the screens drift from it a little with every child that lands. Open the design and the running app at the same state and width (\`agent-browser\` is on this machine; a board in the repo opens from \`file://\`) for the screens the children since the record touched, and compare them: layout, spacing, type, colour, labels, data shown. Before you call the epic done, compare every screen it covers the same way: done means the screens match the design as far as the record meant them to, not that every child closed. A difference inside the direction the record settled is the next slice's work, as children; one outside it is named in your comment and left.
+
+Three verdicts:
+- groomed — the record stands, with any corrections you made to it, and the next slice is written below, or nothing is left to write until something lands.
+- needs-work — the direction no longer holds against the code or the principles, or a decision now genuinely needs a human: one that is irreversible, or carries legal or licensing exposure. Name that one decision and what answering it unblocks.
+- done — what the epic set out to make true is true in the code, and nothing is left worth writing. Say what landed against each decision, so this comment is the record of what the direction became. The factory closes the epic, and any child still open under it as needs-work closes with it as not planned; a child still being built means the epic is not done.
+
+${epicChildren(budget)}
 
 ## Principles
 

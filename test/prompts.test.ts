@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { environmentPrompt, fixChecksPrompt, groomEpicPrompt, groomPrompt, implementPrompt, selectPrompt, simplifyPrompt } from '../src/prompts.ts';
+import { environmentPrompt, fixChecksPrompt, groomEpicPrompt, groomPrompt, implementPrompt, selectPrompt, simplifyPrompt, trackEpicPrompt } from '../src/prompts.ts';
 import type { Task } from '../src/types.ts';
 
 const task: Task = {
@@ -152,6 +152,23 @@ describe('epics', () => {
     expect(p).toContain('before you write the next slice or call the epic done');
     expect(p).toContain('open the design and the running app at the same state and width');
     expect(p).toMatch(/Done means the screens match the design as far as the record meant them to/);
+  });
+
+  // The factory's own bookkeeping brings a settled epic back once a slice
+  // lands; that review tracks the record instead of settling it again.
+  it('a tracking re-review starts from the record, compares the touched screens, and writes the next slice', () => {
+    const t = trackEpicPrompt(epic, 'principles', { maxRunMinutes: 90 });
+    expect(t).toContain(epic.url);
+    expect(t).toContain('it does not settle the direction again');
+    expect(t).toContain('read their pull requests rather than the whole codebase again');
+    expect(t).toContain('for the screens the children since the record touched');
+    expect(t).toContain('Before you call the epic done, compare every screen it covers');
+    expect(t).toContain('CLOSE: #<issue number>');
+    expect(t).toContain('ratchets');
+    expect(t).toContain('```child');
+    expect(t).toContain('WAITING: #<issue or PR number>');
+    expect(t).toContain('VERDICT: done');
+    expect(t).toContain('principles');
   });
 
   it('the ordinary groom prompt knows about epics and blockers', () => {

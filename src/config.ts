@@ -86,13 +86,20 @@ export interface FactoryConfig {
      *  implements it while the label is on, and holds the children of a
      *  draft epic with it. A human applies and removes it. */
     draft: string;
+    /** An issue a runner is grooming right now. Put on just before the groom
+     *  starts and taken off when it ends, so a second runner — the local
+     *  Claude Code tick beside the Actions one — leaves it alone instead of
+     *  grooming it again. The factory's own; nobody applies it by hand. */
+    grooming: string;
   };
   groom: {
     maxPerTick: number;
     principlesFile: string;
-    /** A name from `worker.models` to groom epics with, when settling a
-     *  direction deserves a stronger model than the one that builds toward
-     *  it. Unset, epics are groomed by `worker.model` like everything else. */
+    /** A name from `worker.models` to settle an epic's direction with, when
+     *  that deserves a stronger model than the one that builds toward it: the
+     *  first groom, and any after a human replies (see settlesDirection). The
+     *  re-reviews that only track the work run `worker.model`, as does every
+     *  groom when this is unset. */
     epicModel?: string;
   };
   /** How a free slot gets its issue. Off (the default), the oldest groomed
@@ -222,6 +229,7 @@ export function loadConfig(root: string = projectRoot): FactoryConfig {
   config.labels.blocker ??= 'factory:blocker';
   config.labels.securityPr ??= 'factory:security';
   config.labels.draft ??= 'factory:draft';
+  config.labels.grooming ??= 'factory:grooming';
   if (config.groom.epicModel !== undefined && !config.worker.models[config.groom.epicModel]) {
     throw new Error(`groom.epicModel=${config.groom.epicModel} names no model in worker.models (has: ${Object.keys(config.worker.models).join(', ') || 'none'})`);
   }

@@ -403,6 +403,23 @@ export function groomState(task: Task, labels: GroomLabels, open?: OpenIssues): 
   return 'current';
 }
 
+const EPIC_GROOMED = '🏭 **Factory groom — epic groomed.**';
+
+/**
+ * Whether an epic's next groom settles its direction, or only tracks the work
+ * against a direction already settled. Settling is the judgment every child
+ * inherits: the first groom, a groom after needs-work, and one after a human
+ * has said something since — a reply or edit may revise the record. Only the
+ * factory's own bookkeeping bringing it back (a slice that landed, a wait that
+ * closed) is tracking. An issue groomed as one PR and then promoted to an epic
+ * has no epic record yet, so its first epic groom settles.
+ */
+export function settlesDirection(task: Task, labels: GroomLabels): boolean {
+  if (verdict(task, labels) !== 'groomed') return true;
+  if (!latestGroomComment(task)?.body.includes(EPIC_GROOMED)) return true;
+  return readFingerprint(task) !== fingerprint(task);
+}
+
 /** The implementation direction from the current verdict, if it carried any. */
 export function groomNotes(task: Task): string | undefined {
   const body = latestGroomComment(task)?.body ?? '';
@@ -421,7 +438,7 @@ export function groomComment(task: Task, reply: GroomReply, epic = false, extras
     ? reply.verdict === 'done'
       ? '🏭 **Factory groom — epic done.** The direction is delivered, as recorded below; the factory closes this epic, and any child still open under it as needs-work closes with it.'
       : reply.verdict === 'groomed'
-      ? '🏭 **Factory groom — epic groomed.** The direction is settled, with the decisions below as its record; the factory files the first slice of children under it and builds toward it one PR at a time.'
+      ? `${EPIC_GROOMED} The direction is settled, with the decisions below as its record; the factory files the first slice of children under it and builds toward it one PR at a time.`
       : '🏭 **Factory groom — epic needs work.** The factory is not building toward this as written; the decision it needs is named below.'
     : reply.verdict === 'close'
       ? '🏭 **Factory groom — closed.** There is nothing here to build, for the reason below; the factory closes it as not planned.'

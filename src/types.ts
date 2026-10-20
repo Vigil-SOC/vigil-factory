@@ -136,6 +136,12 @@ export interface WorkSource {
   stillOpen(numbers: number[]): Promise<Set<number>>;
   markStarted(task: Task): Promise<void>;
   markFinished(task: Task): Promise<void>;
+  /** Of these, in order, the ones still open that no runner has claimed for a
+   *  groom within `claimMs`, read fresh rather than from the tick's snapshot. */
+  freeToGroom(tasks: Task[], claimMs: number): Promise<Task[]>;
+  /** Claim an issue for a groom, and release it when the groom ends. */
+  markGrooming(task: Task): Promise<void>;
+  unmarkGrooming(task: Task): Promise<void>;
   /** Publish a groom verdict on the issue: a stamped comment saying what the
    *  factory concluded and why, plus a label mirroring it. */
   recordGroom(
@@ -208,6 +214,9 @@ export interface GroomRecord extends AgentPass {
   epic?: boolean;
   /** Children filed under a groomed epic. */
   childrenFiled?: number;
+  /** An epic's groom settled its direction, or only tracked the work against
+   *  a direction already settled (see settlesDirection). */
+  epicReview?: 'settle' | 'track';
   /** The issue a needs-work verdict is waiting on. */
   blockedOn?: number;
 }

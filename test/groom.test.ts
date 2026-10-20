@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   fingerprint, groomComment, groomNotes, groomState, hasLegacyBlock, isDraft, isEpic, isFactoryComment, isGroomed, needsGroom, openIssues,
   childDroppedComment, childrenFiledComment, epicRecognizedComment, openChildren, parentEpic, parseGroomReply, premiseOf, readBlocker, readChildren,
-  readFingerprint, readPremise, recordFingerprint, stampExtrasFor, stripLegacyBlock, unaccountedBlockers, verdict,
+  readFingerprint, readPremise, recordFingerprint, settlesDirection, stampExtrasFor, stripLegacyBlock, unaccountedBlockers, verdict,
 } from '../src/groom.ts';
 import type { GroomVerdict, IssueComment, Task } from '../src/types.ts';
 
@@ -360,6 +360,24 @@ describe('epics', () => {
 
   it('an ordinary reply has no children', () => {
     expect(parseGroomReply('Clear.\n\nVERDICT: groomed')!.children).toEqual([]);
+  });
+
+  // Settling a direction is the judgment worth the stronger model; the
+  // re-reviews the factory's own bookkeeping brings back only track the work.
+  it('settles the direction until an epic record stands, and again once a human replies', () => {
+    const asEpic = (t: Task, v: GroomVerdict): Task => ({
+      ...t,
+      comments: [...t.comments, { body: groomComment(t, { verdict: v, notes: undefined, reasoning: 'Settled.', children: [] }, true) }],
+      labels: [...t.labels, v === 'groomed' ? LABELS.groomed : LABELS.needsWork],
+    });
+    expect(settlesDirection(epic, EPIC_LABELS)).toBe(true);
+    expect(settlesDirection(asEpic(epic, 'needs-work'), EPIC_LABELS)).toBe(true);
+    const groomed = asEpic(epic, 'groomed');
+    expect(settlesDirection(groomed, EPIC_LABELS)).toBe(false);
+    expect(settlesDirection({ ...groomed, comments: [...groomed.comments, { body: 'Cut the second screen.' }] }, EPIC_LABELS)).toBe(true);
+    // Groomed as one PR, then found to be an epic: no epic record yet.
+    const promoted = { ...verdictOn(task(32, 'One PR?'), 'groomed'), labels: [LABELS.groomed, 'type:epic'] };
+    expect(settlesDirection(promoted, EPIC_LABELS)).toBe(true);
   });
 });
 

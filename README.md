@@ -318,10 +318,14 @@ reply in view. Nothing waits for an approval nobody asked for.
 **An epic's groom may run a stronger model than the work it starts.** Settling a direction
 is the one judgment every child inherits, and the failure it guards against is a specific
 one: a groomer that executes well inside the frame an epic hands it and never asks whether
-the frame is the right size. `groom.epicModel` names an entry of `worker.models` to groom
-epics with; everything else — children, ordinary issues, the implementers — stays on
-`worker.model`. Epic grooms are rare, so the cost is small and lands where the leverage is.
-Unset, epics are groomed by the worker model like everything else.
+the frame is the right size. `groom.epicModel` names an entry of `worker.models` for the
+grooms that settle a direction: an epic's first, one after needs-work, and one after a human
+replies or edits. Everything else — children, ordinary issues, the implementers — stays on
+`worker.model`, and so do the re-reviews the factory's own bookkeeping brings back (a slice
+that landed, a wait that closed). Those are not rare — every slice that lands brings its epic
+back — and they settle nothing: they get a slimmer prompt that starts from the record and
+what changed since, compares only the screens the landed children touched, and compares
+every screen only before calling the epic done. Unset, every groom runs the worker model.
 
 **A groomed epic's children are the work.** The groomer writes the slice — every issue that
 can start against the code as it stands or against a sibling in the same slice, uncapped — each
@@ -840,8 +844,8 @@ spends the machine's subscription rather than the Cursor budget the committed va
 **Switching models.** `worker.models` holds alternatives to `worker.model` by name, and
 `FACTORY_MODEL=<name>` runs one of them for one tick; the manual dispatch's `model` input
 does the same. Its options are listed in the workflow, so a new name goes in both places.
-`groom.epicModel` names one of them for epic grooms alone, every tick, whatever the rest
-of the tick runs on.
+`groom.epicModel` names one of them for the epic grooms that settle a direction, every
+tick, whatever the rest of the tick runs on.
 
 ## Commands
 
@@ -902,9 +906,14 @@ committed.
 - `factory.config.json` → `labels.draft` — (default `factory:draft`) an issue a human is
   still writing. Neither groomed nor implemented while it carries the label, and the
   children of a draft epic wait with it. A human applies and removes it.
-- `factory.config.json` → `groom.epicModel` — a name from `worker.models` to groom epics
-  with (unset = `worker.model`). The one place a stronger model buys the most: the direction
-  every child is built against. See "Epics" above.
+- `factory.config.json` → `labels.grooming` — (default `factory:grooming`) an issue a
+  runner is grooming right now. Put on just before the groom and taken off after it, and
+  read fresh before each groom phase, so the local Claude Code tick and the Actions one never
+  groom the same issue at once. A claim older than twice the longer run budget is taken to
+  be a dead runner's and ignored.
+- `factory.config.json` → `groom.epicModel` — a name from `worker.models` for the epic
+  grooms that settle a direction (unset = `worker.model`). The one place a stronger model
+  buys the most: the direction every child is built against. See "Epics" above.
 - `factory.config.json` → `security` — `enabled` (default true) and `minSeverity` (default
   `high`; `low`, `medium` — or `moderate` — `high`, `critical`): the phase that fixes the
   repo's open Dependabot and code scanning alerts, and its privately reported advisories, a

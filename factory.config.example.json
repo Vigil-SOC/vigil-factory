@@ -23,7 +23,8 @@
     "epic": "type:epic",
     "blocker": "factory:blocker",
     "securityPr": "factory:security",
-    "draft": "factory:draft"
+    "draft": "factory:draft",
+    "grooming": "factory:grooming"
   },
   "groom": {
     "maxPerTick": 5,
