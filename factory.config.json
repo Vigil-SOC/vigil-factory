@@ -7,10 +7,11 @@
   "worker": {
     "kind": "cursor",
     "model": {
-      "id": "claude-sonnet-5-5",
+      "id": "grok-4.7",
       "params": {
-        "context": "300k",
-        "reasoning_effort": "high"
+        "context": "500k",
+        "reasoning_effort": "medium",
+        "fast": "false"
       }
     },
     "models": {
@@ -71,8 +72,7 @@
   },
   "groom": {
     "maxPerTick": 5,
-    "principlesFile": "principles.md",
-    "epicModel": "fable"
+    "principlesFile": "principles.md"
   },
   "selector": {
     "enabled": false,
@@ -87,8 +87,7 @@
   },
   "review": {
     "enabled": true,
-    "maxPerTick": 5,
-    "model": "sonnet"
+    "maxPerTick": 5
   },
   "deps": {
     "enabled": true
