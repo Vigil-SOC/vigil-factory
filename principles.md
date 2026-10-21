@@ -29,6 +29,19 @@ is not thereby wrong; the question is whether Vigil does SOC work better with it
   and air-gapped with local inference. A hosted service, a vendor account, or
   an outbound connection is opt-in, and the product is whole without it. LogLM
   pairs with Vigil and enriches it; Vigil is complete without LogLM.
+- **Whole as open source.** Identity and sign-in (SSO, directory sync),
+  accounts and roles, audit, session hardening, secrets, encryption, backup and
+  upgrade, log forwarding, operability, and accessibility are the product, not
+  an upsell: a SOC that lacks them is not complete, so they are in scope here
+  and never gated. What is not in scope is the commercial relationship around
+  the product: licence enforcement, entitlement, usage metering, support
+  contracts, certified or attested builds (FIPS-validated images, compliance
+  evidence packages), and anything that only works through a DeepTempo-run
+  service or a proprietary asset. Those belong to the private
+  `Vigil-SOC/vigil-assured` repo, which packages released Vigil and depends on
+  it; nothing in this repo may depend on it or carry a hook for it. An issue
+  asking for one of those here is close, naming that repo. The split runs one
+  way: what lands here stays open.
 - **Autonomy is the goal.** Vigil is meant to run the SOC, not to assist a
   person running it. Under the ceiling its operator has set it acts without
   asking, and making an action safe and observable beats putting a person in
