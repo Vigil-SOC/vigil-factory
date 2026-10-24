@@ -120,12 +120,12 @@ describe('reported advisories', () => {
     cwes: ['CWE-862 Missing Authorization'], reporter: 'reporter-one', createdAt: '2026-10-03T16:37:18Z', cvss: null, affected: ['<= 0.6'],
     ...over,
   });
-  const r1 = report('GHSA-2222-2222-2222');
+  const r1 = report('GHSA-2cfg-3hjm-4pqr');
 
   it('is named with a prefix, and found in prose, stamps, and replies however it is cased', () => {
-    expect(alertKey(r1)).toBe('advisory#GHSA-2222-2222-2222');
-    expect(keysIn('fixes advisory#GHSA-9MXJ-C95C-5823 and dependabot#4, not GHSA-aaaa-bbbb-cccc')).toEqual(['advisory#GHSA-2222-2222-2222', 'dependabot#4']);
-    expect(claimedBy(pr(1, ['advisory#GHSA-2222-2222-2222']))).toEqual(['advisory#GHSA-2222-2222-2222']);
+    expect(alertKey(r1)).toBe('advisory#GHSA-2cfg-3hjm-4pqr');
+    expect(keysIn('fixes advisory#GHSA-2CFG-3HJM-4PQR and dependabot#4, not GHSA-aaaa-bbbb-cccc')).toEqual(['advisory#GHSA-2cfg-3hjm-4pqr', 'dependabot#4']);
+    expect(claimedBy(pr(1, ['advisory#GHSA-2cfg-3hjm-4pqr']))).toEqual(['advisory#GHSA-2cfg-3hjm-4pqr']);
   });
 
   it('is offered at any severity, ranked by the reported one, unrated as medium, oldest first', () => {
@@ -133,18 +133,18 @@ describe('reported advisories', () => {
     const unrated = report('GHSA-aaaa-bbbb-cccc', { severity: null, createdAt: '2026-10-01T00:00:00Z' });
     const older = report('GHSA-5555-5555-5555', { createdAt: '2026-09-28T16:27:25Z' });
     expect(offeredKeys([low, dep(1), r1, unrated, dep(2, { severity: 'critical' }), older]))
-      .toEqual(['dependabot#2', 'dependabot#1', 'advisory#GHSA-5555-5555-5555', 'advisory#GHSA-2222-2222-2222', 'advisory#GHSA-aaaa-bbbb-cccc', 'advisory#GHSA-1111-1111-1111']);
+      .toEqual(['dependabot#2', 'dependabot#1', 'advisory#GHSA-5555-5555-5555', 'advisory#GHSA-2cfg-3hjm-4pqr', 'advisory#GHSA-aaaa-bbbb-cccc', 'advisory#GHSA-1111-1111-1111']);
   });
 
   it('is held by any PR that claims it, merged however long ago — GitHub closes no report on a merge', () => {
-    expect(offeredKeys([r1], [pr(10, ['advisory#GHSA-2222-2222-2222'])])).toEqual([]);
-    expect(offeredKeys([r1], [pr(10, ['advisory#GHSA-2222-2222-2222'], 'MERGED', 60)])).toEqual([]);
-    expect(securityQueue([r1], [pr(10, ['advisory#GHSA-2222-2222-2222'], 'CLOSED')], 'high', NOW).held).toBe(1);
+    expect(offeredKeys([r1], [pr(10, ['advisory#GHSA-2cfg-3hjm-4pqr'])])).toEqual([]);
+    expect(offeredKeys([r1], [pr(10, ['advisory#GHSA-2cfg-3hjm-4pqr'], 'MERGED', 60)])).toEqual([]);
+    expect(securityQueue([r1], [pr(10, ['advisory#GHSA-2cfg-3hjm-4pqr'], 'CLOSED')], 'high', NOW).held).toBe(1);
   });
 
   it('reaches the agent whole: the facts on a line, the description quoted', () => {
     const text = describeAdvisory(r1, ['https://github.com/o/r/pull/9']);
-    expect(text).toContain('### advisory#GHSA-2222-2222-2222 — Role permissions are not enforced');
+    expect(text).toContain('### advisory#GHSA-2cfg-3hjm-4pqr — Role permissions are not enforced');
     expect(text).toContain('reported **high** by @reporter-one on 2026-10-03 as CWE-862 Missing Authorization affecting <= 0.6.');
     expect(text).toContain('Still in triage after https://github.com/o/r/pull/9 merged.');
     expect(text).toContain('> A Viewer can `POST /api/config`.\n> \n> ```\n> curl …\n> ```');
@@ -152,20 +152,20 @@ describe('reported advisories', () => {
   });
 
   it('the reply closes a report as a false positive, re-rates one, or fixes one — and a re-rating rides along with any of them', () => {
-    const offered = ['advisory#GHSA-2222-2222-2222', 'advisory#GHSA-1111-1111-1111', 'advisory#GHSA-5555-5555-5555', 'dependabot#1'];
+    const offered = ['advisory#GHSA-2cfg-3hjm-4pqr', 'advisory#GHSA-1111-1111-1111', 'advisory#GHSA-5555-5555-5555', 'dependabot#1'];
     const reply = parseFixReply([
-      'ALERTS: advisory#GHSA-2222-2222-2222 dependabot#1',
+      'ALERTS: advisory#GHSA-2cfg-3hjm-4pqr dependabot#1',
       'FALSE POSITIVE: advisory#GHSA-1111-1111-1111 — the credentials column is encrypted at rest since #1402',
-      'SEVERITY: advisory#GHSA-2222-2222-2222 critical — any signed-in user, no interaction',
+      'SEVERITY: advisory#GHSA-2cfg-3hjm-4pqr critical — any signed-in user, no interaction',
       'SEVERITY: advisory#GHSA-5555-5555-5555 Moderate — needs an operator-configured Elastic source and an analyst role',
       'SEVERITY: advisory#GHSA-5555-5555-5555 low — repeated, ignored',
       'SEVERITY: advisory#GHSA-zzzz-zzzz-zzzz high — not offered',
       'FALSE POSITIVE: dependabot#1 — never a false positive',
     ].join('\n'), offered);
-    expect(reply.fixed).toEqual(['advisory#GHSA-2222-2222-2222', 'dependabot#1']);
+    expect(reply.fixed).toEqual(['advisory#GHSA-2cfg-3hjm-4pqr', 'dependabot#1']);
     expect(reply.dismiss).toEqual([{ key: 'advisory#GHSA-1111-1111-1111', reason: 'the credentials column is encrypted at rest since #1402' }]);
     expect(reply.rerate).toEqual([
-      { key: 'advisory#GHSA-2222-2222-2222', severity: 'critical', reason: 'any signed-in user, no interaction' },
+      { key: 'advisory#GHSA-2cfg-3hjm-4pqr', severity: 'critical', reason: 'any signed-in user, no interaction' },
       { key: 'advisory#GHSA-5555-5555-5555', severity: 'medium', reason: 'needs an operator-configured Elastic source and an analyst role' },
     ]);
   });
@@ -173,7 +173,7 @@ describe('reported advisories', () => {
   it('the prompt carries the reports in their own section with their own rules, and no empty alerts section', () => {
     const prompt = securityPrompt({ alerts: [], advisories: [describeAdvisory(r1)], openPrs: [], budget: { maxRunMinutes: 90 } });
     expect(prompt).toContain('## Reported advisories');
-    expect(prompt).toContain('### advisory#GHSA-2222-2222-2222');
+    expect(prompt).toContain('### advisory#GHSA-2cfg-3hjm-4pqr');
     expect(prompt).toContain('SEVERITY: advisory#GHSA-<id>');
     expect(prompt).toContain('FALSE POSITIVE: advisory#GHSA-<id>');
     expect(prompt).not.toContain('## Alerts');
@@ -195,13 +195,13 @@ describe('fixedReports', () => {
   const acceptedNote = `### Summary\nViewer can write settings.\n\n---\n\n🏭 **Factory assessment**, 2026-10-06.\n\n**Severity high** (reported critical): needs a session.\n\n**Fix in ${fixUrl}.** Accepted as a draft advisory by the software factory, which closes it once the fix merges.\n`;
 
   it('closes an accepted report once the PR its note names has merged', () => {
-    const out = fixedReports([accepted('GHSA-2222-2222-2222', acceptedNote)], [pr(fixUrl, 'MERGED')]);
-    expect(out.map((o) => [o.report.ghsa, o.prUrl])).toEqual([['GHSA-2222-2222-2222', fixUrl]]);
+    const out = fixedReports([accepted('GHSA-2cfg-3hjm-4pqr', acceptedNote)], [pr(fixUrl, 'MERGED')]);
+    expect(out.map((o) => [o.report.ghsa, o.prUrl])).toEqual([['GHSA-2cfg-3hjm-4pqr', fixUrl]]);
   });
 
   it('waits while the PR is open, and leaves a closed-unmerged PR alone', () => {
-    expect(fixedReports([accepted('GHSA-2222-2222-2222', acceptedNote)], [pr(fixUrl, 'OPEN')])).toEqual([]);
-    expect(fixedReports([accepted('GHSA-2222-2222-2222', acceptedNote)], [pr(fixUrl, 'CLOSED')])).toEqual([]);
+    expect(fixedReports([accepted('GHSA-2cfg-3hjm-4pqr', acceptedNote)], [pr(fixUrl, 'OPEN')])).toEqual([]);
+    expect(fixedReports([accepted('GHSA-2cfg-3hjm-4pqr', acceptedNote)], [pr(fixUrl, 'CLOSED')])).toEqual([]);
   });
 
   it('never touches a draft a maintainer wrote themselves', () => {
@@ -210,12 +210,12 @@ describe('fixedReports', () => {
   });
 
   it('leaves a report a human reopened after the factory closed it', () => {
-    const reopened = accepted('GHSA-2222-2222-2222', `${acceptedNote}\n---\n\n🏭 **Closed by the software factory**, 2026-10-07: the fix in ${fixUrl} merged. A maintainer can reopen it.\n`);
+    const reopened = accepted('GHSA-2cfg-3hjm-4pqr', `${acceptedNote}\n---\n\n🏭 **Closed by the software factory**, 2026-10-07: the fix in ${fixUrl} merged. A maintainer can reopen it.\n`);
     expect(fixedReports([reopened], [pr(fixUrl, 'MERGED')])).toEqual([]);
   });
 
   it('takes the latest acceptance when a report was accepted twice', () => {
-    const again = accepted('GHSA-2222-2222-2222', `${acceptedNote}\n---\n\n🏭 **Closed by the software factory**, 2026-10-07: the fix in ${fixUrl} merged.\n\n---\n\n🏭 **Factory assessment**, 2026-10-08.\n\n**Fix in https://github.com/o/r/pull/1900.** Accepted as a draft advisory by the software factory, which closes it once the fix merges.\n`);
+    const again = accepted('GHSA-2cfg-3hjm-4pqr', `${acceptedNote}\n---\n\n🏭 **Closed by the software factory**, 2026-10-07: the fix in ${fixUrl} merged.\n\n---\n\n🏭 **Factory assessment**, 2026-10-08.\n\n**Fix in https://github.com/o/r/pull/1900.** Accepted as a draft advisory by the software factory, which closes it once the fix merges.\n`);
     expect(fixedReports([again], [pr(fixUrl, 'MERGED'), pr('https://github.com/o/r/pull/1900', 'OPEN')])).toEqual([]);
     expect(fixedReports([again], [pr('https://github.com/o/r/pull/1900', 'MERGED')]).map((o) => o.prUrl)).toEqual(['https://github.com/o/r/pull/1900']);
   });
