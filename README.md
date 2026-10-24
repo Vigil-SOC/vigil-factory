@@ -830,6 +830,23 @@ to. Everything else — prompts, phases, labels, telemetry — is the same eithe
   `.mcp.json` declares, never this machine's. `FACTORY_CLAUDE_BIN` points at the
   executable when `claude` is not on PATH.
 
+  **One machine, standing in for a VM each.** A Cursor agent's VM is thrown away with
+  it and has the repo's ports to itself. Here two things stand in for that, both in
+  `src/localMachine.ts`. First, *a run's leftovers end with it*: every process an
+  agent starts inherits `FACTORY_SESSION`, and every container carries a
+  `factory.session` label (a `docker` shim on the agent's PATH adds it) or belongs to the
+  session's compose project (`COMPOSE_PROJECT_NAME` is set per session). When a turn
+  ends, the worker removes all of it, and a tick that died has its sessions cleared by
+  the next one. Second, *one live slot*: a repo's own stack usually fixes its container
+  names and ports, so an agent runs `factory-slot take` before starting it and
+  `factory-slot release` after (which stops what it started). Implementation stays
+  parallel; only live stacks queue, and the wait is not charged to the run's budget.
+  The slot, the shims, and the record of sessions in flight live in
+  `telemetry/machine/`. A stack you run by hand on the same machine should use its own
+  compose project and ports: the repo's defaults belong to the slot holder. None of
+  this is a sandbox. Implementers run code the factory wrote, and phases that run code
+  nobody here wrote stay on Cursor.
+
 `worker.model` is written once, in Cursor's shape, and translated for Claude Code:
 `params.context: "1m"` becomes the `[1m]` suffix and `params.effort` becomes `--effort`;
 `thinking` is dropped (Claude Code has no flag for it). Cost in the telemetry for `claude-code` runs

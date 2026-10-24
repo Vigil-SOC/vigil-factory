@@ -21,6 +21,11 @@
 // or CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) where there is no
 // browser. Not `--bare`: bare mode refuses subscription credentials.
 //
+// The machine itself is shared by every session the worker runs, and stands in
+// for the VM Cursor gives each agent: what a run starts is removed when it
+// ends, and the repo's live stack is run by one agent at a time. That lives in
+// localMachine.ts.
+//
 // A subscription is metered in a five-hour window and a weekly one, shared
 // with whoever else uses the login. Every run waits for headroom before it
 // starts, and a run the limit cuts off mid-turn waits for the reset and
@@ -34,6 +39,10 @@ import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 
+import {
+  findDocker, forgetSession, installBin, machinePaths, recordSession, releaseSlot, resetWait, sessionEnv, sweepDeadSessions, teardown, waitedMs,
+  type MachinePaths,
+} from './localMachine.ts';
 import {
   RunBudgetExceeded,
   type CodingWorker, type ModelSpec, type RunHandle, type RunResult, type StartOptions, type TokenUsage,
@@ -51,7 +60,7 @@ const KILL_GRACE_MS = 30_000;
 const LIMIT_RECHECK_MS = 15 * 60_000;
 /** Times one run may be cut off by the usage limit and resumed. */
 const MAX_LIMIT_RESUMES = 3;
-const LIMIT_RESUME_NOTE = 'Your previous turn was cut off by a usage limit, which has since reset. Carry on from where you stopped.';
+const LIMIT_RESUME_NOTE = 'Your previous turn was cut off by a usage limit, which has since reset. Carry on from where you stopped. Anything you had running was stopped while you waited, and the live slot was released.';
 /** Runs launched together while the login's token expires race to refresh it,
  *  and the losers end at once with "Not logged in". By the time they are
  *  resumed the winner has stored the new token. */
@@ -102,6 +111,9 @@ export interface ClaudeCodeWorkerOptions {
   maxRunMinutes: number;
   /** Where clones live; one subdirectory per session. */
   workRoot: string;
+  /** The live slot, the agents' bin directory, and the record of sessions in
+   *  flight. Shared by every tick on this machine. Default: beside workRoot. */
+  machineRoot?: string;
   /** Token the agent's `git push` and `gh` use. Null = the machine's own
    *  credentials (gh login, git credential helper), which is the local case. */
   ghToken: string | null;
@@ -134,7 +146,8 @@ interface Run {
   exited: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
   startedAt: number;
   /** Work time the same task already spent in runs the usage limit cut off;
-   *  it counts against the budget, the wait for the reset does not. */
+   *  it counts against the budget, the wait for the reset does not, and nor
+   *  does a wait for the live slot. */
   priorMs: number;
   /** How many times the usage limit has cut this task off already. */
   limitResumes: number;
@@ -147,6 +160,8 @@ interface Run {
 /** One agent: a clone and every run made in it. */
 interface Session {
   workspace: string;
+  /** The run's name, shown to an agent waiting for the slot this one holds. */
+  name: string | undefined;
   branch: string | null;
   /** The existing PR whose branch this session works on, when it was started
    *  on one; its pushes update that PR rather than opening another. */
@@ -356,6 +371,14 @@ export function branchNameFor(name: string | undefined, sessionId: string): stri
  * never to the factory's prompts, which stay worker-agnostic.
  */
 export function machineNote(opts: { repoUrl: string; ref: string | null; branch: string | null; prUrl?: string | null }): string {
+  return `${task(opts)}\n\n${SHARED_MACHINE}`;
+}
+
+/** The counterpart of an agent having a VM to itself. Said to every session:
+ *  a groom may run the app to answer a question too. */
+const SHARED_MACHINE = 'This machine is shared with other agents working on this repo at the same time. Before you start the repo\'s own stack or a dev server (anything that takes the container names or ports its config fixes), run `factory-slot take`; it may wait, and tells you when to run it again. While you hold the slot, the stack is yours to run as shipped, with no override files or remapped ports. Run `factory-slot release` when your live checks are done: it stops the containers and servers you started, and the next agent is waiting for it. A throwaway container or server on a name and port of your own needs no slot. When your turn ends, everything you started is removed and the slot is released, so there is nothing to clean up and nothing will be left running for later.';
+
+function task(opts: { repoUrl: string; ref: string | null; branch: string | null; prUrl?: string | null }): string {
   // -p mode: the turn is the session. A test left running in the background
   // dies with it, and an agent that stops to wait for one loses its work.
   const foreground = 'This session ends when your turn ends: run every check in the foreground and wait for it, never stop to wait for something still running.';
@@ -378,6 +401,8 @@ export class ClaudeCodeWorker implements CodingWorker {
   /** The wait every concurrent start shares, so one wait is logged once. */
   private headroom: Promise<void> | null = null;
   private usageUnreadableLogged = false;
+  private readonly machine: MachinePaths;
+  private readonly docker: string | null;
 
   constructor(private readonly opts: ClaudeCodeWorkerOptions) {
     const m = opts.repoUrl.match(/github\.com[/:]([^/]+)\/([^/.]+)/);
@@ -386,6 +411,9 @@ export class ClaudeCodeWorker implements CodingWorker {
     this.repoName = m[2]!;
     mkdirSync(opts.workRoot, { recursive: true });
     this.sweepWorkspaces();
+    this.machine = machinePaths(opts.machineRoot ?? resolve(opts.workRoot, '..', 'machine'));
+    this.docker = findDocker(this.machine);
+    installBin(this.machine, this.docker);
     // A tick that dies must not leave implementers running headless on the
     // machine with nobody to read their result.
     const killAll = () => { for (const run of this.runs.values()) run.child.kill('SIGTERM'); };
@@ -403,8 +431,10 @@ export class ClaudeCodeWorker implements CodingWorker {
     this.opts.log?.(msg);
   }
 
-  /** Verify the binary runs before any clone is made. */
+  /** Verify the binary runs before any clone is made, and clear what a tick
+   *  that died left on the machine. */
   async check(): Promise<string> {
+    await sweepDeadSessions(this.machine, this.docker, (msg) => this.log(msg));
     try {
       const { stdout } = await execFileAsync(this.opts.bin, ['--version']);
       return stdout.trim();
@@ -426,14 +456,37 @@ export class ClaudeCodeWorker implements CodingWorker {
   }
 
   /** The env every git and claude process gets. GH_TOKEN reaches `gh` and,
-   *  through the credential helper set below, `git push`. */
-  private childEnv(): NodeJS.ProcessEnv {
+   *  through the credential helper set below, `git push`. An agent's also
+   *  marks everything it starts as its session's. */
+  private childEnv(sessionId?: string): NodeJS.ProcessEnv {
     const env: NodeJS.ProcessEnv = { ...process.env };
     if (this.opts.ghToken) {
       env['GH_TOKEN'] = this.opts.ghToken;
       env['GITHUB_TOKEN'] = this.opts.ghToken;
     }
+    const session = sessionId ? this.sessions.get(sessionId) : undefined;
+    if (session) Object.assign(env, sessionEnv(this.machine, this.ref(sessionId!, session), process.env['PATH'], process.pid));
     return env;
+  }
+
+  private ref(id: string, session: Session) {
+    return { id, workspace: session.workspace, ...(session.name ? { name: session.name } : {}) };
+  }
+
+  /**
+   * The end of a turn: what the agent started is removed and the slot it held
+   * freed, as a VM would be thrown away. Returns how long the turn waited for
+   * the slot, which its budget does not count.
+   */
+  private async endTurn(sessionId: string): Promise<number> {
+    const session = this.sessions.get(sessionId);
+    if (!session) return 0;
+    const waited = waitedMs(this.machine, sessionId);
+    const left = await teardown(this.ref(sessionId, session), this.docker).catch(() => ({ processes: 0, containers: 0 }));
+    if (releaseSlot(this.machine, sessionId)) this.log(`claude session ${sessionId} ended holding the live slot; released it`);
+    if (left.processes + left.containers > 0) this.log(`removed what claude session ${sessionId} left running: ${left.processes} processes, ${left.containers} containers`);
+    forgetSession(this.machine, sessionId);
+    return waited;
   }
 
   private async git(args: string[], cwd?: string): Promise<string> {
@@ -479,7 +532,7 @@ export class ClaudeCodeWorker implements CodingWorker {
       branch = branchNameFor(opts.name, sessionId);
       await this.git(['checkout', '--quiet', '-b', branch], workspace);
     }
-    const session: Session = { workspace, branch, prUrl: prBranch ? opts.prUrl! : null, model: opts.model ?? this.opts.model, usage: [] };
+    const session: Session = { workspace, name: opts.name, branch, prUrl: prBranch ? opts.prUrl! : null, model: opts.model ?? this.opts.model, usage: [] };
     this.sessions.set(sessionId, session);
     return session;
   }
@@ -558,9 +611,11 @@ export class ClaudeCodeWorker implements CodingWorker {
       '--append-system-prompt', machineNote({ repoUrl: this.opts.repoUrl, ref: this.opts.startingRef, branch: session.branch, prUrl: session.prUrl }),
       ...modelArgs(session.model),
     ];
+    recordSession(this.machine, this.ref(sessionId, session), process.pid);
+    resetWait(this.machine, sessionId);
     const child = spawn(this.opts.bin, args, {
       cwd: session.workspace,
-      env: this.childEnv(),
+      env: this.childEnv(sessionId),
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     const run: Run = {
@@ -611,16 +666,28 @@ export class ClaudeCodeWorker implements CodingWorker {
     if (!run) throw new Error(`ClaudeCodeWorker: unknown run ${handle.runId}`);
     const session = this.sessions.get(handle.agentId)!;
 
-    const budgetMs = this.opts.maxRunMinutes * 60_000 - run.priorMs;
-    let timer: NodeJS.Timeout | undefined;
-    const budget = new Promise<'budget'>((res) => { timer = setTimeout(() => res('budget'), budgetMs); });
-    const outcome = await Promise.race([run.exited, budget]);
-    clearTimeout(timer);
+    // The budget runs out at the deadline, moved on by however long the run
+    // has waited for the live slot by then.
+    let deadline = run.startedAt + this.opts.maxRunMinutes * 60_000 - run.priorMs;
+    let credited = 0;
+    let outcome: Awaited<Run['exited']> | 'budget';
+    for (;;) {
+      let timer: NodeJS.Timeout | undefined;
+      const budget = new Promise<'budget'>((res) => { timer = setTimeout(() => res('budget'), Math.max(0, deadline - Date.now())); });
+      outcome = await Promise.race([run.exited, budget]);
+      clearTimeout(timer);
+      if (outcome !== 'budget') break;
+      const waited = waitedMs(this.machine, handle.agentId);
+      if (waited <= credited) break;
+      deadline += waited - credited;
+      credited = waited;
+    }
 
     if (outcome === 'budget') {
       await this.cancel(handle);
       throw new RunBudgetExceeded(handle.runId, this.opts.maxRunMinutes);
     }
+    const workedMs = Date.now() - run.startedAt - (await this.endTurn(handle.agentId));
 
     const stdout = run.stdout.join('');
     const stderr = run.stderr.join('');
@@ -637,14 +704,14 @@ export class ClaudeCodeWorker implements CodingWorker {
     }
     if (!succeeded && !outcome.signal && hitUsageLimit(resultText) && run.limitResumes < MAX_LIMIT_RESUMES) {
       this.log(`claude session ${handle.agentId} was cut off by the usage limit; resuming it once the limit resets`);
-      const carried = { priorMs: run.priorMs + (Date.now() - run.startedAt), limitResumes: run.limitResumes + 1, loginResumes: run.loginResumes, noPrResumes: run.noPrResumes };
+      const carried = { priorMs: run.priorMs + workedMs, limitResumes: run.limitResumes + 1, loginResumes: run.loginResumes, noPrResumes: run.noPrResumes };
       await this.awaitHeadroom(true);
       const next = this.launch(handle.agentId, session, LIMIT_RESUME_NOTE, true, carried);
       return this.awaitResult(next);
     }
     if (!succeeded && !outcome.signal && lostLogin(resultText) && run.loginResumes < MAX_LOGIN_RESUMES) {
       this.log(`claude session ${handle.agentId} found no login (a token refresh race); resuming it in ${LOGIN_RETRY_MS / 1000}s`);
-      const carried = { priorMs: run.priorMs + (Date.now() - run.startedAt), limitResumes: run.limitResumes, loginResumes: run.loginResumes + 1, noPrResumes: run.noPrResumes };
+      const carried = { priorMs: run.priorMs + workedMs, limitResumes: run.limitResumes, loginResumes: run.loginResumes + 1, noPrResumes: run.noPrResumes };
       await sleep(LOGIN_RETRY_MS);
       const next = this.launch(handle.agentId, session, LOGIN_RESUME_NOTE, true, carried);
       return this.awaitResult(next);
@@ -653,7 +720,7 @@ export class ClaudeCodeWorker implements CodingWorker {
     const expectsPr = session.branch !== null && session.prUrl === null;
     if (succeeded && expectsPr && !prUrlIn(resultText, this.opts.repoUrl) && run.noPrResumes < MAX_NO_PR_RESUMES && !(await this.branchHasPr(session.branch!))) {
       this.log(`claude session ${handle.agentId} ended its turn with no PR; asking it once to finish`);
-      const carried = { priorMs: run.priorMs + (Date.now() - run.startedAt), limitResumes: run.limitResumes, loginResumes: run.loginResumes, noPrResumes: run.noPrResumes + 1 };
+      const carried = { priorMs: run.priorMs + workedMs, limitResumes: run.limitResumes, loginResumes: run.loginResumes, noPrResumes: run.noPrResumes + 1 };
       const next = this.launch(handle.agentId, session, NO_PR_RESUME_NOTE, true, carried);
       return this.awaitResult(next);
     }
@@ -691,6 +758,7 @@ export class ClaudeCodeWorker implements CodingWorker {
     const grace = new Promise<void>((res) => setTimeout(res, KILL_GRACE_MS));
     await Promise.race([run.exited.then(() => undefined), grace]);
     if (run.child.exitCode === null && run.child.signalCode === null) run.child.kill('SIGKILL');
+    await this.endTurn(handle.agentId);
   }
 
   opaqueRunNote(handle: RunHandle): string {

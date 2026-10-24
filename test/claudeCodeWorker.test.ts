@@ -168,6 +168,14 @@ describe('machineNote', () => {
     expect(machineNote({ repoUrl: 'https://github.com/o/r', ref: null, branch: 'b', prUrl: 'https://github.com/o/r/pull/9' })).toContain('in the foreground');
   });
 
+  it('tells every agent the machine is shared, and how to take the live stack', () => {
+    for (const branch of ['factory/1-x-abcdef12', null]) {
+      const note = machineNote({ repoUrl: 'https://github.com/o/r', ref: 'abc', branch });
+      expect(note).toContain('factory-slot take');
+      expect(note).toContain('factory-slot release');
+    }
+  });
+
   it('tells a read-only agent to change nothing', () => {
     const note = machineNote({ repoUrl: 'https://github.com/o/r', ref: null, branch: null });
     expect(note).toContain('pushes nothing');
