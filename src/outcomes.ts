@@ -162,9 +162,9 @@ export function leakedClaims(
  * Open issues a merged factory PR has spent the groom verdict of. A groom may
  * scope one slice of an issue, its PR then says "Part of #N", and the issue
  * stays open when it merges — still groomed, so it was picked again, and the
- * next agent found its slice done and opened nothing. A verdict last put on before the merge is about the issue as it was:
- * taking its label off leaves the issue ungroomed, so nothing implements it
- * until the remainder is groomed. One put on after the merge is that groom,
+ * next agent found its slice done and opened nothing. A verdict last put on
+ * before the merge is about the issue as it was: taking its label off leaves
+ * the issue ungroomed, so nothing implements it until the remainder is groomed. One put on after the merge is that groom,
  * and stands. An epic's verdict is a direction, not one PR, and its slice has
  * its own staleness rule (groom.ts), so it is left alone.
  */
