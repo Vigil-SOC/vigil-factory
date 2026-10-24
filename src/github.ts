@@ -310,8 +310,8 @@ export async function approveHeldRuns(repo: string, sha: string): Promise<number
  * Wait for a PR's checks to settle, and return the failing ones. A repo with no
  * checks settles once `graceMs` has passed with none appearing — GitHub
  * registers a fresh push's check runs some seconds after the push, so a PR read
- * the moment it opens shows none even where CI is about to run (Vigil #1932
- * was reported "checks none" and its red lint never went back). With
+ * the moment it opens shows none even where CI is about to run (one PR was
+ * reported "checks none" and its red lint never went back). With
  * `expectChecks`, runs were just approved and an empty list waits until
  * `maxWaitMs`. Gives up after `maxWaitMs` and treats whatever is still pending
  * as not failing: a slow CI is not the implementer's fault, and the human sees
