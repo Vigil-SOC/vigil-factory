@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { leakedClaims, pastGrace, spentVerdicts, unheldClaims, unrecordedOutcomes, withSource, type SourcedPr } from '../src/outcomes.ts';
+import { leakedClaims, pastGrace, spentVerdicts, unclaimedAnswers, unheldClaims, unrecordedOutcomes, withSource, type SourcedPr } from '../src/outcomes.ts';
 import type { LabelHistory, PrData } from '../src/github.ts';
 
 const url = (n: number) => `https://github.com/o/r/pull/${n}`;
@@ -39,6 +39,14 @@ describe('unrecordedOutcomes', () => {
   it('names a PR once even if GitHub lists it under two labels', () => {
     const rows = unrecordedOutcomes([...withSource([pr(1, 'MERGED')], 'implementer'), ...withSource([pr(1, 'MERGED')], 'simplify')], new Set());
     expect(rows).toHaveLength(1);
+  });
+});
+
+describe('unclaimedAnswers', () => {
+  it('names each issue an open PR answers that carries no claim, once', () => {
+    const prs = [{ body: 'Closes #1' }, { body: 'Closes #2' }, { body: 'Part of #2' }, { body: 'no link' }];
+    expect(unclaimedAnswers(prs, [{ number: 1 }])).toEqual([2]);
+    expect(unclaimedAnswers(prs, [{ number: 1 }, { number: 2 }])).toEqual([]);
   });
 });
 

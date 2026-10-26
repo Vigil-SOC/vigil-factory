@@ -12,7 +12,7 @@ import type { FactoryConfig } from './config.ts';
 import { repoSlug } from './config.ts';
 import { addIssueLabels, addPrLabels, closePr, commentOnIssue, commentOnPr, ensureLabel, ghLogin, labelHistory, linkedIssueNumber, listIssuesByLabel, listOpenPrs, listPrsByLabel, markPrReady, prMergeable, referenceState, removeIssueLabels, type PrData } from './github.ts';
 import { factoryComment } from './groom.ts';
-import { leakedClaims, orphanedPrs, pastGrace, phaseOrphans, spentVerdicts, unheldClaims, unrecordedOutcomes, withSource, type OrphanPhase } from './outcomes.ts';
+import { leakedClaims, orphanedPrs, pastGrace, phaseOrphans, spentVerdicts, unclaimedAnswers, unheldClaims, unrecordedOutcomes, withSource, type OrphanPhase } from './outcomes.ts';
 import { keysIn, securityStamp } from './security.ts';
 import type { Telemetry } from './telemetry.ts';
 
@@ -160,6 +160,12 @@ export class FactoryState {
     }
     const held = unheld.filter((n) => !leaked.includes(n));
     if (held.length) log(`holding ${held.map((n) => `#${n}`).join(' ')}: claimed with no PR yet, perhaps by a pipeline on another runner; released at ${this.config.staleRunHours}h`);
+    for (const issue of unclaimedAnswers(openPrs, claimed)) {
+      if ((await referenceState(this.repo, issue)) !== 'open') continue;
+      await addIssueLabels(this.repo, issue, [labels.issueInProgress])
+        .then(() => log(`claimed #${issue}: an open factory PR answers it, so it is not built again`))
+        .catch((err: Error) => log(`could not claim #${issue}: ${err.message}`));
+    }
 
     for (const { issue, prUrl } of spentVerdicts(closedPrs, history, labels)) {
       try {
