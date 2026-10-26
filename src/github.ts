@@ -158,9 +158,17 @@ export interface PrData {
   headRefName: string;
   additions: number;
   deletions: number;
+  author: { login: string };
 }
 
-const PR_FIELDS = 'number,url,title,state,isDraft,createdAt,mergedAt,closedAt,body,reviews,comments,headRefName,additions,deletions';
+const PR_FIELDS = 'number,url,title,state,isDraft,createdAt,mergedAt,closedAt,body,reviews,comments,headRefName,additions,deletions,author';
+
+let login: Promise<string> | undefined;
+
+/** The account this runner acts as on GitHub, and so the author of every PR it opens. */
+export function ghLogin(): Promise<string> {
+  return (login ??= ghJson<{ login: string }>(['api', 'user']).then((u) => u.login));
+}
 
 export async function listPrsByLabel(repo: string, label: string, state: 'open' | 'closed' | 'merged' | 'all', limit = 50): Promise<PrData[]> {
   return ghJson<PrData[]>([
@@ -292,6 +300,12 @@ export async function prChecks(repo: string, prUrl: string): Promise<PrCheck[]> 
     if (/no checks reported/i.test((err as Error).message)) return [];
     throw err;
   }
+}
+
+/** The status checks a branch's rulesets require before anything merges into it. */
+export async function requiredChecks(repo: string, branch: string): Promise<string[]> {
+  return ghJson<string[]>(['api', `repos/${repo}/rules/branches/${branch}`, '--jq',
+    '[.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[].context]']);
 }
 
 /**

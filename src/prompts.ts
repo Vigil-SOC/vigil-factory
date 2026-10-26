@@ -246,6 +246,12 @@ export function fixChecksPrompt(prUrl: string, failed: { name: string; link: str
   return `Fix the failing CI checks on ${prUrl}:\n\n${list}`;
 }
 
+/** The follow-up for a PR that GitHub blocks on required checks that never ran on it. */
+export function missingChecksPrompt(prUrl: string, base: string, missing: string[]): string {
+  const list = missing.map((name) => `- ${name}`).join('\n');
+  return `${base} requires these checks, and they never ran on ${prUrl}, so it cannot merge. Make them run on it and push.\n\n${list}`;
+}
+
 /** The follow-up for a PR that parallel work has put in conflict with its base. */
 export function resolveConflictsPrompt(prUrl: string, base: string): string {
   return `${prUrl} has merge conflicts with ${base}. Resolve them and push.`;

@@ -35,12 +35,12 @@ import { RunBudgetExceeded } from './types.ts';
 import { CursorWorker } from './worker.ts';
 import { ClaudeCodeWorker } from './claudeCodeWorker.ts';
 import { GitHubIssueSource } from './workSource.ts';
-import { FactoryState } from './state.ts';
+import { FactoryState, ownPrs } from './state.ts';
 import { Telemetry } from './telemetry.ts';
 import { filterAssigned, filterClaimed, filterDrafts, filterEpics, parseSelection, type Selection } from './selector.ts';
-import { BOOT_CHECK_PROMPT, depsPrompt, environmentPrompt, fixChecksPrompt, resolveConflictsPrompt, groomEpicPrompt, groomPrompt, implementPrompt, trackEpicPrompt, reviewPrompt, securityPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
+import { BOOT_CHECK_PROMPT, depsPrompt, environmentPrompt, fixChecksPrompt, missingChecksPrompt, resolveConflictsPrompt, groomEpicPrompt, groomPrompt, implementPrompt, trackEpicPrompt, reviewPrompt, securityPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
 import { factoryComment, isFactoryComment, groomState, isBlocker, isEpic, isGroomed, needsGroom, queueOrder, openChildren, openIssues, parseGroomReply, settlesDirection, stampExtrasFor, unaccountedBlockers, verdict, type GroomLabels, type OpenIssues } from './groom.ts';
-import { type PrCheck, addPrLabels, approveHeldRuns, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, annotateAdvisory, dismissCodeScanningAlert, listAcceptedReports, listAdvisoryReports, listAllIssuesByLabel, listCodeScanningAlerts, listDependabotAlerts, listDependabotPrs, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, prMergeable, reopenPr, userId, viewPr, viewPrForReview, collaboratorPermission } from './github.ts';
+import { type PrCheck, addPrLabels, approveHeldRuns, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, annotateAdvisory, dismissCodeScanningAlert, listAcceptedReports, listAdvisoryReports, listAllIssuesByLabel, listCodeScanningAlerts, listDependabotAlerts, listDependabotPrs, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, prMergeable, reopenPr, requiredChecks, userId, viewPr, viewPrForReview, collaboratorPermission } from './github.ts';
 import { ENV_AGENT_MARK, environmentChangedAt, filedIssueBody, parseEnvReport, recentVerdicts, skipReason, unreadFactoryPrs, withOpenedThisTick, workerSkipReason, type UnreadPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
 import { carried, depsQueue, depsStamp, droppedReasons, skipReason as depsSkipReason, upgradeIssue, upgradeKey, upgradeKeyOf, type DepsPr } from './deps.ts';
@@ -1857,6 +1857,7 @@ const FIX_ROUNDS = 3;
 const MAX_HANDBACKS = 3;
 const HANDBACK_NOTE = 'Handed the failing checks back to the agent that opened this';
 const CONFLICT_NOTE = 'Handed the merge conflicts back to the agent that opened this';
+const MISSING_NOTE = 'Handed the missing required checks back to the agent that opened this';
 
 /**
  * Whether a PR's checks are red and settled: something failed and nothing is
@@ -1867,6 +1868,20 @@ export function redChecks(checks: PrCheck[]): PrCheck[] | null {
   if (checks.some((c) => c.bucket === 'pending')) return null;
   const failed = checks.filter((c) => c.bucket === 'fail');
   return failed.length > 0 ? failed : null;
+}
+
+/**
+ * The checks the base branch requires that never reported on a PR, once
+ * nothing is still running. GitHub blocks the merge on them as on a red one,
+ * but nothing shows red: on Oct 23 an agent's merge from main dropped a
+ * required job from the workflow, and the PR sat green and blocked for days.
+ * Null when there is nothing to hand back.
+ */
+export function missingChecks(checks: PrCheck[], required: string[]): string[] | null {
+  if (checks.some((c) => c.bucket === 'pending')) return null;
+  const reported = new Set(checks.map((c) => c.name));
+  const missing = required.filter((name) => !reported.has(name));
+  return missing.length > 0 ? missing : null;
 }
 
 /** How many ticks have already handed this PR back for one reason, from its own comments. */
@@ -1898,16 +1913,25 @@ async function handBackStuckPrs(ctx: FactoryContext, worker: CodingWorker): Prom
   // Every label the factory opens PRs under: the review phase's replacements
   // and the dependency batches included. A replacement that conflicted sat for
   // a day (#1997) because no phase owned it once its first merge was refused.
-  const open = (await Promise.all(factoryPrLabels(config).map((label) => listPrsByLabel(repo, label, 'open')))).flat();
+  // Only this runner's: another runner's PR is its own agents' to fix.
+  const open = await ownPrs((await Promise.all(factoryPrLabels(config).map((label) => listPrsByLabel(repo, label, 'open')))).flat(), log);
+  const required = new Map<string, Promise<string[]>>();
   for (const pr of open) {
     try {
       const { mergeable, baseRefName } = await prMergeable(repo, pr.url);
       const stuck = mergeable === 'CONFLICTING'
         ? { note: CONFLICT_NOTE, what: `merge conflicts with ${baseRefName}`, prompt: resolveConflictsPrompt(pr.url, baseRefName) }
         : await (async () => {
-          const failed = redChecks(await prChecks(repo, pr.url));
-          const names = failed?.map((c) => c.name).join(', ');
-          return failed ? { note: HANDBACK_NOTE, what: `failing check(s) ${names}`, prompt: fixChecksPrompt(pr.url, failed) } : null;
+          const checks = await prChecks(repo, pr.url);
+          const failed = redChecks(checks);
+          if (failed) {
+            return { note: HANDBACK_NOTE, what: `failing check(s) ${failed.map((c) => c.name).join(', ')}`, prompt: fixChecksPrompt(pr.url, failed) };
+          }
+          if (!required.has(baseRefName)) required.set(baseRefName, requiredChecks(repo, baseRefName));
+          const missing = missingChecks(checks, await required.get(baseRefName)!);
+          return missing
+            ? { note: MISSING_NOTE, what: `required check(s) ${missing.join(', ')} never reported`, prompt: missingChecksPrompt(pr.url, baseRefName, missing) }
+            : null;
         })();
       if (!stuck) continue;
       const sent = handbacksSent(pr.comments, stuck.note);

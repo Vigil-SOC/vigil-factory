@@ -9,7 +9,7 @@ function pr(n: number, state: PrData['state'], over: Partial<PrData> = {}): PrDa
     number: n, url: url(n), title: `pr ${n}`, state, isDraft: false, createdAt: '2026-01-01T00:00:00Z',
     mergedAt: state === 'MERGED' ? '2026-01-02T00:00:00Z' : null,
     closedAt: state === 'OPEN' ? null : '2026-01-02T00:00:00Z',
-    body: '', reviews: [], comments: [], headRefName: `b${n}`, additions: 1, deletions: 1, ...over,
+    body: '', reviews: [], comments: [], headRefName: `b${n}`, additions: 1, deletions: 1, author: { login: 'factory-bot' }, ...over,
   };
 }
 

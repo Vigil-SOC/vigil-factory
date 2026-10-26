@@ -95,6 +95,15 @@ Oldest first, for each:
   included. Alert only once a PR has used all three. A PR that merged earlier
   this pass can put the next one in conflict, so check each one's mergeability right
   before merging it.
+- Blocked with every reported check green, because a check the default branch requires
+  never ran on it: the same as a red check, not a human's. The tick hands it back to
+  make that check run, three ticks at most (its comments say "Handed the missing
+  required checks back"). Never `--admin` past it: on Oct 23 the missing check was a
+  CI job the agent's merge had deleted, and an admin merge would have deleted it from
+  main too. Alert only once a PR has used all three.
+- Opened by someone else's runner (the PR's author is not this machine's `gh` account,
+  `gh api user`): theirs to merge or fix. It holds none of our slots, and the tick does
+  not hand it back, so list it in the journal as theirs and do not alert on it.
 - A `factory:review` replacement whose original's latest review comment is headed
   "merge pending": leave it to the tick. The tick merges it with the author's credit and
   closes the original; a plain `gh pr merge` here would drop the co-author trailer and
