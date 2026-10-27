@@ -14,6 +14,8 @@ The engine works with any GitHub repository. What makes this copy Vigil's is two
 files: `factory.config.json`, which points it at `Vigil-SOC/vigil`, and
 `principles.md`, which says what Vigil is and what is worth building for it.
 
+<p align="center"><img src="docs/flow.svg" alt="Issues are groomed, implemented, and looped through CI until green, then merged by a person; environment, review, deps, security and simplify run alongside every tick." width="100%"></p>
+
 ## What it does
 
 - **Grooms the backlog.** Each issue is judged against `principles.md` before
