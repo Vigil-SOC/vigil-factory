@@ -8,7 +8,7 @@ import { isEpic, isGroomed, needsGroom, verdict } from './groom.ts';
 import { defaultBranchHead } from './github.ts';
 import type { CodingWorker, CurrentRun } from './types.ts';
 
-const USAGE = `deeptempo-factory — thin software-factory control plane around Cursor cloud agents or local Claude Code
+const USAGE = `vigil-factory — thin software-factory control plane around Cursor cloud agents or local Claude Code
 
 Usage:
   npm run factory -- run [--dry-run]   One idempotent tick: groom part of the backlog, then hand the oldest groomed issue to a fresh implementer agent (a selector agent picks instead if selector.enabled).

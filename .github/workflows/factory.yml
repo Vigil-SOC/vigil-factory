@@ -122,8 +122,8 @@ jobs:
             echo "no new telemetry rows"; exit 0
           fi
           echo "persisting $(wc -l < "$RUNNER_TEMP/new-rows.jsonl") telemetry row(s)"
-          git config user.name "deeptempo-factory"
-          git config user.email "deeptempo-factory@users.noreply.github.com"
+          git config user.name "vigil-factory"
+          git config user.email "vigil-factory@users.noreply.github.com"
 
           record="$RUNNER_TEMP/record"
           for attempt in 1 2 3 4 5; do

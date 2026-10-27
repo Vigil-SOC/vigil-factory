@@ -11,7 +11,7 @@ has already made a decision and only machinery stood between it and the result, 
 the decision out (section 2 says which). Writing code, judging issues, and judging
 other people's PRs are not yours.
 
-- Factory repo: DeepTempo/deeptempo-factory, workflow `factory-tick` (tick logs live in
+- Factory repo: Vigil-SOC/vigil-factory, workflow `factory-tick` (tick logs live in
   its Actions runs).
 - Target repo: the one in `factory.config.json` (`repo.owner`/`repo.name`).
 - Your journal: `telemetry/babysit/journal.md`. Read its last ten or so entries first:
@@ -19,11 +19,11 @@ other people's PRs are not yours.
 
 ## 1. Look at what happened since the last pass
 
-List recent `factory-tick` runs (`gh run list -R DeepTempo/deeptempo-factory -w factory-tick`)
+List recent `factory-tick` runs (`gh run list -R Vigil-SOC/vigil-factory -w factory-tick`)
 and read each one that finished since your last journal entry. The factory's own log
 lines, without the agent-polling noise:
 
-    gh run view <id> -R DeepTempo/deeptempo-factory --log \
+    gh run view <id> -R Vigil-SOC/vigil-factory --log \
       | awk -F'\t' '$2 ~ /npm run factory/ {print $3}' | sed 's/^[0-9T:.Z-]* //' \
       | grep '^\[' | grep -v ': RUNNING$\|launched agent'
 
@@ -160,21 +160,21 @@ is the factory's verdict; leave it. Never relabel the issue yourself.
 ## 3. Start the next tick
 
 If no `factory-tick` run is queued or in progress, dispatch one with every input left at
-its default: `gh workflow run factory-tick -R DeepTempo/deeptempo-factory --ref main`.
+its default: `gh workflow run factory-tick -R Vigil-SOC/vigil-factory --ref main`.
 Then confirm it shows up in `gh run list` and moves to in_progress.
 
 A run that is in progress is usually just running — let it be. A tick has never taken
 two hours, though, so one that is not making progress is yours to clear, without
 waiting for Sam:
 - **A ghost**: GitHub says in_progress, but every step of its job has completed
-  (`gh api repos/DeepTempo/deeptempo-factory/actions/runs/<id>/jobs`). On Oct 1 GitHub
+  (`gh api repos/Vigil-SOC/vigil-factory/actions/runs/<id>/jobs`). On Oct 1 GitHub
   cancelled a tick's steps and never closed the run.
 - **Hung**: in progress more than 180 minutes, or its job log has had no new line for
-  30 minutes (`gh api repos/DeepTempo/deeptempo-factory/actions/jobs/<job id>/logs`;
+  30 minutes (`gh api repos/Vigil-SOC/vigil-factory/actions/jobs/<job id>/logs`;
   a live tick logs every 30 seconds).
 
 Clear it with `gh run cancel <id>`, then, if it still reads in progress a minute later,
-`gh api -X POST repos/DeepTempo/deeptempo-factory/actions/runs/<id>/force-cancel`. If
+`gh api -X POST repos/Vigil-SOC/vigil-factory/actions/runs/<id>/force-cancel`. If
 GitHub refuses both because the run is "not in progress" or "completed", GitHub has
 already finished it on its side, and it holds nothing up. Either way, dispatch the
 next tick and confirm it starts. Say what you did in the journal. Alert only if the new

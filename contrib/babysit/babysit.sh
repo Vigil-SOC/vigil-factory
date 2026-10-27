@@ -26,11 +26,11 @@ trap 'rm -rf "$LOCK"' EXIT
 # it. A run is live while it is queued or one of its jobs still has work left.
 live_ticks() {
   local id
-  gh run list -R DeepTempo/deeptempo-factory -w factory-tick -L 5 --json databaseId,status \
+  gh run list -R Vigil-SOC/vigil-factory -w factory-tick -L 5 --json databaseId,status \
     -q '.[] | select(.status != "completed") | "\(.databaseId) \(.status)"' 2>/dev/null |
   while read -r id run_status; do
     if [[ "$run_status" != in_progress ]]; then echo "$id"; continue; fi
-    gh api "repos/DeepTempo/deeptempo-factory/actions/runs/$id/jobs" --jq \
+    gh api "repos/Vigil-SOC/vigil-factory/actions/runs/$id/jobs" --jq \
       '[.jobs[] | select(.status != "completed") | select((.steps | length) == 0 or any(.steps[]; .status != "completed"))] | length' \
       2>/dev/null | grep -qv '^0$' && echo "$id"
   done
@@ -52,7 +52,7 @@ rc=$?
 if (( rc != 0 )) || [[ ! -s "$LOG" ]]; then
   # The tick needs no judgment to start, so a failed session still dispatches it.
   dispatched="nothing was dispatched"
-  if [[ -z "$(live_ticks)" ]] && gh workflow run factory-tick -R DeepTempo/deeptempo-factory 2>/dev/null; then
+  if [[ -z "$(live_ticks)" ]] && gh workflow run factory-tick -R Vigil-SOC/vigil-factory 2>/dev/null; then
     dispatched="a tick was dispatched anyway"
   fi
   "$ROOT/contrib/babysit/alert.sh" "babysitter pass failed" \

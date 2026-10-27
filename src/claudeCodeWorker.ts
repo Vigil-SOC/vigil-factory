@@ -524,8 +524,8 @@ export class ClaudeCodeWorker implements CodingWorker {
     // Commits need an author; a CI runner has none configured.
     const hasIdentity = await this.git(['config', 'user.email'], workspace).catch(() => '');
     if (!hasIdentity) {
-      await this.git(['config', 'user.name', 'deeptempo-factory'], workspace);
-      await this.git(['config', 'user.email', 'deeptempo-factory@users.noreply.github.com'], workspace);
+      await this.git(['config', 'user.name', 'vigil-factory'], workspace);
+      await this.git(['config', 'user.email', 'vigil-factory@users.noreply.github.com'], workspace);
     }
     let branch: string | null = prBranch;
     if (!branch && opts.autoCreatePR) {
