@@ -1,9 +1,9 @@
 #!/bin/zsh
-# Tell Sam something needs a human: a macOS notification, and a line in
+# Tell the operator something needs a human: a macOS notification, and a line in
 # telemetry/babysit/ALERTS.md so it outlives the notification.
 # Usage: alert.sh "<title>" "<message>"
 set -u
-ROOT="/Users/armstrongflg/deeptempo-factory"
+ROOT="${FACTORY_ROOT:-${0:A:h:h:h}}"
 title="Factory: ${1:-alert}"
 msg="${2:-}"
 mkdir -p "$ROOT/telemetry/babysit"
