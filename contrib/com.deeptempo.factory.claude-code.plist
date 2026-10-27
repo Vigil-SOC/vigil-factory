@@ -4,16 +4,16 @@
 <dict>
   <key>Label</key><string>com.deeptempo.factory.claude-code</string>
   <key>ProgramArguments</key>
-  <array><string>/Users/armstrongflg/deeptempo-factory/contrib/tick-claude-code.sh</string></array>
-  <key>WorkingDirectory</key><string>/Users/armstrongflg/deeptempo-factory</string>
+  <array><string>/path/to/vigil-factory/contrib/tick-claude-code.sh</string></array>
+  <key>WorkingDirectory</key><string>/path/to/vigil-factory</string>
   <!-- Every 2 hours; the worker's usage gate, not the interval, keeps it under
        the subscription's limits. A true interval, not a clock schedule, so the
        spacing never collapses at midnight. A tick still running when the next
        is due makes that one skip. -->
   <key>StartInterval</key><integer>7200</integer>
   <key>RunAtLoad</key><true/>
-  <key>StandardOutPath</key><string>/Users/armstrongflg/deeptempo-factory/telemetry/launchd.stdout.log</string>
-  <key>StandardErrorPath</key><string>/Users/armstrongflg/deeptempo-factory/telemetry/launchd.stderr.log</string>
+  <key>StandardOutPath</key><string>/path/to/vigil-factory/telemetry/launchd.stdout.log</string>
+  <key>StandardErrorPath</key><string>/path/to/vigil-factory/telemetry/launchd.stderr.log</string>
   <key>ProcessType</key><string>Background</string>
 </dict>
 </plist>

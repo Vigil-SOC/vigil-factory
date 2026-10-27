@@ -4,14 +4,14 @@
 <dict>
   <key>Label</key><string>com.deeptempo.factory.babysit</string>
   <key>ProgramArguments</key>
-  <array><string>/Users/armstrongflg/deeptempo-factory/contrib/babysit/babysit.sh</string></array>
-  <key>WorkingDirectory</key><string>/Users/armstrongflg/deeptempo-factory</string>
+  <array><string>/path/to/vigil-factory/contrib/babysit/babysit.sh</string></array>
+  <key>WorkingDirectory</key><string>/path/to/vigil-factory</string>
   <!-- Every 90 minutes: the implementer's worker.maxRunMinutes, so each pass
        finds the last tick done. launchd never starts a pass while one runs. -->
   <key>StartInterval</key><integer>5400</integer>
   <key>RunAtLoad</key><true/>
-  <key>StandardOutPath</key><string>/Users/armstrongflg/deeptempo-factory/telemetry/babysit/launchd.stdout.log</string>
-  <key>StandardErrorPath</key><string>/Users/armstrongflg/deeptempo-factory/telemetry/babysit/launchd.stderr.log</string>
+  <key>StandardOutPath</key><string>/path/to/vigil-factory/telemetry/babysit/launchd.stdout.log</string>
+  <key>StandardErrorPath</key><string>/path/to/vigil-factory/telemetry/babysit/launchd.stderr.log</string>
   <key>ProcessType</key><string>Background</string>
 </dict>
 </plist>

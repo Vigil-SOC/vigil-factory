@@ -54,6 +54,11 @@ To point it at your own project, start from `factory.config.example.json` and
 [docs/how-it-works.md](docs/how-it-works.md) covers every phase, label, and setting,
 along with the reasons behind each one.
 
+Before you run it on a repository that takes contributions from people you do not
+know, read the [threat model](docs/threat-model.md): the agents run with write access
+and skip their permission prompts. To report a vulnerability, see
+[SECURITY.md](SECURITY.md).
+
 ## License
 
 [Apache 2.0](LICENSE)

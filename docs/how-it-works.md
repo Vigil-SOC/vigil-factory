@@ -887,7 +887,11 @@ npm run check                      # typecheck + unit tests
 Two options; both just invoke the idempotent tick.
 
 **Local (launchd, macOS):** copy `contrib/com.deeptempo.factory.plist` to
-`~/Library/LaunchAgents/`, adjust paths, then `launchctl load` it.
+`~/Library/LaunchAgents/`, replace `/path/to/vigil-factory` with this checkout's
+absolute path (launchd cannot expand variables), then `launchctl load` it. The
+shell scripts in `contrib/` find the checkout from their own location; set
+`FACTORY_ROOT` to override that, and `FACTORY_TOKEN_FILE` to read the Claude Code
+token from somewhere other than `~/.config/deeptempo-factory/claude-oauth-token`.
 
 **GitHub Actions:** `.github/workflows/factory.yml` (dispatched by the babysitter, and
 scheduled every two hours as a backstop for when the Mac sleeps: a scheduled run stands
@@ -1037,6 +1041,12 @@ is pushing the other way, and how often does an agent asked to simplify grow the
 
 This is the dataset for deciding what V2 should be (e.g. automerge for classes of
 tasks whose historical human-rejection rate is ~zero).
+
+## Security
+
+What the factory trusts, what it hands to agents, and what it does not defend against
+is in [threat-model.md](threat-model.md). Report a vulnerability as
+[SECURITY.md](../SECURITY.md) describes.
 
 ## Architecture
 
