@@ -2,8 +2,7 @@
 # One babysitting pass, for launchd (see com.deeptempo.factory.babysit.plist):
 # merge the factory's open PRs, start the next local tick, and alert Sam if
 # anything looks wrong. The judgment is a headless Claude session running
-# prompt.md; this wrapper only waits out a running tick and alerts if the
-# session itself fails.
+# prompt.md; this wrapper only alerts if the session itself fails.
 set -u
 ROOT="/Users/armstrongflg/deeptempo-factory"
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
@@ -21,17 +20,13 @@ trap 'rm -rf "$LOCK"' EXIT
 
 # The tick runs on this Mac (contrib/tick-claude-code.sh under launchd) while
 # Cursor is out of usage; a pass starts it rather than dispatching the Actions
-# tick. A tick still running would make this pass skip its start, and the next
-# chance is 90 minutes out, so wait up to 90 minutes for it. The tick's lock
-# holds its pid; a lock whose pid is gone is a tick that died.
+# tick. A pass does not wait for a running tick: a local one awaits its agents
+# for hours, and merging does not need it finished. The tick's lock holds its
+# pid; a lock whose pid is gone is a tick that died.
 TICK_JOB="gui/$(id -u)/com.deeptempo.factory.claude-code"
 live_tick() {
   kill -0 "$(cat "$ROOT/telemetry/.tick.lock/pid" 2>/dev/null)" 2>/dev/null
 }
-for _ in {1..45}; do
-  live_tick || break
-  sleep 120
-done
 
 # The interactive login's OAuth session expires and stalled every pass for ~20h
 # on 2026-10-08. A long-lived token from `claude setup-token`, kept in this file,
