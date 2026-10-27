@@ -1,6 +1,6 @@
 #!/bin/zsh
 # One babysitting pass, for launchd (see com.deeptempo.factory.babysit.plist):
-# merge the factory's open PRs, dispatch the next factory-tick, and alert Sam if
+# merge the factory's open PRs, start the next local tick, and alert Sam if
 # anything looks wrong. The judgment is a headless Claude session running
 # prompt.md; this wrapper only waits out a running tick and alerts if the
 # session itself fails.
@@ -19,24 +19,17 @@ fi
 echo $$ > "$LOCK/pid"
 trap 'rm -rf "$LOCK"' EXIT
 
-# A tick still running would make this pass skip its merge and dispatch, and the
-# next chance is 90 minutes out. Wait up to 90 minutes for it instead — but not
-# for a ghost: on 2026-10-01 GitHub cancelled a tick's steps and never closed
-# the run, which then read in_progress forever and stalled every pass behind
-# it. A run is live while it is queued or one of its jobs still has work left.
-live_ticks() {
-  local id
-  gh run list -R DeepTempo/deeptempo-factory -w factory-tick -L 5 --json databaseId,status \
-    -q '.[] | select(.status != "completed") | "\(.databaseId) \(.status)"' 2>/dev/null |
-  while read -r id run_status; do
-    if [[ "$run_status" != in_progress ]]; then echo "$id"; continue; fi
-    gh api "repos/DeepTempo/deeptempo-factory/actions/runs/$id/jobs" --jq \
-      '[.jobs[] | select(.status != "completed") | select((.steps | length) == 0 or any(.steps[]; .status != "completed"))] | length' \
-      2>/dev/null | grep -qv '^0$' && echo "$id"
-  done
+# The tick runs on this Mac (contrib/tick-claude-code.sh under launchd) while
+# Cursor is out of usage; a pass starts it rather than dispatching the Actions
+# tick. A tick still running would make this pass skip its start, and the next
+# chance is 90 minutes out, so wait up to 90 minutes for it. The tick's lock
+# holds its pid; a lock whose pid is gone is a tick that died.
+TICK_JOB="gui/$(id -u)/com.deeptempo.factory.claude-code"
+live_tick() {
+  kill -0 "$(cat "$ROOT/telemetry/.tick.lock/pid" 2>/dev/null)" 2>/dev/null
 }
 for _ in {1..45}; do
-  [[ -z "$(live_ticks)" ]] && break
+  live_tick || break
   sleep 120
 done
 
@@ -50,10 +43,10 @@ LOG="$DIR/pass-$(date -u +%Y%m%dT%H%MZ).log"
 claude -p "$(cat "$ROOT/contrib/babysit/prompt.md")" --model opus --effort medium --dangerously-skip-permissions > "$LOG" 2>&1
 rc=$?
 if (( rc != 0 )) || [[ ! -s "$LOG" ]]; then
-  # The tick needs no judgment to start, so a failed session still dispatches it.
-  dispatched="nothing was dispatched"
-  if [[ -z "$(live_ticks)" ]] && gh workflow run factory-tick -R DeepTempo/deeptempo-factory 2>/dev/null; then
-    dispatched="a tick was dispatched anyway"
+  # The tick needs no judgment to start, so a failed session still starts it.
+  dispatched="no tick was started"
+  if ! live_tick && launchctl kickstart "$TICK_JOB" 2>/dev/null; then
+    dispatched="a tick was started anyway"
   fi
   "$ROOT/contrib/babysit/alert.sh" "babysitter pass failed" \
     "claude exited $rc; nothing was merged and $dispatched this pass. Log: $LOG"

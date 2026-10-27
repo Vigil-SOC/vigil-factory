@@ -11,31 +11,39 @@ has already made a decision and only machinery stood between it and the result, 
 the decision out (section 2 says which). Writing code, judging issues, and judging
 other people's PRs are not yours.
 
-- Factory repo: DeepTempo/deeptempo-factory, workflow `factory-tick` (tick logs live in
-  its Actions runs).
+- Factory repo: this checkout. While Cursor is out of usage the tick runs on this Mac,
+  not in Actions: `contrib/tick-claude-code.sh` under the launchd job
+  `com.deeptempo.factory.claude-code` (Claude Code worker, Opus, up to 6 jobs). Its logs
+  are `telemetry/tick-claude-<UTC start>.log`, and `telemetry/launchd.log` has one start
+  and one end line per tick. The Actions workflow `factory-tick` is disabled; never
+  dispatch or re-enable it.
 - Target repo: the one in `factory.config.json` (`repo.owner`/`repo.name`).
 - Your journal: `telemetry/babysit/journal.md`. Read its last ten or so entries first:
   they are what earlier passes saw, and the only memory you have across passes.
 
 ## 1. Look at what happened since the last pass
 
-List recent `factory-tick` runs (`gh run list -R DeepTempo/deeptempo-factory -w factory-tick`)
-and read each one that finished since your last journal entry. The factory's own log
-lines, without the agent-polling noise:
+Read the local tick logs that started or ended since your last journal entry
+(`tail -20 telemetry/launchd.log` lists them). The factory's own log lines, without the
+polling noise:
 
-    gh run view <id> -R DeepTempo/deeptempo-factory --log \
-      | awk -F'\t' '$2 ~ /npm run factory/ {print $3}' | sed 's/^[0-9T:.Z-]* //' \
-      | grep '^\[' | grep -v ': RUNNING$\|launched agent'
+    grep '^\[' telemetry/tick-claude-<…>.log | grep -v 'still running$\|: RUNNING$'
 
-The structured record of every groom, run, review, env pass, and outcome is on the
-`telemetry` branch: `git fetch -q origin telemetry && git show origin/telemetry:telemetry/runs.jsonl`
-(one JSON row per line, `type` = groom | run | review | env | deps | simplify | outcome).
-Use it when you need to see a pattern across ticks.
+The structured record of every groom, run, and outcome is `telemetry/runs.jsonl` in this
+checkout (one JSON row per line, `type` = groom | run | review | env | deps | simplify |
+outcome). Use it when you need to see a pattern across ticks.
 
 A healthy tick: reconciles outcomes of PRs that closed, grooms up to 5 issues (epics
-first, and epics file children), fills every free implementer slot (3 at most) with the
-oldest groomed issues, gets each PR's checks green or hands them back once, and runs the
-environment pass. The review and deps phases act only on PRs that are new or changed.
+first, and epics file children), fills every free implementer slot (6 at most) with the
+oldest groomed issues, gets each PR's checks green or hands them back, and awaits its
+runs before it ends, so one tick can take hours. On this worker the review, deps,
+security, and environment phases are skipped by design (the log says so); outside PRs
+and Dependabot PRs wait for Cursor to return, which is not an alert.
+
+The local worker changed just before this switch and had not run unwatched since, so
+look harder than usual at its runs for now: sessions that die early, all hit the run
+budget together, leave Docker containers or servers behind, or wait on the live slot
+(`factory-slot`, state in `telemetry/machine/`) for most of their budget.
 
 Things that mean the factory is wasting money or stuck — these are examples, not a
 checklist:
@@ -49,10 +57,10 @@ checklist:
 - Free slots and groomed issues waiting, but fewer picks than slots. (Free slots with
   no groomed issue left is fine — the factory idles by design.)
 - Grooming stalled while ungroomed issues remain.
-- Agents all ERRORing in the same second (Cursor quota) or all ERRORing ~40s after
-  launch (an environment image that will not boot).
-- The tick run itself failed, was cancelled, or is creeping toward its 350-minute
-  timeout; the telemetry persist step failing.
+- Runs all failing the same way: a lost login, the usage gate pausing for hours
+  (`worker.pauseAtUsagePercent`), `claude` not found, a full disk.
+- The tick itself ending rc≠0, or the launchd job not having started a tick for over
+  four hours.
 
 Normal, not worth an alert: a needs-work verdict, a single transient failure (e.g. one
 groom `fetch failed`) that did not repeat, a PR handed back for a red check that then
@@ -115,8 +123,9 @@ the PR as any other; the tick you start next closes the report itself, so there 
 to note. A report still in draft two ticks after its PR merged is one the tick could not
 close (the tick log says `security: could not close advisory#…`) — alert on that, once.
 
-An unlabelled PR on any `cursor/factory-…` branch is the factory's, from a pipeline that
-died before taking it up: `cursor/factory-<N>-…` is an implementer's, and
+An unlabelled PR on any `cursor/factory-…` or `factory/<N>-…` branch is the factory's, from
+a pipeline that died before taking it up: `cursor/factory-<N>-…` and `factory/<N>-…` (the
+local worker's) are an implementer's, and
 `cursor/factory-security-…`, `-env-…`, `-simplify-…`, `-deps-…`, `-review-…` are the
 other phases'. The tick adopts or closes these itself, so leave a fresh one to it. One
 still unlabelled after a tick has run is yours to finish, the way the tick would have:
@@ -159,26 +168,16 @@ is the factory's verdict; leave it. Never relabel the issue yourself.
 
 ## 3. Start the next tick
 
-If no `factory-tick` run is queued or in progress, dispatch one with every input left at
-its default: `gh workflow run factory-tick -R DeepTempo/deeptempo-factory --ref main`.
-Then confirm it shows up in `gh run list` and moves to in_progress.
+If no local tick is running (`telemetry/.tick.lock/pid` is missing or names a dead
+process), start one: `launchctl kickstart gui/$(id -u)/com.deeptempo.factory.claude-code`.
+Then confirm `telemetry/launchd.log` gains a "tick start" line within a minute. The job
+also starts itself every two hours, and a tick started while another runs just skips.
 
-A run that is in progress is usually just running — let it be. A tick has never taken
-two hours, though, so one that is not making progress is yours to clear, without
-waiting for Sam:
-- **A ghost**: GitHub says in_progress, but every step of its job has completed
-  (`gh api repos/DeepTempo/deeptempo-factory/actions/runs/<id>/jobs`). On Oct 1 GitHub
-  cancelled a tick's steps and never closed the run.
-- **Hung**: in progress more than 180 minutes, or its job log has had no new line for
-  30 minutes (`gh api repos/DeepTempo/deeptempo-factory/actions/jobs/<job id>/logs`;
-  a live tick logs every 30 seconds).
-
-Clear it with `gh run cancel <id>`, then, if it still reads in progress a minute later,
-`gh api -X POST repos/DeepTempo/deeptempo-factory/actions/runs/<id>/force-cancel`. If
-GitHub refuses both because the run is "not in progress" or "completed", GitHub has
-already finished it on its side, and it holds nothing up. Either way, dispatch the
-next tick and confirm it starts. Say what you did in the journal. Alert only if the new
-tick will not start, or if this keeps happening.
+A tick that is running is usually just running — let it be, even for hours; it awaits
+its agents. One whose log has had no new line for 90 minutes is hung (healthy ticks
+have gone quiet for over half an hour while their agents work). Kill its pid, remove
+`telemetry/.tick.lock`, start the next tick, and say so in the journal. Alert only if
+the new tick will not start, or if this keeps happening.
 
 ## 4. Alert, journal, finish
 
@@ -193,9 +192,9 @@ and exactly what would unstick it. A straggler should not be carried along silen
 Append one entry to the journal, newest last:
 
     ## <UTC timestamp>
-    - tick(s) read: <run links, conclusion, duration>
+    - tick(s) read: <log files, rc, duration>
     - merged: <#n …> · left: <#n (why) …>
-    - dispatched: <run link | not (why)>
+    - started: <log file | not (why)>
     - seen: <what the tick did in a line or two: groomed N, picked M of K free slots, …>
     - alerts: <none | titles>
 
