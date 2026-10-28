@@ -103,12 +103,14 @@ reconcile with GitHub: record the verdict on every factory PR that has closed, r
    default branch in where it conflicts, tests it live (the suites are CI's), pushes the
    fixes it needs to its branch, and answers merge; the factory waits for CI on that
    commit, hands a red check back once, and squash-merges it
-→ DEPENDENCY agent, alongside too (deps.enabled): every open Dependabot PR not yet
-   batched at its current head, except Actions bumps under .github/, is carried onto one
+→ DEPENDENCY agent, alongside too (deps.enabled; on claude-code, only with worker.containers):
+   every open Dependabot PR not yet batched at its current head, except Actions bumps
+   under .github/, is carried onto one
    branch with whatever the repo installs from regenerated, as one PR labelled
    factory:deps. CI runs once, on the versions that ship; the factory merges it on green
    under the review phase's rules and closes the Dependabot PRs it carried. One open at a time
-→ SECURITY agent, alongside too (security.enabled, on by default; Cursor worker only): every
+→ SECURITY agent, alongside too (security.enabled, on by default; on claude-code, only with
+   worker.containers): every
    open Dependabot and code scanning alert at security.minSeverity or above, and every
    privately reported advisory still awaiting an answer, that no factory PR claims is handed to one
    agent, which fixes the most severe group one PR can and opens it, labelled
@@ -857,8 +859,9 @@ to. Everything else — prompts, phases, labels, telemetry — is the same eithe
   this is a sandbox. Implementers run code the factory wrote; deps and security, whose
   agents install releases nobody here read, stay on Cursor.
 
-  **A container each, for reviews.** With `worker.containers` on, a run that needs a
-  fresh instance of the app (a review of an outside PR) does not share the machine. It
+  **A container each, for code nobody here wrote.** With `worker.containers` on, a run
+  that installs or runs such code — a review of an outside PR, a dependency batch, a
+  security fix, a handback on one of their PRs — does not share the machine. It
   gets a Docker container built from the target repo's Cursor environment: the
   Dockerfile `.cursor/environment.json` names, at the tick's pinned commit, plus a layer
   with `gh` and the host's Claude Code version. The container runs privileged with Docker
@@ -867,7 +870,7 @@ to. Everything else — prompts, phases, labels, telemetry — is the same eithe
   names and its ports to itself. A fresh `claude.ai` token is handed in per run
   (`CLAUDE_CODE_OAUTH_TOKEN` when set, else the machine's login), and `gh`/`git push`
   use `GH_TOKEN` or the machine's `gh` login. The container outlives a turn, so a red
-  check's follow-up runs in it too. It is removed when the review is done, and a tick
+  check's follow-up runs in it too. It is removed when the run is done, and a tick
   that died has its containers removed by the next one. Images are tagged by content and
   built once (`telemetry/machine/image-build.log`). In `src/container.ts`.
 

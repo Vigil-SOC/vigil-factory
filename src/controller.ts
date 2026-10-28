@@ -1137,11 +1137,11 @@ async function mergeVerified(
  * tick, the dry run, and `factory status` agree.
  */
 export async function depsInputs(config: FactoryConfig): Promise<{ skip: string | null; offered: DepsPr[] }> {
-  const gate = depsSkipReason(config.deps.enabled, config.worker.kind);
+  const gate = depsSkipReason(config.deps.enabled, config.worker.kind, config.worker.containers);
   if (gate) return { skip: gate, offered: [] };
   const repo = repoSlug(config);
   const [open, batches] = await Promise.all([listDependabotPrs(repo), listPrsByLabel(repo, config.labels.depsPr, 'open')]);
-  const skip = depsSkipReason(true, config.worker.kind, batches);
+  const skip = depsSkipReason(true, config.worker.kind, config.worker.containers, batches);
   if (skip) return { skip, offered: [] };
   const offered = depsQueue(open);
   return { skip: offered.length === 0 ? 'no Dependabot PR is new or changed since the last batch' : null, offered };
@@ -1166,81 +1166,86 @@ export async function runDepsPhase(ctx: FactoryContext, worker: CodingWorker): P
 
   log(`deps: batching ${offered.length} Dependabot PR(s): ${offered.map((p) => `#${p.number}`).join(' ')}`);
   const startedAt = new Date().toISOString();
-  // No credentials: it installs releases nobody here has read.
-  const handle = await worker.start(depsPrompt(offered.map((p) => p.url)), { autoCreatePR: true, withholdCredentials: true, name: 'factory-deps' });
+  // No credentials, and a machine of its own: it installs releases nobody here has read.
+  const handle = await worker.start(depsPrompt(offered.map((p) => p.url)), { autoCreatePR: true, withholdCredentials: true, container: true, name: 'factory-deps' });
+  try {
 
-  const record = async (over: Partial<DepsRecord> & { outcome: DepsRecord['outcome'] }): Promise<DepsRecord> => {
-    const full: DepsRecord = {
-      type: 'deps',
-      offered: offered.map((p) => p.url),
-      carried: [],
-      prUrl: null,
-      worker: config.worker.kind,
-      model: config.worker.model,
-      agentId: handle.agentId,
-      startedAt,
-      finishedAt: new Date().toISOString(),
-      usage: (await worker.usage(handle.agentId)) ?? null,
-      durationMs: Date.now() - Date.parse(startedAt),
-      ...over,
+    const record = async (over: Partial<DepsRecord> & { outcome: DepsRecord['outcome'] }): Promise<DepsRecord> => {
+      const full: DepsRecord = {
+        type: 'deps',
+        offered: offered.map((p) => p.url),
+        carried: [],
+        prUrl: null,
+        worker: config.worker.kind,
+        model: config.worker.model,
+        agentId: handle.agentId,
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        usage: (await worker.usage(handle.agentId)) ?? null,
+        durationMs: Date.now() - Date.parse(startedAt),
+        ...over,
+      };
+      ctx.telemetry.append(full);
+      return full;
     };
-    ctx.telemetry.append(full);
-    return full;
-  };
-  // Stamped at the head the batch was offered, so a rebase since brings it back.
-  const conclude = async (prs: DepsPr[], body: string, close: boolean) => {
-    for (const p of prs) {
-      try {
-        await commentOnPr(repo, p.url, factoryComment(`${depsStamp(p)}\n${body}`));
-        if (close) await closePrQuietly(repo, p.url);
-      } catch (err) {
-        log(`deps: could not conclude on ${p.url}: ${(err as Error).message}`);
+    // Stamped at the head the batch was offered, so a rebase since brings it back.
+    const conclude = async (prs: DepsPr[], body: string, close: boolean) => {
+      for (const p of prs) {
+        try {
+          await commentOnPr(repo, p.url, factoryComment(`${depsStamp(p)}\n${body}`));
+          if (close) await closePrQuietly(repo, p.url);
+        } catch (err) {
+          log(`deps: could not conclude on ${p.url}: ${(err as Error).message}`);
+        }
       }
+    };
+
+    // A batch that reached no conclusion stamps nothing, so the next tick tries again.
+    const result = await worker.awaitResult(handle).catch((err: Error) => err);
+    if (result instanceof Error || result.status !== 'FINISHED') {
+      const reason = result instanceof Error ? result.message : `run ended with status ${result.status}: ${result.resultText.slice(0, 300) || worker.opaqueRunNote(handle)}`;
+      log(`deps: batch failed — ${reason}`);
+      return record({ outcome: 'failed', reason });
     }
-  };
 
-  // A batch that reached no conclusion stamps nothing, so the next tick tries again.
-  const result = await worker.awaitResult(handle).catch((err: Error) => err);
-  if (result instanceof Error || result.status !== 'FINISHED') {
-    const reason = result instanceof Error ? result.message : `run ended with status ${result.status}: ${result.resultText.slice(0, 300) || worker.opaqueRunNote(handle)}`;
-    log(`deps: batch failed — ${reason}`);
-    return record({ outcome: 'failed', reason });
+    const prUrl = await openedPr(config, result);
+    if (!prUrl) {
+      log(`deps: the agent carried none of them. Its report:\n${result.resultText.trim() || '_(no report)_'}`);
+      await handDropsToIssues(config, { url: null, text: result.resultText }, offered, conclude);
+      return record({ outcome: 'no-pr' });
+    }
+    // Labelled at once, so the review phase never takes it for someone else's.
+    await ensureLabel(repo, config.labels.depsPr, '0366D6', 'Dependabot PRs batched by the software factory, lockfile regenerated');
+    await addPrLabels(repo, prUrl, [config.labels.depsPr]);
+
+    // Dependabot has no write access, and a batch never carries an Actions bump (deps.ts).
+    const act = await mergeVerified(config, worker, handle, prUrl, await viewPrForReview(repo, prUrl), false).catch((err: Error): ReviewAct =>
+      ({ outcome: 'left', stamped: true, reason: err.message.slice(0, 500), note: `The factory could not merge it: ${err.message.slice(0, 500)}` }));
+    const numbers = carried((await viewPr(repo, prUrl)).body, offered.map((p) => p.number));
+    const took = offered.filter((p) => numbers.includes(p.number));
+    const dropped = offered.filter((p) => !numbers.includes(p.number));
+    const merged = act.outcome === 'merged';
+
+    if (!merged) {
+      await commentOnPr(repo, prUrl, factoryComment(`🏭 **Factory dependency batch — left for a human.** ${act.note ?? ''}`.trim())).catch(() => {});
+    }
+    await conclude(took, merged
+      ? `🏭 **Factory dependency batch — merged.** This bump landed in ${prUrl}, with the lockfile regenerated from it, on green CI; closing this one.`
+      : `🏭 **Factory dependency batch.** This bump is carried in ${prUrl}, which the factory could not merge and has left for a human.`, merged);
+    const issues = dropped.length ? await handDropsToIssues(config, { url: prUrl, text: (await viewPr(repo, prUrl)).body }, dropped, conclude) : [];
+
+    log(`deps: ${prUrl} carries ${took.length} of ${offered.length}; ${merged ? 'merged' : `left (${act.reason})`}${dropped.length ? `; dropped ${dropped.map((p, i) => `#${p.number} → ${issues[i] ?? 'left open'}`).join(', ')}` : ''}`);
+    return record({
+      outcome: merged ? 'merged' : 'left',
+      prUrl,
+      carried: took.map((p) => p.url),
+      ...(act.reason ? { reason: act.reason } : {}),
+      ...(act.ci ?? {}),
+    });
+  } finally {
+    // Fix rounds for red checks are over; its machine goes.
+    await worker.done?.(handle);
   }
-
-  const prUrl = await openedPr(config, result);
-  if (!prUrl) {
-    log(`deps: the agent carried none of them. Its report:\n${result.resultText.trim() || '_(no report)_'}`);
-    await handDropsToIssues(config, { url: null, text: result.resultText }, offered, conclude);
-    return record({ outcome: 'no-pr' });
-  }
-  // Labelled at once, so the review phase never takes it for someone else's.
-  await ensureLabel(repo, config.labels.depsPr, '0366D6', 'Dependabot PRs batched by the software factory, lockfile regenerated');
-  await addPrLabels(repo, prUrl, [config.labels.depsPr]);
-
-  // Dependabot has no write access, and a batch never carries an Actions bump (deps.ts).
-  const act = await mergeVerified(config, worker, handle, prUrl, await viewPrForReview(repo, prUrl), false).catch((err: Error): ReviewAct =>
-    ({ outcome: 'left', stamped: true, reason: err.message.slice(0, 500), note: `The factory could not merge it: ${err.message.slice(0, 500)}` }));
-  const numbers = carried((await viewPr(repo, prUrl)).body, offered.map((p) => p.number));
-  const took = offered.filter((p) => numbers.includes(p.number));
-  const dropped = offered.filter((p) => !numbers.includes(p.number));
-  const merged = act.outcome === 'merged';
-
-  if (!merged) {
-    await commentOnPr(repo, prUrl, factoryComment(`🏭 **Factory dependency batch — left for a human.** ${act.note ?? ''}`.trim())).catch(() => {});
-  }
-  await conclude(took, merged
-    ? `🏭 **Factory dependency batch — merged.** This bump landed in ${prUrl}, with the lockfile regenerated from it, on green CI; closing this one.`
-    : `🏭 **Factory dependency batch.** This bump is carried in ${prUrl}, which the factory could not merge and has left for a human.`, merged);
-  const issues = dropped.length ? await handDropsToIssues(config, { url: prUrl, text: (await viewPr(repo, prUrl)).body }, dropped, conclude) : [];
-
-  log(`deps: ${prUrl} carries ${took.length} of ${offered.length}; ${merged ? 'merged' : `left (${act.reason})`}${dropped.length ? `; dropped ${dropped.map((p, i) => `#${p.number} → ${issues[i] ?? 'left open'}`).join(', ')}` : ''}`);
-  return record({
-    outcome: merged ? 'merged' : 'left',
-    prUrl,
-    carried: took.map((p) => p.url),
-    ...(act.reason ? { reason: act.reason } : {}),
-    ...(act.ci ?? {}),
-  });
 }
 
 /**
@@ -1303,7 +1308,7 @@ async function handDropsToIssues(
  */
 export async function securityInputs(config: FactoryConfig): Promise<{ skip: string | null; offered: OfferedAlert[]; openPrs: string[] }> {
   const { enabled, minSeverity } = config.security;
-  const gate = securitySkipReason(enabled, config.worker.kind);
+  const gate = securitySkipReason(enabled, config.worker.kind, config.worker.containers);
   if (gate) return { skip: gate, offered: [], openPrs: [] };
   const repo = repoSlug(config);
   const unreadable: string[] = [];
@@ -1322,7 +1327,7 @@ export async function securityInputs(config: FactoryConfig): Promise<{ skip: str
   const open = prs.filter((p) => p.state === 'OPEN');
   const { offered, held } = securityQueue([...dependabot, ...codeScanning, ...advisories], prs, minSeverity);
   return {
-    skip: securitySkipReason(true, config.worker.kind, open, { offered: offered.length, held }),
+    skip: securitySkipReason(true, config.worker.kind, config.worker.containers, open, { offered: offered.length, held }),
     offered,
     openPrs: open.map((p) => p.url),
   };
@@ -1394,7 +1399,7 @@ async function annotateReports(repo: string, offered: OfferedAlert[], reply: Fix
  * the agent, so it runs even on a pass the fixer sits out.
  */
 export async function closeFixedReports(config: FactoryConfig, opts: { dryRun: boolean }): Promise<string[]> {
-  if (securitySkipReason(config.security.enabled, config.worker.kind)) return [];
+  if (securitySkipReason(config.security.enabled, config.worker.kind, config.worker.containers)) return [];
   const repo = repoSlug(config);
   const [accepted, prs] = await Promise.all([
     listAcceptedReports(repo).catch((err: Error) => {
@@ -1444,83 +1449,88 @@ export async function runSecurityPhase(ctx: FactoryContext, worker: CodingWorker
   const reports = keys.filter(isReport).length;
   log(`security: handing ${keys.length - reports} open alert(s) at ${config.security.minSeverity} or above and ${reports} reported advisor${reports === 1 ? 'y' : 'ies'} to a fixer`);
   const startedAt = new Date().toISOString();
-  // No credentials: upgrading a dependency runs a release nobody here has read.
-  const handle = await worker.start(securityPromptFor(config, inputs), { autoCreatePR: true, withholdCredentials: true, name: 'factory-security' });
+  // No credentials, and a machine of its own: upgrading a dependency runs a release nobody here has read.
+  const handle = await worker.start(securityPromptFor(config, inputs), { autoCreatePR: true, withholdCredentials: true, container: true, name: 'factory-security' });
+  try {
 
-  const record = async (over: Partial<SecurityRecord> & { outcome: SecurityRecord['outcome'] }): Promise<SecurityRecord> => {
-    const full: SecurityRecord = {
-      type: 'security',
-      offered: keys,
-      fixed: [],
-      dismissed: [],
-      prUrl: null,
-      worker: config.worker.kind,
-      model: config.worker.model,
-      agentId: handle.agentId,
-      startedAt,
-      finishedAt: new Date().toISOString(),
-      usage: (await worker.usage(handle.agentId)) ?? null,
-      durationMs: Date.now() - Date.parse(startedAt),
-      ...over,
+    const record = async (over: Partial<SecurityRecord> & { outcome: SecurityRecord['outcome'] }): Promise<SecurityRecord> => {
+      const full: SecurityRecord = {
+        type: 'security',
+        offered: keys,
+        fixed: [],
+        dismissed: [],
+        prUrl: null,
+        worker: config.worker.kind,
+        model: config.worker.model,
+        agentId: handle.agentId,
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        usage: (await worker.usage(handle.agentId)) ?? null,
+        durationMs: Date.now() - Date.parse(startedAt),
+        ...over,
+      };
+      ctx.telemetry.append(full);
+      return full;
     };
-    ctx.telemetry.append(full);
-    return full;
-  };
 
-  const result = await worker.awaitResult(handle).catch((err: Error) => err);
-  if (result instanceof Error || result.status !== 'FINISHED') {
-    const reason = result instanceof Error ? result.message : `run ended with status ${result.status}: ${result.resultText.slice(0, 300) || worker.opaqueRunNote(handle)}`;
-    log(`security: fix failed — ${reason}`);
-    return record({ outcome: 'failed', failureReason: reason });
-  }
-
-  const reply = parseFixReply(result.resultText, keys);
-  const dismissed: string[] = [];
-  for (const { key, reason } of reply.dismiss.filter((d) => !isReport(d.key))) {
-    try {
-      await dismissCodeScanningAlert(repo, Number(key.split('#')[1]), `Factory security agent: ${reason}`);
-      dismissed.push(key);
-      log(`security: dismissed ${key} as a false positive — ${reason}`);
-    } catch (err) {
-      log(`security: could not dismiss ${key}: ${(err as Error).message}`);
+    const result = await worker.awaitResult(handle).catch((err: Error) => err);
+    if (result instanceof Error || result.status !== 'FINISHED') {
+      const reason = result instanceof Error ? result.message : `run ended with status ${result.status}: ${result.resultText.slice(0, 300) || worker.opaqueRunNote(handle)}`;
+      log(`security: fix failed — ${reason}`);
+      return record({ outcome: 'failed', failureReason: reason });
     }
-  }
 
-  const prUrl = await openedPr(config, result);
-  if (!prUrl) {
-    // The agent's word on the reports stands without a PR: a closed or
-    // re-rated report is a pass's worth of judgment, and this is where it lands.
-    const reports = await annotateReports(repo, offered, reply, [], null);
-    log(`security: no PR. The agent's report:\n${result.resultText.trim() || '_(no report)_'}`);
-    return record({ outcome: 'no-pr', dismissed: [...dismissed, ...reports.closed], rerated: reports.rerated });
+    const reply = parseFixReply(result.resultText, keys);
+    const dismissed: string[] = [];
+    for (const { key, reason } of reply.dismiss.filter((d) => !isReport(d.key))) {
+      try {
+        await dismissCodeScanningAlert(repo, Number(key.split('#')[1]), `Factory security agent: ${reason}`);
+        dismissed.push(key);
+        log(`security: dismissed ${key} as a false positive — ${reason}`);
+      } catch (err) {
+        log(`security: could not dismiss ${key}: ${(err as Error).message}`);
+      }
+    }
+
+    const prUrl = await openedPr(config, result);
+    if (!prUrl) {
+      // The agent's word on the reports stands without a PR: a closed or
+      // re-rated report is a pass's worth of judgment, and this is where it lands.
+      const reports = await annotateReports(repo, offered, reply, [], null);
+      log(`security: no PR. The agent's report:\n${result.resultText.trim() || '_(no report)_'}`);
+      return record({ outcome: 'no-pr', dismissed: [...dismissed, ...reports.closed], rerated: reports.rerated });
+    }
+    // Labelled and claimed before the CI wait: an unlabelled PR is one the review
+    // phase would take for someone else's, and an unclaimed alert is one the
+    // next pass would fix again.
+    await ensureLabel(repo, config.labels.securityPr, 'D93F0B', 'Fixes open security alerts; opened by the software factory');
+    await addPrLabels(repo, prUrl, [config.labels.securityPr]);
+    // An agent that forgot its ALERTS line still named them in its PR, most likely.
+    const rejected = reply.dismiss.map((d) => d.key);
+    const fixed = reply.fixed.length > 0
+      ? reply.fixed
+      : keysIn((await viewPr(repo, prUrl)).body).filter((k, i, all) => keys.includes(k) && !rejected.includes(k) && all.indexOf(k) === i);
+    const url = new Map(offered.map((o) => [alertKey(o.alert), o.alert.url]));
+    if (fixed.length > 0) {
+      const alerts = fixed.filter((k) => !isReport(k)).length;
+      const reports = fixed.length - alerts;
+      const then = [
+        alerts > 0 ? `GitHub closes ${alerts === 1 ? 'the alert' : 'each alert'} once this reaches the default branch; one still open a day after the merge is offered to the factory again.` : null,
+        reports > 0 ? `${reports === 1 ? 'The report is' : 'The reports are'} accepted as ${reports === 1 ? 'a draft advisory' : 'draft advisories'} naming this PR; the factory closes ${reports === 1 ? 'it' : 'them'} on its first pass after this merges.` : null,
+      ].filter(Boolean).join(' ');
+      await commentOnPr(repo, prUrl, factoryComment(`${securityStamp(fixed)}\n🏭 **Factory security fix** for ${fixed.map((k) => `[${k}](${url.get(k)})`).join(', ')}. ${then}`));
+    } else {
+      log(`security: ${prUrl} names none of the alerts it was handed; nothing is claimed, so the next pass is offered them again`);
+    }
+    const reportsWritten = await annotateReports(repo, offered, reply, fixed, prUrl);
+    dismissed.push(...reportsWritten.closed);
+    const ci = await greenChecks(config, worker, handle, prUrl);
+    log(`security: ${prUrl} fixes ${fixed.length} of ${offered.length} alert(s) (checks ${ci.checks}); it awaits a human${dismissed.length ? `; dismissed ${dismissed.join(' ')}` : ''}${reportsWritten.rerated.length ? `; re-rated ${reportsWritten.rerated.join(' ')}` : ''}.`);
+    return record({ outcome: 'pr-opened', prUrl, fixed, dismissed, rerated: reportsWritten.rerated, ...ci });
+  } finally {
+    // Fix rounds for red checks are over; its machine goes.
+    await worker.done?.(handle);
   }
-  // Labelled and claimed before the CI wait: an unlabelled PR is one the review
-  // phase would take for someone else's, and an unclaimed alert is one the
-  // next pass would fix again.
-  await ensureLabel(repo, config.labels.securityPr, 'D93F0B', 'Fixes open security alerts; opened by the software factory');
-  await addPrLabels(repo, prUrl, [config.labels.securityPr]);
-  // An agent that forgot its ALERTS line still named them in its PR, most likely.
-  const rejected = reply.dismiss.map((d) => d.key);
-  const fixed = reply.fixed.length > 0
-    ? reply.fixed
-    : keysIn((await viewPr(repo, prUrl)).body).filter((k, i, all) => keys.includes(k) && !rejected.includes(k) && all.indexOf(k) === i);
-  const url = new Map(offered.map((o) => [alertKey(o.alert), o.alert.url]));
-  if (fixed.length > 0) {
-    const alerts = fixed.filter((k) => !isReport(k)).length;
-    const reports = fixed.length - alerts;
-    const then = [
-      alerts > 0 ? `GitHub closes ${alerts === 1 ? 'the alert' : 'each alert'} once this reaches the default branch; one still open a day after the merge is offered to the factory again.` : null,
-      reports > 0 ? `${reports === 1 ? 'The report is' : 'The reports are'} accepted as ${reports === 1 ? 'a draft advisory' : 'draft advisories'} naming this PR; the factory closes ${reports === 1 ? 'it' : 'them'} on its first pass after this merges.` : null,
-    ].filter(Boolean).join(' ');
-    await commentOnPr(repo, prUrl, factoryComment(`${securityStamp(fixed)}\n🏭 **Factory security fix** for ${fixed.map((k) => `[${k}](${url.get(k)})`).join(', ')}. ${then}`));
-  } else {
-    log(`security: ${prUrl} names none of the alerts it was handed; nothing is claimed, so the next pass is offered them again`);
-  }
-  const reportsWritten = await annotateReports(repo, offered, reply, fixed, prUrl);
-  dismissed.push(...reportsWritten.closed);
-  const ci = await greenChecks(config, worker, handle, prUrl);
-  log(`security: ${prUrl} fixes ${fixed.length} of ${offered.length} alert(s) (checks ${ci.checks}); it awaits a human${dismissed.length ? `; dismissed ${dismissed.join(' ')}` : ''}${reportsWritten.rerated.length ? `; re-rated ${reportsWritten.rerated.join(' ')}` : ''}.`);
-  return record({ outcome: 'pr-opened', prUrl, fixed, dismissed, rerated: reportsWritten.rerated, ...ci });
 }
 
 export async function tick(opts: { dryRun: boolean }): Promise<void> {
@@ -2001,7 +2011,14 @@ async function handBackStuckPrs(ctx: FactoryContext, worker: CodingWorker): Prom
   // and the dependency batches included. A replacement that conflicted sat for
   // a day (#1997) because no phase owned it once its first merge was refused.
   // Only this runner's: another runner's PR is its own agents' to fix.
-  const open = await ownPrs((await Promise.all(factoryPrLabels(config).map((label) => listPrsByLabel(repo, label, 'open')))).flat(), log);
+  const labels = factoryPrLabels(config);
+  const byLabel = await Promise.all(labels.map((label) => listPrsByLabel(repo, label, 'open')));
+  const open = await ownPrs(byLabel.flat(), log);
+  // These carry code nobody here wrote — an outside PR's, new package
+  // releases — so a fresh agent on one gets a machine of its own, as the
+  // agent that opened it had.
+  const outsideLabels = [config.labels.reviewPr, config.labels.depsPr, config.labels.securityPr];
+  const outside = new Set(byLabel.flatMap((prs, i) => (outsideLabels.includes(labels[i]!) ? prs.map((p) => p.url) : [])));
   const required = new Map<string, Promise<string[]>>();
   for (const pr of open) {
     try {
@@ -2033,14 +2050,14 @@ async function handBackStuckPrs(ctx: FactoryContext, worker: CodingWorker): Prom
         // review's replacement, a dependency batch), or the run that did is
         // gone. A fresh agent on the PR's own branch, with no credentials,
         // fixes it instead — the work is in the PR, not in the lost context.
-        : await worker.start(stuck.prompt, { prUrl: pr.url, withholdCredentials: true, name: `factory-handback: #${pr.number}`.slice(0, 100) });
+        : await worker.start(stuck.prompt, { prUrl: pr.url, withholdCredentials: true, ...(outside.has(pr.url) ? { container: true } : {}), name: `factory-handback: #${pr.number}`.slice(0, 100) });
       await commentOnPr(repo, pr.url, factoryComment(`🏭 ${stuck.note} (${sent + 1} of ${MAX_HANDBACKS}): ${stuck.what}.`));
       log(`${pr.url}: handed ${stuck.what} back to ${agent ? 'its agent' : 'a fresh agent on its branch'}`);
       if (worker.runsEndWithProcess) {
         running.push(worker.awaitResult(handle).then(
           (r) => log(`${pr.url}: handback ended ${r.status}`),
           (err: Error) => log(`${pr.url}: handback failed — ${err.message}`),
-        ));
+        ).finally(() => worker.done?.(handle)));
       }
     } catch (err) {
       log(`${pr.url}: could not hand it back — ${(err as Error).message}`);
