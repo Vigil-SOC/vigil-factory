@@ -862,7 +862,10 @@ export class ClaudeCodeWorker implements CodingWorker {
       status: succeeded ? 'FINISHED' : outcome.signal ? 'CANCELLED' : 'ERROR',
       resultText,
       branch,
-      prUrl: prUrlIn(resultText, this.opts.repoUrl),
+      // Only an agent told to open a PR names it at the end. Any other links
+      // are PRs it read: a fork review that linked a duplicate had that PR
+      // taken for its replacement. A push-only branch's PR is found by branch.
+      prUrl: session.expectsPr || session.prUrl ? prUrlIn(resultText, this.opts.repoUrl) : undefined,
       durationMs: json?.duration_ms ?? Date.now() - run.startedAt,
     };
   }
