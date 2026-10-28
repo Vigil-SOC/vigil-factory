@@ -645,7 +645,9 @@ Cursor that is the agent's VM. On the `claude-code` worker it is a Docker contai
 review (`worker.containers`; off, the phase reports itself skipped there), so a review does
 not queue behind the implementers for the one live stack. See the claude-code worker below.
 
-**State lives on the PR.** Every review ends in a factory comment over one invisible line,
+**State lives on the PR.** While a review runs, the PR carries `factory:reviewing`, so a
+tick that starts beside it leaves the PR alone; a claim older than three run budgets is one
+whose run died, and is ignored. Every review ends in a factory comment over one invisible line,
 `<!-- factory-review sha=… outcome=merged|superseded|closed|left -->`, where `sha` fingerprints the
 head commit, the description, and every comment the factory did not write. Push to the
 branch, edit the description, or reply, and the PR is reviewed again. Nothing the factory

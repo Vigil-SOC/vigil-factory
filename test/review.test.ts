@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FAILURES_TO_THE_BACK, authorReplied, closingRefs, coAuthorTrailer, failedReviews, isBot, latestReview, mayMergeGithub, mergeDue, needsReview, parseReviewReply, reviewComment, reviewFailedMarker, reviewFingerprint, reviewQueue, reviewStamp, sameCommit, skipReason, supersedesBody, touchesGithub, type ReviewPr } from '../src/review.ts';
+import { FAILURES_TO_THE_BACK, reviewClaimed, authorReplied, closingRefs, coAuthorTrailer, failedReviews, isBot, latestReview, mayMergeGithub, mergeDue, needsReview, parseReviewReply, reviewComment, reviewFailedMarker, reviewFingerprint, reviewQueue, reviewStamp, sameCommit, skipReason, supersedesBody, touchesGithub, type ReviewPr } from '../src/review.ts';
 import { factoryComment } from '../src/groom.ts';
 import { reviewPrompt } from '../src/prompts.ts';
 
@@ -341,5 +341,19 @@ describe('review prompt', () => {
     expect(collaborator).toContain('The author has write access');
     expect(collaborator).toContain('merges a change under `.github/` from them like any other');
     expect(collaborator).not.toContain('leave it for a human, and say which');
+  });
+});
+
+describe('reviewClaimed', () => {
+  const now = Date.parse('2026-10-28T16:00:00Z');
+  const hours = (h: number) => new Date(now - h * 3_600_000).toISOString();
+  it('holds a PR another run claimed within the window, and one whose history could not be read', () => {
+    expect(reviewClaimed({ labels: ['factory:reviewing'], labelledAt: { 'factory:reviewing': hours(1) } }, 'factory:reviewing', 7.5 * 3_600_000, now)).toBe(true);
+    expect(reviewClaimed(undefined, 'factory:reviewing', 7.5 * 3_600_000, now)).toBe(true);
+  });
+
+  it('frees an unclaimed PR, and one whose claim outlived the run that took it', () => {
+    expect(reviewClaimed({ labels: [], labelledAt: {} }, 'factory:reviewing', 7.5 * 3_600_000, now)).toBe(false);
+    expect(reviewClaimed({ labels: ['factory:reviewing'], labelledAt: { 'factory:reviewing': hours(8) } }, 'factory:reviewing', 7.5 * 3_600_000, now)).toBe(false);
   });
 });

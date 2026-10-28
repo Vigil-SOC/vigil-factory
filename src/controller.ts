@@ -40,12 +40,12 @@ import { Telemetry } from './telemetry.ts';
 import { filterAssigned, filterClaimed, filterDrafts, filterEpics, parseSelection, type Selection } from './selector.ts';
 import { BOOT_CHECK_PROMPT, depsPrompt, environmentPrompt, fixChecksPrompt, missingChecksPrompt, resolveConflictsPrompt, groomEpicPrompt, groomPrompt, implementPrompt, trackEpicPrompt, reviewPrompt, securityPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
 import { factoryComment, isFactoryComment, groomState, isBlocker, isEpic, isGroomed, needsGroom, queueOrder, openChildren, openIssues, parseGroomReply, settlesDirection, stampExtrasFor, unaccountedBlockers, verdict, type GroomLabels, type OpenIssues } from './groom.ts';
-import { type PrCheck, addPrLabels, approveHeldRuns, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, annotateAdvisory, dismissCodeScanningAlert, listAcceptedReports, listAdvisoryReports, listAllIssuesByLabel, listCodeScanningAlerts, listDependabotAlerts, listDependabotPrs, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, prMergeable, reopenPr, requiredChecks, userId, viewPr, viewPrForReview, collaboratorPermission } from './github.ts';
+import { type LabelHistory, type PrCheck, addPrLabels, labelHistory, removeIssueLabels, approveHeldRuns, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, annotateAdvisory, dismissCodeScanningAlert, listAcceptedReports, listAdvisoryReports, listAllIssuesByLabel, listCodeScanningAlerts, listDependabotAlerts, listDependabotPrs, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, prMergeable, reopenPr, requiredChecks, userId, viewPr, viewPrForReview, collaboratorPermission } from './github.ts';
 import { ENV_AGENT_MARK, environmentChangedAt, filedIssueBody, parseEnvReport, recentVerdicts, skipReason, unreadFactoryPrs, withOpenedThisTick, workerSkipReason, type UnreadPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
 import { carried, depsQueue, depsStamp, droppedReasons, skipReason as depsSkipReason, upgradeIssue, upgradeKey, upgradeKeyOf, type DepsPr } from './deps.ts';
 import { alertKey, fixedReports, keysIn, offeredLine, openReports, parseFixReply, securityQueue, securityStamp, skipReason as securitySkipReason, type FixReply, type OfferedAlert, type SecurityAlert } from './security.ts';
-import { closingRefs, coAuthorTrailer, isBot, latestReview, mayMergeGithub, parseReviewReply, reviewComment, failedReviews, reviewFailedMarker, reviewQueue, reviewStamp, sameCommit, skipReason as reviewSkipReason, supersedesBody, touchesGithub, type ReviewOutcome, type ReviewPr, type ReviewReply } from './review.ts';
+import { closingRefs, coAuthorTrailer, isBot, latestReview, mayMergeGithub, parseReviewReply, reviewComment, failedReviews, reviewClaimed, reviewFailedMarker, reviewQueue, reviewStamp, sameCommit, skipReason as reviewSkipReason, supersedesBody, touchesGithub, type ReviewOutcome, type ReviewPr, type ReviewReply } from './review.ts';
 
 export function log(msg: string): void {
   console.log(`[${new Date().toISOString()}] ${msg}`);
@@ -196,6 +196,12 @@ export async function runGroomPhase(
  */
 export function groomClaimMs(config: FactoryConfig): number {
   return 2 * Math.max(config.worker.maxRunMinutes, config.worker.localMaxRunMinutes ?? 0) * 60_000;
+}
+
+/** How long a review claim holds: a review is a run, a wait for CI, and
+ *  perhaps a fix round and another wait. */
+export function reviewClaimMs(config: FactoryConfig): number {
+  return 3 * Math.max(config.worker.maxRunMinutes, config.worker.localMaxRunMinutes ?? 0) * 60_000;
 }
 
 /** The groom prompt for this issue: direction for an epic, one PR for anything else. */
@@ -689,16 +695,31 @@ export async function runReviewPhase(ctx: FactoryContext, worker: CodingWorker, 
     for (const pr of merge) {
       await retryMerge(config, pr).catch((err: Error) => log(`review: merge retry of #${pr.number} failed: ${err.message}`));
     }
-    picks = [...reopen.map((pr) => ({ pr, reopened: true })), ...open.map((pr) => ({ pr, reopened: false }))].slice(0, config.review.maxPerTick);
+    const due = [...reopen.map((pr) => ({ pr, reopened: true })), ...open.map((pr) => ({ pr, reopened: false }))];
+    // A PR another run is reviewing is left to it, as a groom's issue is.
+    const history = due.length ? await labelHistory(repoSlug(config), due.map((p) => p.pr.number), 'pullRequest') : new Map<number, LabelHistory>();
+    const claimed = (n: number) => reviewClaimed(history.get(n), config.labels.reviewing, reviewClaimMs(config), Date.now());
+    const held = due.filter((p) => claimed(p.pr.number));
+    if (held.length > 0) log(`review: not reviewing ${held.map((p) => `#${p.pr.number}`).join(' ')}: being reviewed by another run, or unreadable just now`);
+    picks = due.filter((p) => !claimed(p.pr.number)).slice(0, config.review.maxPerTick);
     if (picks.length === 0) return [];
   }
 
   log(`review: ${picks.length} PR(s) from outside the factory: ${picks.map((p) => `#${p.pr.number}${p.reopened ? ' (author replied to a close)' : ''}`).join(' ')}`);
   const principles = loadPrinciples(config);
-  const records = await Promise.all(picks.map((p) => reviewOne(ctx, worker, p.pr, p.reopened, principles).catch((err: Error) => {
-    log(`review of #${p.pr.number} failed: ${err.message}`);
-    return null;
-  })));
+  const repo = repoSlug(config);
+  await ensureLabel(repo, config.labels.reviewing, 'C5DEF5', 'Being reviewed by the software factory right now').catch((err: Error) => log(`could not ensure the ${config.labels.reviewing} label: ${err.message}`));
+  const records = await Promise.all(picks.map(async (p) => {
+    await addPrLabels(repo, p.pr.url, [config.labels.reviewing]).catch((err: Error) => log(`review of #${p.pr.number}: could not claim it — ${err.message}`));
+    try {
+      return await reviewOne(ctx, worker, p.pr, p.reopened, principles);
+    } catch (err) {
+      log(`review of #${p.pr.number} failed: ${(err as Error).message}`);
+      return null;
+    } finally {
+      await removeIssueLabels(repo, p.pr.number, [config.labels.reviewing]).catch(() => {});
+    }
+  }));
   // No stamp, so the PR is due again; the marker is how a later tick knows
   // this one fails, and sends it to the back (review.ts). One marker per PR as
   // it stands, and none when every review failed: that was the machine (a

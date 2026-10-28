@@ -109,16 +109,17 @@ export interface LabelHistory {
  * The label history of each issue named, fifty to a GraphQL call. A number
  * GitHub cannot resolve as an issue — a pull request, a deleted issue — is
  * left out, and so is every number in a batch whose call failed outright:
- * what a caller cannot see, it holds rather than acts on.
+ * what a caller cannot see, it holds rather than acts on. With `pullRequest`,
+ * the same for pull requests, and an issue is what is left out.
  */
-export async function labelHistory(repo: string, issues: number[]): Promise<Map<number, LabelHistory>> {
+export async function labelHistory(repo: string, issues: number[], kind: 'issue' | 'pullRequest' = 'issue'): Promise<Map<number, LabelHistory>> {
   const [owner, name] = repo.split('/');
   const unique = [...new Set(issues)];
   const history = new Map<number, LabelHistory>();
   for (let i = 0; i < unique.length; i += 50) {
     const batch = unique.slice(i, i + 50);
     const fields = batch.map((n) =>
-      `i${n}: issue(number: ${n}) { state labels(first: 50) { nodes { name } } timelineItems(itemTypes: [LABELED_EVENT], last: 100) { nodes { ... on LabeledEvent { createdAt label { name } } } } }`);
+      `i${n}: ${kind}(number: ${n}) { state labels(first: 50) { nodes { name } } timelineItems(itemTypes: [LABELED_EVENT], last: 100) { nodes { ... on LabeledEvent { createdAt label { name } } } } }`);
     const query = `query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { ${fields.join(' ')} } }`;
     // GitHub answers what it can resolve and errors on the rest, and gh then
     // exits non-zero with the partial answer on stdout.

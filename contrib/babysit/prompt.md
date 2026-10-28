@@ -41,7 +41,9 @@ and environment phases are skipped by design (the log says so); Dependabot PRs w
 Cursor to return, which is not an alert. The review phase does run here:
 each outside PR gets a Docker container of its own (`factory-<8 hex>`, built from the
 target repo's `.cursor/environment.json`), removed when its review ends. A container
-still there with no tick running is a leftover; the next tick removes it.
+still there with no tick running is a leftover; the next tick removes it. An outside PR
+labelled `factory:reviewing` is being reviewed right now; the label comes off when the
+review ends, and one older than about eight hours is a review that died.
 
 The local worker changed just before this switch and had not run unwatched since, so
 look harder than usual at its runs for now: sessions that die early, all hit the run

@@ -96,6 +96,10 @@ export interface FactoryConfig {
      *  Claude Code tick beside the Actions one — leaves it alone instead of
      *  grooming it again. The factory's own; nobody applies it by hand. */
     grooming: string;
+    /** A PR a runner is reviewing right now, for the same reason as
+     *  `grooming`: a review leaves its stamp only when it ends, and until then
+     *  a tick that starts beside it would review the PR again. */
+    reviewing: string;
   };
   groom: {
     maxPerTick: number;
@@ -235,6 +239,7 @@ export function loadConfig(root: string = projectRoot): FactoryConfig {
   config.labels.securityPr ??= 'factory:security';
   config.labels.draft ??= 'factory:draft';
   config.labels.grooming ??= 'factory:grooming';
+  config.labels.reviewing ??= 'factory:reviewing';
   if (config.groom.epicModel !== undefined && !config.worker.models[config.groom.epicModel]) {
     throw new Error(`groom.epicModel=${config.groom.epicModel} names no model in worker.models (has: ${Object.keys(config.worker.models).join(', ') || 'none'})`);
   }

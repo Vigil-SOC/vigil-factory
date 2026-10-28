@@ -341,6 +341,16 @@ export function coAuthorTrailer(author: { login: string; name?: string }, userId
   return `Co-authored-by: ${author.name?.trim() || author.login} <${userId}+${author.login}@users.noreply.github.com>`;
 }
 
+/**
+ * Whether another run is reviewing this PR now: its claim label went on within
+ * `claimMs`. A PR whose history could not be read is held too, as a groom's
+ * issue is; an older claim is one whose run died holding it.
+ */
+export function reviewClaimed(history: { labels: string[]; labelledAt: Record<string, string> } | undefined, label: string, claimMs: number, now: number): boolean {
+  if (!history) return true;
+  return history.labels.includes(label) && now - Date.parse(history.labelledAt[label] ?? '') < claimMs;
+}
+
 /** Why the review phase is not running at all, or null if it may. */
 export function skipReason(enabled: boolean, workerKind: string, containers = false): string | null {
   if (!enabled) return 'review phase is disabled in factory.config.json';
