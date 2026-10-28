@@ -3,7 +3,7 @@
 # telemetry/babysit/ALERTS.md so it outlives the notification.
 # Usage: alert.sh "<title>" "<message>"
 set -u
-ROOT="/Users/armstrongflg/deeptempo-factory"
+ROOT="${0:A:h:h:h}"
 title="Factory: ${1:-alert}"
 msg="${2:-}"
 mkdir -p "$ROOT/telemetry/babysit"

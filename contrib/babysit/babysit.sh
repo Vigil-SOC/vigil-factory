@@ -4,7 +4,7 @@
 # anything looks wrong. The judgment is a headless Claude session running
 # prompt.md; this wrapper only alerts if the session itself fails.
 set -u
-ROOT="/Users/armstrongflg/deeptempo-factory"
+ROOT="${0:A:h:h:h}"
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 cd "$ROOT" || exit 1
 DIR="$ROOT/telemetry/babysit"
@@ -29,10 +29,10 @@ live_tick() {
 }
 
 # The interactive login's OAuth session expires and stalled every pass for ~20h
-# on 2026-10-08. A long-lived token from `claude setup-token`, kept in this file,
-# outlives it.
-TOKEN_FILE="$HOME/.config/deeptempo-factory/claude-oauth-token"
-[[ -r "$TOKEN_FILE" ]] && export CLAUDE_CODE_OAUTH_TOKEN="$(<"$TOKEN_FILE")"
+# on 2026-10-08. A long-lived token from `claude setup-token` outlives it; it is
+# kept in .env as CLAUDE_CODE_OAUTH_TOKEN, where the tick reads it too.
+token="$(grep -E '^[[:space:]]*CLAUDE_CODE_OAUTH_TOKEN[[:space:]]*=' "$ROOT/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"' ")"
+[[ -n "$token" ]] && export CLAUDE_CODE_OAUTH_TOKEN="$token"
 
 LOG="$DIR/pass-$(date -u +%Y%m%dT%H%MZ).log"
 claude -p "$(cat "$ROOT/contrib/babysit/prompt.md")" --model opus --effort medium --dangerously-skip-permissions > "$LOG" 2>&1

@@ -835,7 +835,8 @@ to. Everything else — prompts, phases, labels, telemetry — is the same eithe
   machine; the groomer still sizes against `maxRunMinutes`. Auth is
   the machine's claude.ai login, so runs draw on the team subscription rather than API
   keys; where there is no browser, `claude setup-token` prints a one-year token for
-  `CLAUDE_CODE_OAUTH_TOKEN`. The agents see only the MCP servers the target repo's
+  `CLAUDE_CODE_OAUTH_TOKEN`. A review's container is handed that token when `.env` has it,
+  else the login's own, which lasts hours; the babysitter reads it from `.env` too. The agents see only the MCP servers the target repo's
   `.mcp.json` declares, never this machine's. `FACTORY_CLAUDE_BIN` points at the
   executable when `claude` is not on PATH.
 

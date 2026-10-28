@@ -3,7 +3,7 @@
 # contrib/com.deeptempo.factory.claude-code.plist). launchd gives a near-empty
 # PATH, so this sets it; the lock keeps a slow tick from overlapping the next.
 set -u
-ROOT="/Users/armstrongflg/deeptempo-factory"
+ROOT="${0:A:h:h}"
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 export FACTORY_WORKER=claude-code
 # worker.model is Grok (a Cursor model); Claude Code runs the Opus alternative.
