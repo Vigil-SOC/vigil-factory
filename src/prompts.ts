@@ -246,6 +246,17 @@ export function fixChecksPrompt(prUrl: string, failed: { name: string; link: str
   return `Fix the failing CI checks on ${prUrl}:\n\n${list}`;
 }
 
+/**
+ * The same, for a fork PR a review would merge as it stands. Nothing here can
+ * push to the fork, so the fix goes where a fork review's fixes always go: the
+ * agent's session branch, on top of the author's commits, which the factory
+ * opens as the replacement.
+ */
+export function forkFixChecksPrompt(prUrl: string, prNumber: number, failed: { name: string; link: string }[]): string {
+  const list = failed.map((c) => `- ${c.name}: ${c.link}`).join('\n');
+  return `CI is red on ${prUrl}, which you would merge as it stands:\n\n${list}\n\nIt comes from a fork this machine cannot push to, so fix it as you would a PR that needs fixes: put its commits on your session branch — \`git fetch origin pull/${prNumber}/head && git checkout -B <the branch you started on> FETCH_HEAD\` — commit the fix on top, and push it: \`git push -u origin HEAD\`. That branch becomes the replacement PR the factory merges in place of this one. If the failure is not the PR's doing — the default branch fails the same way — push nothing, and say so.`;
+}
+
 /** The follow-up for a PR that GitHub blocks on required checks that never ran on it. */
 export function missingChecksPrompt(prUrl: string, base: string, missing: string[]): string {
   const list = missing.map((name) => `- ${name}`).join('\n');

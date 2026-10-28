@@ -615,7 +615,11 @@ replacement (`verdict=merge replacement=N`), and each tick retries that merge, w
 author's credit, and closes the original once it lands. That includes a replacement still red
 after the review's fix round: a replacement that conflicts or goes red is handed back to the
 review's own agent, like any factory PR, and merged once green. One whose hand-backs run out
-is closed, and the original reviewed afresh. The replacement carries the original's
+is closed, and the original reviewed afresh. A fork PR the review would merge as it stands
+whose checks then go red is not handed back to be fixed in place, since nothing can push to
+it: its failures go back to the reviewer once, to fix on its session branch like any other
+fix, and that branch becomes the replacement. If the reviewer finds the failure is not the
+PR's, it pushes nothing, and the PR is left red until the default branch moves. The replacement carries the original's
 `Closes #N` lines, so the issue the author fixed closes when it lands. A same-repo PR —
 a teammate's branch — is simpler: its agent works on the PR's own branch.
 

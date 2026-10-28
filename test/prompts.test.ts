@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { environmentPrompt, fixChecksPrompt, groomEpicPrompt, groomPrompt, implementPrompt, selectPrompt, simplifyPrompt, trackEpicPrompt } from '../src/prompts.ts';
+import { environmentPrompt, fixChecksPrompt, forkFixChecksPrompt, groomEpicPrompt, groomPrompt, implementPrompt, selectPrompt, simplifyPrompt, trackEpicPrompt } from '../src/prompts.ts';
 import type { Task } from '../src/types.ts';
 
 const task: Task = {
@@ -271,6 +271,17 @@ describe('red checks go back to the implementer', () => {
       { name: 'Unit Tests - Backend', link: 'https://github.com/o/r/actions/runs/1/job/2' },
     ]);
     expect(p).toBe('Fix the failing CI checks on https://github.com/o/r/pull/959:\n\n- Unit Tests - Backend: https://github.com/o/r/actions/runs/1/job/2');
+  });
+
+  // Nothing here pushes to a fork: its fix goes on the reviewer's session branch.
+  it('fork fix prompt sends the fix to the session branch, not the fork', () => {
+    const p = forkFixChecksPrompt('https://github.com/o/r/pull/959', 959, [
+      { name: 'Unit Tests - Backend', link: 'https://github.com/o/r/actions/runs/1/job/2' },
+    ]);
+    expect(p).toContain('- Unit Tests - Backend: https://github.com/o/r/actions/runs/1/job/2');
+    expect(p).toContain('git fetch origin pull/959/head && git checkout -B <the branch you started on> FETCH_HEAD');
+    expect(p).toContain('git push -u origin HEAD');
+    expect(p).toContain('push nothing');
   });
 });
 
