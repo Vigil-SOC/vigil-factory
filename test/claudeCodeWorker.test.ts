@@ -34,6 +34,7 @@ describe('hitUsageLimit', () => {
 describe('lostLogin', () => {
   it('recognises a run that found no login', () => {
     expect(lostLogin('Not logged in · Please run /login')).toBe(true);
+    expect(lostLogin('OAuth token has expired. Please obtain a new token or refresh your existing token.')).toBe(true);
     expect(lostLogin('the login form test failed')).toBe(false);
   });
 });
@@ -174,6 +175,22 @@ describe('machineNote', () => {
       expect(note).toContain('factory-slot take');
       expect(note).toContain('factory-slot release');
     }
+  });
+
+  it('tells a fork review its branch is pushed only as the task says, and the factory opens the PR', () => {
+    const note = machineNote({ repoUrl: 'https://github.com/o/r', ref: 'abc', branch: 'factory/review-1-abcdef12', pushOnly: true });
+    expect(note).toContain('factory/review-1-abcdef12');
+    expect(note).toContain('do not run `gh pr create`');
+    expect(note).not.toContain('The PR must exist');
+  });
+
+  it('tells an agent in a container the machine and its stack are its own, and what of the boot failed', () => {
+    const booted = machineNote({ repoUrl: 'https://github.com/o/r', ref: 'abc', branch: null, container: { boot: [] } });
+    expect(booted).toContain('container of your own');
+    expect(booted).toContain('already run its install and start');
+    expect(booted).not.toContain('factory-slot');
+    const failed = machineNote({ repoUrl: 'https://github.com/o/r', ref: 'abc', branch: null, container: { boot: ["the environment's `start` exited 1; its output is in ~/factory-start.log"] } });
+    expect(failed).toContain('~/factory-start.log');
   });
 
   it('tells a read-only agent to change nothing', () => {

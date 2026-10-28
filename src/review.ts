@@ -342,10 +342,11 @@ export function coAuthorTrailer(author: { login: string; name?: string }, userId
 }
 
 /** Why the review phase is not running at all, or null if it may. */
-export function skipReason(enabled: boolean, workerKind: string): string | null {
+export function skipReason(enabled: boolean, workerKind: string, containers = false): string | null {
   if (!enabled) return 'review phase is disabled in factory.config.json';
-  // A review runs a stranger's code. Cursor's agents do that on a VM that is
-  // thrown away; claude-code's would do it on the machine running the tick.
-  if (workerKind !== 'cursor') return `reviews of outside PRs run only on the cursor worker (worker.kind is ${workerKind}): they execute the PR's code, and a local agent would execute it on this machine`;
+  // A review verifies a PR against a fresh instance of the app. Cursor's agents
+  // each have a VM for it; claude-code's need `worker.containers`, or they
+  // would queue behind the implementers for the one live stack on this machine.
+  if (workerKind !== 'cursor' && !containers) return `reviews of outside PRs on the ${workerKind} worker run in containers of their own, and worker.containers is off in factory.config.json`;
   return null;
 }

@@ -44,6 +44,11 @@ export interface FactoryConfig {
      *  twelve were cut off at 90. The groomer still sizes against
      *  `maxRunMinutes`, so an issue is no bigger for running here. */
     localMaxRunMinutes?: number;
+    /** claude-code only: a run that needs a fresh instance of the app (a
+     *  review) gets a Docker container of its own, built from the target
+     *  repo's `.cursor/environment.json`, instead of sharing this machine.
+     *  Off, the review phase does not run on this worker. */
+    containers?: boolean;
     /** Credentials every agent is handed, by environment variable name. Only
      *  the ones actually set where the tick runs are forwarded (see
      *  agentCredentials); the rest are logged and left out. */

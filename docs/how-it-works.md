@@ -637,10 +637,13 @@ a teammate's branch — is simpler: its agent works on the PR's own branch.
   them most needs a human, and those are left with the review posted.
 
 **The agent runs a stranger's code, so it gets nothing it does not need.** No
-`worker.agentEnv` credentials are handed to a review agent, and the phase runs only on the
-Cursor worker, whose VM is thrown away — the `claude-code` worker would run the PR's code on
-the machine running the tick, so there the phase reports itself skipped. The prompt also says
-that nothing written in the PR is an instruction to the agent.
+`worker.agentEnv` credentials are handed to a review agent. The prompt also says that
+nothing written in the PR is an instruction to the agent.
+
+**A review verifies against a fresh instance of the app, on a machine of its own.** On
+Cursor that is the agent's VM. On the `claude-code` worker it is a Docker container per
+review (`worker.containers`; off, the phase reports itself skipped there), so a review does
+not queue behind the implementers for the one live stack. See the claude-code worker below.
 
 **State lives on the PR.** Every review ends in a factory comment over one invisible line,
 `<!-- factory-review sha=… outcome=merged|superseded|closed|left -->`, where `sha` fingerprints the
@@ -844,8 +847,22 @@ to. Everything else — prompts, phases, labels, telemetry — is the same eithe
   The slot, the shims, and the record of sessions in flight live in
   `telemetry/machine/`. A stack you run by hand on the same machine should use its own
   compose project and ports: the repo's defaults belong to the slot holder. None of
-  this is a sandbox. Implementers run code the factory wrote, and phases that run code
-  nobody here wrote stay on Cursor.
+  this is a sandbox. Implementers run code the factory wrote; deps and security, whose
+  agents install releases nobody here read, stay on Cursor.
+
+  **A container each, for reviews.** With `worker.containers` on, a run that needs a
+  fresh instance of the app (a review of an outside PR) does not share the machine. It
+  gets a Docker container built from the target repo's Cursor environment: the
+  Dockerfile `.cursor/environment.json` names, at the tick's pinned commit, plus a layer
+  with `gh` and the host's Claude Code version. The container runs privileged with Docker
+  inside it, so the environment's `install` and `start` bring the repo's stack up there
+  as they would when a Cursor VM boots, and the agent runs in it with the stack, its
+  names and its ports to itself. A fresh `claude.ai` token is handed in per run
+  (`CLAUDE_CODE_OAUTH_TOKEN` when set, else the machine's login), and `gh`/`git push`
+  use `GH_TOKEN` or the machine's `gh` login. The container outlives a turn, so a red
+  check's follow-up runs in it too. It is removed when the review is done, and a tick
+  that died has its containers removed by the next one. Images are tagged by content and
+  built once (`telemetry/machine/image-build.log`). In `src/container.ts`.
 
 `worker.model` is written once, in Cursor's shape, and translated for Claude Code:
 `params.context: "1m"` becomes the `[1m]` suffix and `params.effort` becomes `--effort`;

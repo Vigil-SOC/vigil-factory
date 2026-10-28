@@ -99,6 +99,7 @@ export async function buildWorker(config: FactoryConfig): Promise<CodingWorker> 
         workRoot: resolve(projectRoot, config.telemetryDir, 'workspaces'),
         ghToken: githubTokenForAgents(),
         pauseAtUsagePercent: config.worker.pauseAtUsagePercent ?? null,
+        containers: config.worker.containers === true,
       });
       const version = await worker.check();
       log(`claude-code worker: ${version}; agents ${githubTokenForAgents() ? 'push with GH_TOKEN' : "push with this machine's own git/gh login"}`);
@@ -642,7 +643,7 @@ function factoryPrLabels(config: FactoryConfig): string[] {
  * waiting on an answer they asked for.
  */
 export async function reviewInputs(config: FactoryConfig): Promise<{ skip: string | null; open: ReviewPr[]; reopen: ReviewPr[]; merge: ReviewPr[] }> {
-  const gate = reviewSkipReason(config.review.enabled, config.worker.kind);
+  const gate = reviewSkipReason(config.review.enabled, config.worker.kind, config.worker.containers);
   if (gate) return { skip: gate, open: [], reopen: [], merge: [] };
   const repo = repoSlug(config);
   // Every open PR, since the queue is oldest first; the closed ones only as far
@@ -667,7 +668,7 @@ export async function runReviewPhase(ctx: FactoryContext, worker: CodingWorker, 
   const { config } = ctx;
   let picks: { pr: ReviewPr; reopened: boolean }[];
   if (opts.only !== undefined) {
-    const gate = reviewSkipReason(true, config.worker.kind);
+    const gate = reviewSkipReason(true, config.worker.kind, config.worker.containers);
     if (gate) {
       log(`review: skipped — ${gate}.`);
       return [];
@@ -819,68 +820,75 @@ async function reviewOne(ctx: FactoryContext, worker: CodingWorker, pr: ReviewPr
   // No credentials: this agent runs code nobody here wrote. A fork PR cannot be
   // checked out by Cursor or pushed to, so its agent starts on the default
   // branch, and a session branch it commits to becomes the replacement PR.
+  // It verifies against a fresh instance of the app, on a machine of its own.
   const handle = await worker.start(reviewPrompt({ ...pr, authorMayChangeGithub }, principles), {
-    ...(pr.isCrossRepository ? { autoCreatePR: true } : { prUrl: pr.url }),
+    ...(pr.isCrossRepository ? { autoCreatePR: true, pushOnly: true } : { prUrl: pr.url }),
     withholdCredentials: true,
+    container: true,
     name: `factory-review: #${pr.number} ${pr.title}`.slice(0, 100),
     ...(model ? { model } : {}),
   });
 
-  const record = async (over: Partial<ReviewRecord> & { verdict: ReviewRecord['verdict']; outcome: ReviewRecord['outcome'] }): Promise<ReviewRecord> => {
-    const full: ReviewRecord = {
-      type: 'review',
-      prUrl: pr.url,
-      prNumber: pr.number,
-      author: pr.author.login,
-      ...(reopened ? { reopened } : {}),
-      worker: config.worker.kind,
-      model: model ?? config.worker.model,
-      agentId: handle.agentId,
-      startedAt,
-      finishedAt: new Date().toISOString(),
-      usage: (await worker.usage(handle.agentId)) ?? null,
-      durationMs: Date.now() - Date.parse(startedAt),
-      ...over,
+  try {
+    const record = async (over: Partial<ReviewRecord> & { verdict: ReviewRecord['verdict']; outcome: ReviewRecord['outcome'] }): Promise<ReviewRecord> => {
+      const full: ReviewRecord = {
+        type: 'review',
+        prUrl: pr.url,
+        prNumber: pr.number,
+        author: pr.author.login,
+        ...(reopened ? { reopened } : {}),
+        worker: config.worker.kind,
+        model: model ?? config.worker.model,
+        agentId: handle.agentId,
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        usage: (await worker.usage(handle.agentId)) ?? null,
+        durationMs: Date.now() - Date.parse(startedAt),
+        ...over,
+      };
+      ctx.telemetry.append(full);
+      return full;
     };
-    ctx.telemetry.append(full);
-    return full;
-  };
 
-  // A review that reached no verdict leaves no stamp, so the next tick tries again.
-  const result = await worker.awaitResult(handle).catch((err: Error) => err);
-  if (result instanceof Error || result.status !== 'FINISHED') {
-    const reason = result instanceof Error ? result.message : `run ended with status ${result.status}: ${result.resultText.slice(0, 300) || worker.opaqueRunNote(handle)}`;
-    log(`review of #${pr.number}: ${reason}`);
-    return record({ verdict: null, outcome: 'failed', reason });
-  }
-  // Labelled at once, like an implementer's PR, so no queue takes it for someone else's.
-  const replacement = pr.isCrossRepository ? await replacementPr(config, pr, result) : null;
-  if (replacement) {
-    await ensureLabel(repo, config.labels.reviewPr, '5319E7', 'Replacement for an outside PR: its commits plus the factory review\'s fixes');
-    await addPrLabels(repo, replacement, [config.labels.reviewPr]);
-  }
-  const reply = parseReviewReply(result.resultText);
-  if (!reply) {
-    log(`review of #${pr.number}: reply had no VERDICT line:\n${result.resultText.slice(0, 500)}`);
-    if (replacement) await closePr(repo, replacement, factoryComment(`🏭 The review of ${pr.url} reached no verdict, so this replacement is closed.`)).catch(() => {});
-    return record({ verdict: null, outcome: 'failed', reason: 'no VERDICT line' });
-  }
+    // A review that reached no verdict leaves no stamp, so the next tick tries again.
+    const result = await worker.awaitResult(handle).catch((err: Error) => err);
+    if (result instanceof Error || result.status !== 'FINISHED') {
+      const reason = result instanceof Error ? result.message : `run ended with status ${result.status}: ${result.resultText.slice(0, 300) || worker.opaqueRunNote(handle)}`;
+      log(`review of #${pr.number}: ${reason}`);
+      return record({ verdict: null, outcome: 'failed', reason });
+    }
+    // Labelled at once, like an implementer's PR, so no queue takes it for someone else's.
+    const replacement = pr.isCrossRepository ? await replacementPr(config, pr, result) : null;
+    if (replacement) {
+      await ensureLabel(repo, config.labels.reviewPr, '5319E7', 'Replacement for an outside PR: its commits plus the factory review\'s fixes');
+      await addPrLabels(repo, replacement, [config.labels.reviewPr]);
+    }
+    const reply = parseReviewReply(result.resultText);
+    if (!reply) {
+      log(`review of #${pr.number}: reply had no VERDICT line:\n${result.resultText.slice(0, 500)}`);
+      if (replacement) await closePr(repo, replacement, factoryComment(`🏭 The review of ${pr.url} reached no verdict, so this replacement is closed.`)).catch(() => {});
+      return record({ verdict: null, outcome: 'failed', reason: 'no VERDICT line' });
+    }
 
-  const act = await actOnReview(config, worker, handle, pr, reply, replacement, authorMayChangeGithub).catch((err: Error) => err);
-  if (act instanceof Error) {
-    log(`review of #${pr.number}: could not act on "${reply.verdict}": ${act.message}`);
-    return record({ verdict: reply.verdict, outcome: 'failed', reason: act.message.slice(0, 500), ...(replacement ? { replacementUrl: replacement } : {}) });
+    const act = await actOnReview(config, worker, handle, pr, reply, replacement, authorMayChangeGithub).catch((err: Error) => err);
+    if (act instanceof Error) {
+      log(`review of #${pr.number}: could not act on "${reply.verdict}": ${act.message}`);
+      return record({ verdict: reply.verdict, outcome: 'failed', reason: act.message.slice(0, 500), ...(replacement ? { replacementUrl: replacement } : {}) });
+    }
+    // Stamped against the PR as it stands now, so a push or a reply after this
+    // comment is what brings it back. An unstamped note means "look again".
+    const now = await viewPrForReview(repo, pr.url);
+    const pending = { mergePending: act.mergePending === true, ...(act.mergePending && act.replacement ? { replacement: act.replacement } : {}), ...(act.again ? { again: act.again } : {}) };
+    const body = reviewComment(act.outcome, reply.report, act.note, pending);
+    // Unstamped, it is reviewed again next tick — counted, like a failed review.
+    await commentOnPr(repo, pr.url, factoryComment(`${act.stamped ? reviewStamp(now, act.outcome, pending) : reviewFailedMarker(pr)}\n${body}`));
+    if (act.outcome === 'closed' || act.outcome === 'superseded') await closePrQuietly(repo, pr.url);
+    log(`review of #${pr.number}: agent answered ${reply.verdict}; ${act.outcome}${act.reason ? ` (${act.reason})` : ''}${replacement ? ` via ${replacement}` : ''} — ${pr.url}`);
+    return record({ verdict: reply.verdict, outcome: act.outcome, ...(act.reason ? { reason: act.reason } : {}), ...(act.ci ?? {}), ...(replacement ? { replacementUrl: replacement } : {}) });
+  } finally {
+    // Follow-ups for red checks are over; its machine goes.
+    await worker.done?.(handle);
   }
-  // Stamped against the PR as it stands now, so a push or a reply after this
-  // comment is what brings it back. An unstamped note means "look again".
-  const now = await viewPrForReview(repo, pr.url);
-  const pending = { mergePending: act.mergePending === true, ...(act.mergePending && act.replacement ? { replacement: act.replacement } : {}), ...(act.again ? { again: act.again } : {}) };
-  const body = reviewComment(act.outcome, reply.report, act.note, pending);
-  // Unstamped, it is reviewed again next tick — counted, like a failed review.
-  await commentOnPr(repo, pr.url, factoryComment(`${act.stamped ? reviewStamp(now, act.outcome, pending) : reviewFailedMarker(pr)}\n${body}`));
-  if (act.outcome === 'closed' || act.outcome === 'superseded') await closePrQuietly(repo, pr.url);
-  log(`review of #${pr.number}: agent answered ${reply.verdict}; ${act.outcome}${act.reason ? ` (${act.reason})` : ''}${replacement ? ` via ${replacement}` : ''} — ${pr.url}`);
-  return record({ verdict: reply.verdict, outcome: act.outcome, ...(act.reason ? { reason: act.reason } : {}), ...(act.ci ?? {}), ...(replacement ? { replacementUrl: replacement } : {}) });
 }
 
 /**

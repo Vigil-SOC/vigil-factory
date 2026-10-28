@@ -36,9 +36,12 @@ outcome). Use it when you need to see a pattern across ticks.
 A healthy tick: reconciles outcomes of PRs that closed, grooms up to 5 issues (epics
 first, and epics file children), fills every free implementer slot (6 at most) with the
 oldest groomed issues, gets each PR's checks green or hands them back, and awaits its
-runs before it ends, so one tick can take hours. On this worker the review, deps,
-security, and environment phases are skipped by design (the log says so); outside PRs
-and Dependabot PRs wait for Cursor to return, which is not an alert.
+runs before it ends, so one tick can take hours. On this worker the deps, security,
+and environment phases are skipped by design (the log says so); Dependabot PRs wait for
+Cursor to return, which is not an alert. The review phase does run here:
+each outside PR gets a Docker container of its own (`factory-<8 hex>`, built from the
+target repo's `.cursor/environment.json`), removed when its review ends. A container
+still there with no tick running is a leftover; the next tick removes it.
 
 The local worker changed just before this switch and had not run unwatched since, so
 look harder than usual at its runs for now: sessions that die early, all hit the run

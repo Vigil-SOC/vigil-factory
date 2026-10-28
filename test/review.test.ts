@@ -275,9 +275,10 @@ describe('the factory\'s own rules on a merge', () => {
     expect(isBot(pr(1))).toBe(false);
   });
 
-  it('off unless enabled, and only on the cursor worker: a review runs a stranger\'s code', () => {
+  it('off unless enabled, and on claude-code only with containers: a review needs a fresh instance of the app', () => {
     expect(skipReason(false, 'cursor')).toMatch(/disabled/);
-    expect(skipReason(true, 'claude-code')).toMatch(/only on the cursor worker/);
+    expect(skipReason(true, 'claude-code')).toMatch(/worker.containers is off/);
+    expect(skipReason(true, 'claude-code', true)).toBeNull();
     expect(skipReason(true, 'cursor')).toBeNull();
   });
 });

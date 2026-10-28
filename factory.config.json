@@ -47,6 +47,7 @@
         }
       }
     },
+    "containers": true,
     "pollIntervalSeconds": 30,
     "maxRunMinutes": 90,
     "agentEnv": [
