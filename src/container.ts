@@ -87,7 +87,25 @@ export async function ensureImage(docker: string, dockerfile: string | null, use
   if (await imageExists(docker, image)) return image;
   if (!(await imageExists(docker, base))) await build(docker, base, env, logFile);
   await build(docker, image, layer, logFile);
+  await pruneImages(docker, [base, image]);
   return image;
+}
+
+/** The factory's images other than `keep`: those from an older Dockerfile or Claude Code. */
+export function staleImages(tags: string[], keep: string[]): string[] {
+  return tags.filter((t) => /^factory-(env|agent):/.test(t) && !keep.includes(t));
+}
+
+/**
+ * Each new Claude Code release or Dockerfile change tags a new image of a few
+ * GB, and the old ones would fill the disk. One a container still runs keeps
+ * (`docker rmi` refuses it) and goes with the next build.
+ */
+async function pruneImages(docker: string, keep: string[]): Promise<void> {
+  const { stdout } = await execFileAsync(docker, ['images', '--format', '{{.Repository}}:{{.Tag}}']).catch(() => ({ stdout: '' }));
+  for (const tag of staleImages(stdout.split('\n').filter(Boolean), keep)) {
+    await execFileAsync(docker, ['rmi', tag]).catch(() => {});
+  }
 }
 
 async function imageExists(docker: string, tag: string): Promise<boolean> {

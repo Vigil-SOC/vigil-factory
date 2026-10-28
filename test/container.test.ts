@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { agentLayer, containerName, execArgs, homeOf, parseEnvironment } from '../src/container.ts';
+import { agentLayer, containerName, execArgs, homeOf, parseEnvironment, staleImages } from '../src/container.ts';
 
 describe('parseEnvironment', () => {
   it("reads the Dockerfile against .cursor/, the user, install and start, as Cursor does", () => {
@@ -34,5 +34,12 @@ describe('execArgs', () => {
 
   it('names a container after its session', () => {
     expect(containerName('0b33598a-48f9-407c-9318-885045e8de56')).toBe('factory-0b33598a');
+  });
+});
+
+describe('staleImages', () => {
+  it('is every factory image but the ones in use, and nothing else on the machine', () => {
+    const tags = ['factory-env:aaa', 'factory-env:bbb', 'factory-agent:ccc', 'factory-agent:ddd', 'postgres:16', 'factory-7b0cffb0-soc-daemon:latest'];
+    expect(staleImages(tags, ['factory-env:bbb', 'factory-agent:ddd'])).toEqual(['factory-env:aaa', 'factory-agent:ccc']);
   });
 });
