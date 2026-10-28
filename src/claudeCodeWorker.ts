@@ -850,6 +850,12 @@ export class ClaudeCodeWorker implements CodingWorker {
     if (session.branch) {
       const head = await this.git(['rev-parse', '--abbrev-ref', 'HEAD'], session.workspace, session.container ?? undefined).catch(() => 'HEAD');
       branch = head === 'HEAD' ? session.branch : head;
+      // A push-only branch the agent never pushed is no branch at all: the
+      // factory would try to open a PR from it.
+      if (!session.expectsPr && !session.prUrl) {
+        const pushed = await this.git(['ls-remote', '--heads', 'origin', branch], session.workspace, session.container ?? undefined).catch(() => '');
+        if (!pushed) branch = undefined;
+      }
     }
 
     return {
