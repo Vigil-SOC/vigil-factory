@@ -295,12 +295,17 @@ describe('review prompt', () => {
   const fork = reviewPrompt({ number: 12, url: 'https://github.com/o/r/pull/12', isCrossRepository: true, authorMayChangeGithub: false }, 'PRINCIPLES');
   const collaborator = reviewPrompt({ number: 12, url: 'https://github.com/o/r/pull/12', isCrossRepository: false, authorMayChangeGithub: true }, 'PRINCIPLES');
 
-  it('hands the link and the principles, and tests live but leaves the suites to CI', () => {
+  it('hands the link and the principles, and tests live but leaves the checks to CI', () => {
     expect(p).toContain('https://github.com/o/r/pull/12');
     expect(p).toContain('PRINCIPLES');
     expect(p).toContain('agent-browser');
-    expect(p).toContain('do not run those suites here');
+    expect(p).toContain('do not run those here');
     expect(p).not.toContain('the full suites CI runs');
+  });
+
+  it('deletes the unit and integration tests a PR carries rather than closing or leaving it', () => {
+    expect(p).toContain('delete any the PR carries in a commit of your own');
+    expect(p).toContain('never a reason to close or leave it');
   });
 
   it('asks for no subagent review, and catches up a conflicting PR itself rather than asking for a rebase', () => {
