@@ -834,7 +834,11 @@ to. Everything else — prompts, phases, labels, telemetry — is the same eithe
   opens the PR with `gh`; a CI fix round is `claude --resume` in the same clone, and a
   later tick's handback is a fresh session on the PR's own branch (never a fork's). A run
   gets `worker.localMaxRunMinutes` (default `maxRunMinutes` + 60), since sessions share one
-  machine; the groomer still sizes against `maxRunMinutes`. Auth is
+  machine; the groomer still sizes against `maxRunMinutes`. At most
+  `worker.localMaxSessions` sessions (default 4) run at once, every phase's together,
+  and the rest queue; time in the queue is not charged to a budget. A run that pushes
+  code and runs out of budget is interrupted and resumed for one last 15-minute turn to
+  commit, push, and open its PR with what it has, saying what it did not verify. Auth is
   the machine's claude.ai login, so runs draw on the team subscription rather than API
   keys; where there is no browser, `claude setup-token` prints a one-year token for
   `CLAUDE_CODE_OAUTH_TOKEN`. A review's container is handed that token when `.env` has it,

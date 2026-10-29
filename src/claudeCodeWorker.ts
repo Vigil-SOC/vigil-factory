@@ -28,6 +28,12 @@
 // review) gets a Docker container of its own, built from the target repo's
 // Cursor environment: container.ts.
 //
+// The machine runs only so many sessions at once (`maxSessions`), every phase's
+// together; the rest queue for a turn. On Oct 29 2026 eleven at once made `ls`
+// take four minutes, and runs that would have landed were cut off at the
+// budget. A run whose budget does run out gets one short last turn to publish
+// what it has, rather than leaving a finished change in a clone nobody reads.
+//
 // A subscription is metered in a five-hour window and a weekly one, shared
 // with whoever else uses the login. Every run waits for headroom before it
 // starts, and a run the limit cuts off mid-turn waits for the reset and
@@ -77,6 +83,11 @@ const LOGIN_RESUME_NOTE = 'Your previous turn could not start because the login 
  *  the live stack test" with a finished fix that was never pushed. */
 const MAX_NO_PR_RESUMES = 1;
 const NO_PR_RESUME_NOTE = 'Your turn ended without a pull request. This session ends when your turn does, so nothing you were waiting for (a background command, a test run, a server) is still going, and nobody will answer a question. If the work is done or nearly so, finish it now: verify in the foreground, commit, push, open the PR, and end with its URL. If you concluded the issue should not be built as scoped, say so again in a few lines and stop.';
+/** The last turn a run gets when its budget runs out, and what it is told.
+ *  On Oct 29 2026 #3405's change was built and checked against the live API
+ *  when the budget cut it off retrying screenshots. */
+const WRAP_UP_MINUTES = 15;
+const WRAP_UP_NOTE = `Your time budget has run out, and this is your last turn: about ${WRAP_UP_MINUTES} minutes. Stop verifying. Anything you had running (servers, browsers, test runs) was stopped and the live slot released. Commit what you have and publish it as your task says: push, open the PR if your task opens one, and end as your task asks you to end. Say in the PR what you did not get to verify. If the work is not worth publishing as it stands, say why in a few lines and stop.`;
 /** Waits before each clone retry. On Oct 19 four grooms' clones failed in the
  *  same second (`RPC failed; curl 56`): GitHub dropped the connections, and a
  *  moment later would have served them. Each wait is jittered so clones that
@@ -106,6 +117,40 @@ export async function retrying<T>(
   }
 }
 
+/**
+ * At most `size` holders at once; the rest wait their turn in order. A turn
+ * that ends hands its place straight to the next in line.
+ */
+export class Gate {
+  private held = 0;
+  private readonly queue: (() => void)[] = [];
+
+  constructor(readonly size: number) {}
+
+  /** How many are in the queue. */
+  get waiting(): number {
+    return this.queue.length;
+  }
+
+  /** Takes a place if one is free now. */
+  tryEnter(): boolean {
+    if (this.held >= this.size) return false;
+    this.held++;
+    return true;
+  }
+
+  enter(): Promise<void> {
+    if (this.tryEnter()) return Promise.resolve();
+    return new Promise((res) => this.queue.push(res));
+  }
+
+  leave(): void {
+    const next = this.queue.shift();
+    if (next) next();
+    else this.held--;
+  }
+}
+
 export interface ClaudeCodeWorkerOptions {
   /** The `claude` executable. launchd and CI rarely have ~/.local/bin on PATH. */
   bin: string;
@@ -130,6 +175,8 @@ export interface ClaudeCodeWorkerOptions {
   readUsage?: () => Promise<SubscriptionUsage | null>;
   /** Whether a run started with `container` may have one (container.ts). */
   containers?: boolean;
+  /** Sessions that run at once; the rest queue. Default: no limit. */
+  maxSessions?: number;
   log?: (msg: string) => void;
 }
 
@@ -162,7 +209,12 @@ interface Run {
   loginResumes: number;
   /** How many times it ended with no PR and was asked to finish. */
   noPrResumes: number;
+  /** Whether this is the last turn a run gets after its budget ran out. */
+  wrappedUp: boolean;
 }
+
+/** What a run hands the turn that resumes it. */
+type Carried = Pick<Run, 'priorMs' | 'limitResumes' | 'loginResumes' | 'noPrResumes' | 'wrappedUp'>;
 
 /** One agent: a clone and every run made in it. */
 interface Session {
@@ -430,6 +482,9 @@ export class ClaudeCodeWorker implements CodingWorker {
   private readonly machine: MachinePaths;
   private readonly docker: string | null;
   private claudeVersion: string | null = null;
+  /** The sessions this machine runs at once: a clone or container being set
+   *  up, or a turn in progress. Between turns a session holds no place. */
+  private readonly turns: Gate;
   /** Read once per worker, at the pinned commit; with the image built from it. */
   private containerSetup: Promise<{ env: CursorEnvironment; image: string }> | null = null;
 
@@ -438,6 +493,7 @@ export class ClaudeCodeWorker implements CodingWorker {
     if (!m) throw new Error(`ClaudeCodeWorker: cannot read owner/repo from ${opts.repoUrl}`);
     this.owner = m[1]!;
     this.repoName = m[2]!;
+    this.turns = new Gate(opts.maxSessions ?? Infinity);
     mkdirSync(opts.workRoot, { recursive: true });
     this.sweepWorkspaces();
     this.machine = machinePaths(opts.machineRoot ?? resolve(opts.workRoot, '..', 'machine'));
@@ -703,7 +759,26 @@ export class ClaudeCodeWorker implements CodingWorker {
     }
   }
 
-  private async launch(sessionId: string, session: Session, prompt: string, resume: boolean, carried?: Pick<Run, 'priorMs' | 'limitResumes' | 'loginResumes' | 'noPrResumes'>): Promise<RunHandle> {
+  /** Waits for a place among the sessions this machine runs at once. */
+  private async enterTurn(name: string): Promise<void> {
+    if (this.turns.tryEnter()) return;
+    this.log(`${this.turns.size} claude sessions running, the machine's limit${this.turns.waiting ? `, and ${this.turns.waiting} waiting` : ''}; ${name} waits for one to end`);
+    return this.turns.enter();
+  }
+
+  /** `entered`: the caller already holds the session's place. */
+  private async launch(sessionId: string, session: Session, prompt: string, resume: boolean, carried?: Carried, entered = false): Promise<RunHandle> {
+    if (!entered) await this.enterTurn(session.name ?? sessionId);
+    try {
+      return await this.spawnTurn(sessionId, session, prompt, resume, carried);
+    } catch (err) {
+      this.turns.leave();
+      throw err;
+    }
+  }
+
+  /** Starts the turn; its place is given up when the process ends. */
+  private async spawnTurn(sessionId: string, session: Session, prompt: string, resume: boolean, carried?: Carried): Promise<RunHandle> {
     // The agent gets the MCP servers the target repo declares and no others:
     // not this machine's, whose owner's connectors are not the factory's to
     // hand out. The counterpart of Cursor's agents having only what the repo's
@@ -748,11 +823,13 @@ export class ClaudeCodeWorker implements CodingWorker {
       limitResumes: carried?.limitResumes ?? 0,
       loginResumes: carried?.loginResumes ?? 0,
       noPrResumes: carried?.noPrResumes ?? 0,
+      wrappedUp: carried?.wrappedUp ?? false,
       exited: new Promise((res) => {
         child.once('error', (err) => { run.stderr.push(String(err.message)); res({ code: null, signal: null }); });
         child.once('close', (code, signal) => res({ code, signal }));
       }),
     };
+    void run.exited.then(() => this.turns.leave());
     child.stdout!.setEncoding('utf8').on('data', (d: string) => run.stdout.push(d));
     child.stderr!.setEncoding('utf8').on('data', (d: string) => run.stderr.push(d));
     // The prompt goes on stdin: no argv length limit, no shell quoting.
@@ -770,8 +847,16 @@ export class ClaudeCodeWorker implements CodingWorker {
     if (opts.startingRef) throw new Error('ClaudeCodeWorker starts every agent from the tick\'s pinned commit');
     await this.awaitHeadroom();
     const sessionId = randomUUID();
-    const session = await this.prepareWorkspace(sessionId, opts);
-    return this.launch(sessionId, session, prompt, false);
+    // Setting up takes its place too: a review container boots the whole app.
+    await this.enterTurn(opts.name ?? sessionId);
+    let session: Session;
+    try {
+      session = await this.prepareWorkspace(sessionId, opts);
+    } catch (err) {
+      this.turns.leave();
+      throw err;
+    }
+    return this.launch(sessionId, session, prompt, false, undefined, true);
   }
 
   async continueRun(handle: RunHandle, instruction: string): Promise<RunHandle> {
@@ -805,7 +890,18 @@ export class ClaudeCodeWorker implements CodingWorker {
 
     if (outcome === 'budget') {
       await this.cancel(handle);
-      throw new RunBudgetExceeded(handle.runId, this.opts.maxRunMinutes);
+      // A run that publishes code gets a last turn to publish what it has; its
+      // budget is that turn's length, and a turn with no PR is not asked again.
+      if (!session.branch || run.wrappedUp) throw new RunBudgetExceeded(handle.runId, this.opts.maxRunMinutes);
+      this.log(`claude session ${handle.agentId} ran out of its ${this.opts.maxRunMinutes}-minute budget; giving it ${WRAP_UP_MINUTES} minutes to publish what it has`);
+      const next = await this.launch(handle.agentId, session, WRAP_UP_NOTE, true, {
+        priorMs: (this.opts.maxRunMinutes - WRAP_UP_MINUTES) * 60_000,
+        limitResumes: run.limitResumes,
+        loginResumes: run.loginResumes,
+        noPrResumes: MAX_NO_PR_RESUMES,
+        wrappedUp: true,
+      });
+      return this.awaitResult(next);
     }
     const workedMs = Date.now() - run.startedAt - (await this.endTurn(handle.agentId));
 
@@ -824,14 +920,14 @@ export class ClaudeCodeWorker implements CodingWorker {
     }
     if (!succeeded && !outcome.signal && hitUsageLimit(resultText) && run.limitResumes < MAX_LIMIT_RESUMES) {
       this.log(`claude session ${handle.agentId} was cut off by the usage limit; resuming it once the limit resets`);
-      const carried = { priorMs: run.priorMs + workedMs, limitResumes: run.limitResumes + 1, loginResumes: run.loginResumes, noPrResumes: run.noPrResumes };
+      const carried = { priorMs: run.priorMs + workedMs, limitResumes: run.limitResumes + 1, loginResumes: run.loginResumes, noPrResumes: run.noPrResumes, wrappedUp: run.wrappedUp };
       await this.awaitHeadroom(true);
       const next = await this.launch(handle.agentId, session, LIMIT_RESUME_NOTE, true, carried);
       return this.awaitResult(next);
     }
     if (!succeeded && !outcome.signal && lostLogin(resultText) && run.loginResumes < MAX_LOGIN_RESUMES) {
       this.log(`claude session ${handle.agentId} found no login (a token refresh race); resuming it in ${LOGIN_RETRY_MS / 1000}s`);
-      const carried = { priorMs: run.priorMs + workedMs, limitResumes: run.limitResumes, loginResumes: run.loginResumes + 1, noPrResumes: run.noPrResumes };
+      const carried = { priorMs: run.priorMs + workedMs, limitResumes: run.limitResumes, loginResumes: run.loginResumes + 1, noPrResumes: run.noPrResumes, wrappedUp: run.wrappedUp };
       await sleep(LOGIN_RETRY_MS);
       const next = await this.launch(handle.agentId, session, LOGIN_RESUME_NOTE, true, carried);
       return this.awaitResult(next);
@@ -839,7 +935,7 @@ export class ClaudeCodeWorker implements CodingWorker {
 
     if (succeeded && session.expectsPr && !prUrlIn(resultText, this.opts.repoUrl) && run.noPrResumes < MAX_NO_PR_RESUMES && !(await this.branchHasPr(session.branch!))) {
       this.log(`claude session ${handle.agentId} ended its turn with no PR; asking it once to finish`);
-      const carried = { priorMs: run.priorMs + workedMs, limitResumes: run.limitResumes, loginResumes: run.loginResumes, noPrResumes: run.noPrResumes + 1 };
+      const carried = { priorMs: run.priorMs + workedMs, limitResumes: run.limitResumes, loginResumes: run.loginResumes, noPrResumes: run.noPrResumes + 1, wrappedUp: run.wrappedUp };
       const next = await this.launch(handle.agentId, session, NO_PR_RESUME_NOTE, true, carried);
       return this.awaitResult(next);
     }

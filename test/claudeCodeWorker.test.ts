@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { branchNameFor, headroomWait, hitUsageLimit, lostLogin, machineNote, modelArgs, parseResultJson, parseUsage, prUrlIn, retrying, sumUsage, usageFrom } from '../src/claudeCodeWorker.ts';
+import { branchNameFor, Gate, headroomWait, hitUsageLimit, lostLogin, machineNote, modelArgs, parseResultJson, parseUsage, prUrlIn, retrying, sumUsage, usageFrom } from '../src/claudeCodeWorker.ts';
 
 describe('modelArgs', () => {
   it('passes nothing when the config leaves the model to the runtime', () => {
@@ -222,5 +222,33 @@ describe('retrying', () => {
     await vi.runAllTimersAsync();
     await settled;
     expect(dead).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('Gate', () => {
+  it('lets size holders in at once and the rest in order, each as a holder leaves', async () => {
+    const gate = new Gate(2);
+    const order: string[] = [];
+    await gate.enter();
+    expect(gate.tryEnter()).toBe(true);
+    expect(gate.tryEnter()).toBe(false);
+    const c = gate.enter().then(() => order.push('c'));
+    const d = gate.enter().then(() => order.push('d'));
+    expect(gate.waiting).toBe(2);
+
+    gate.leave();
+    await c;
+    expect(order).toEqual(['c']);
+    // The place passed to c: none is free for a newcomer to jump the queue.
+    expect(gate.tryEnter()).toBe(false);
+
+    gate.leave();
+    await d;
+    expect(order).toEqual(['c', 'd']);
+    gate.leave();
+    gate.leave();
+    expect(gate.tryEnter()).toBe(true);
+    expect(gate.tryEnter()).toBe(true);
+    expect(gate.tryEnter()).toBe(false);
   });
 });

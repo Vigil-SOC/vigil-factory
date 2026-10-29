@@ -99,6 +99,7 @@ export async function buildWorker(config: FactoryConfig): Promise<CodingWorker> 
         workRoot: resolve(projectRoot, config.telemetryDir, 'workspaces'),
         ghToken: githubTokenForAgents(),
         pauseAtUsagePercent: config.worker.pauseAtUsagePercent ?? null,
+        maxSessions: config.worker.localMaxSessions ?? 4,
         containers: config.worker.containers === true,
       });
       const version = await worker.check();
