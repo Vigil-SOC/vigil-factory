@@ -139,6 +139,11 @@ Reach for the shared standard before the custom integration.
 - Autonomy is the direction of travel: the platform should be able to act on its
   own. Prefer making an action safe and observable to putting a human in front of
   it.
+- Vigil keeps no unit or integration tests. Agent-written ones mostly pinned the
+  code as it was, and every later change paid for it in chores updating them. A
+  change is verified by running it; CI keeps lint, typechecks, builds and the
+  live suites. An issue, epic or PR that asks for unit or integration tests asks
+  for something this repo does not keep.
 
 ## Applying this to an issue
 

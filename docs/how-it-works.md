@@ -33,11 +33,11 @@ Plenty of tools point an agent at a backlog. This one takes positions:
   implement — it cannot tell "assigned and untouched" from "assigned and half-written
   locally", and guessing wrong wastes a person's work, not an agent's. It will still
   groom it, because a verdict costs the assignee nothing and may be useful to them.
-- **Every PR says what was checked.** The implementer runs the tests that cover its
-  change — CI runs the full suites and hands a red check back — and, when the change has
-  behavior worth seeing work, starts the app and exercises it through its real entry point,
-  with `agent-browser` for anything that has a UI. That call is the agent's: a live test
-  on a change the tests already pin down is spend, not safety. The PR ends with a
+- **Every PR says what was checked.** The implementer writes no unit or integration
+  tests — agent-written ones mostly pinned the code as it was, and every later change paid
+  for them in chores. When the change has behavior worth seeing work, it starts the app and
+  exercises it through its real entry point, with `agent-browser` for anything that has a
+  UI; CI runs the repo's checks and hands a red check back. The PR ends with a
   Verification section listing each check it ran and each it did not, with the reason, and
   the groomer may not scope a live test away to make an issue fit.
 - **CI's verdict goes back to the agent, not to the reviewer.** A PR with a failing check
@@ -54,8 +54,8 @@ Plenty of tools point an agent at a backlog. This one takes positions:
 - **Something has to push the other way.** Autonomous implementers accrete complexity:
   every PR is locally reasonable and the sum becomes unwieldy. So one agent's only job
   is to remove code, in a simplification PR that must delete more lines than it adds or
-  the factory closes it before a human sees it. A test proving something is gone, or a
-  helper standing in for three plain lines, is not simpler.
+  the factory closes it before a human sees it. A helper standing in for three plain
+  lines is not simpler.
 - **A PR from outside is finished here, not handed back.** Contributors, teammates, and
   other people's coding agents open PRs too. An agent reviews each one against the same
   principles grooming uses, verifies it to the implementer's standard, and fixes what stands
@@ -100,8 +100,9 @@ reconcile with GitHub: record the verdict on every factory PR that has closed, r
    a close first, then oldest first): each open PR the factory did not open — bots and
    drafts aside — that is new or changed since its last review. The agent reads it against
    principles.md, closes it if something is fundamentally wrong, otherwise merges the
-   default branch in where it conflicts, tests it live (the suites are CI's), pushes the
-   fixes it needs to its branch, and answers merge; the factory waits for CI on that
+   default branch in where it conflicts, tests it live (the checks are CI's), pushes the
+   fixes it needs to its branch — deleting any unit or integration tests the PR carries —
+   and answers merge; the factory waits for CI on that
    commit, hands a red check back once, and squash-merges it
 → DEPENDENCY agent, alongside too (deps.enabled; on claude-code, only with worker.containers):
    every open Dependabot PR not yet batched at its current head, except Actions bumps
@@ -592,8 +593,9 @@ the same standard grooming holds issues to — and decides everything itself:
   cheap filter for generated noise. The factory posts the reason and closes the PR, saying
   that if it misread the change, the author should reply.
 - **merge** — the PR is worth having. The agent verified it the way an implementer verifies
-  its own work (the behavior live, where it has any; CI runs the suites), fixed what stood between it and
-  merge — a failing test, a conflict, a defect it found — by pushing to the PR's own branch,
+  its own work (the behavior live, where it has any; CI runs the checks), fixed what stood
+  between it and merge — a failing check, a conflict, a defect it found, unit or integration
+  tests it carried, which are deleted — by pushing to the PR's own branch,
   and names the head commit it verified.
 - **leave** — a decision that needs a person: irreversible, legal or licensing exposure,
   widening what the system may do on its own, or a fix it needed and could not push.
@@ -692,7 +694,7 @@ lock by hand. So the dependency phase does not merge Dependabot's PRs at all.
 
 **One batch, one CI run.** One agent is handed the links to every open Dependabot PR, brings
 their changes onto its own branch, regenerates what the repo actually installs from (its own
-script, where it has one), and opens one PR labelled `factory:deps`. It runs no suites and no
+script, where it has one), and opens one PR labelled `factory:deps`. It runs no checks and no
 live test — the batch exists so that a week of bumps costs one agent and one CI run, not one
 of each per bump. The PR carries a `Supersedes #N` line per Dependabot PR it took. A bump
 that conflicts, or needs more than a small fix to the code, is dropped with a line saying

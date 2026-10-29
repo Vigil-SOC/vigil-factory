@@ -22,12 +22,12 @@ files: `factory.config.json`, which points it at `Vigil-SOC/vigil`, and
   anything is built. The verdict is a label plus a signed comment on the issue. Edit
   the issue or reply to it and it is judged again.
 - **Builds groomed issues.** A fresh coding agent (a Cursor cloud agent or a local
-  Claude Code session) takes the issue, runs the tests that cover its change, tests the
-  change live, and opens a PR that lists what it verified and what it did not. When CI
+  Claude Code session) takes the issue, builds it without unit or integration tests,
+  tests the change live, and opens a PR that lists what it verified and what it did not. When CI
   fails, the failing checks go back to the same agent to fix.
 - **Finishes outside PRs.** A contributor's PR is reviewed against the same
-  principles, verified the same way, fixed on its own branch, and then merged or closed
-  with a reason.
+  principles, verified the same way, fixed on its own branch (any unit or integration
+  tests it carries are deleted there), and then merged or closed with a reason.
 - **Keeps the repo healthy.** Further agents batch Dependabot updates, fix security
   alerts, and repair the sandbox when an agent could not run a check it needed. An
   optional agent opens PRs that only remove code.

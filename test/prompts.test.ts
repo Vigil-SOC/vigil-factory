@@ -208,7 +208,7 @@ describe('simplification', () => {
 
   it('states the line-count rule and names the ways agents cheat it', () => {
     expect(p).toContain('remove more lines than it adds');
-    expect(p).toContain('no test asserting a deleted thing is gone');
+    expect(p).toContain('no helper to replace three plain lines');
     expect(p).toContain('about 90 minutes');
   });
 
@@ -260,9 +260,9 @@ describe('environment agent judges against CI and sees its own history', () => {
 // CI is the repo's own verdict. The factory relays a red check to the agent
 // that wrote the code rather than to a human, and the agent judges whose it is.
 describe('red checks go back to the implementer', () => {
-  it('working rules leave the full suites to CI, which hands a red check back', () => {
+  it('working rules ask for no unit or integration tests and leave the checks to CI, which hands a red check back', () => {
     const p = implementPrompt(task);
-    expect(p).toContain('the tests that cover what you changed');
+    expect(p).toContain('Do not write unit or integration tests');
     expect(p).toContain('hands a red check back to you');
   });
 
