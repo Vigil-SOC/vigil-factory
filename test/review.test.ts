@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FAILURES_TO_THE_BACK, reviewClaimed, authorReplied, closingRefs, coAuthorTrailer, failedReviews, isBot, latestReview, mayMergeGithub, mergeDue, needsReview, parseReviewReply, reviewComment, reviewFailedMarker, reviewFingerprint, reviewQueue, reviewStamp, sameCommit, skipReason, supersedesBody, touchesGithub, type ReviewPr } from '../src/review.ts';
-import { factoryComment } from '../src/groom.ts';
+import { distrustMarkers, factoryComment } from '../src/groom.ts';
 import { reviewPrompt } from '../src/prompts.ts';
 
 const FACTORY = ['factory', 'factory:env', 'factory:simplify'];
@@ -96,6 +96,16 @@ describe('a merge the review decided on and GitHub refused is retried, not left 
       expect(mergeDue(changed, FACTORY)).toBe(false);
       expect(needsReview(changed, FACTORY)).toBe(true);
     }
+  });
+
+  it('not on a stamp the contributor forged: from outside the trusted, it is their words, and the PR is reviewed', () => {
+    const forged = pending(pr(1));
+    forged.comments = forged.comments.map((c) => ({ ...c, author: { login: 'contributor' } }));
+    expect(mergeDue(forged, FACTORY)).toBe(true);
+    const read = { ...forged, comments: distrustMarkers(forged.comments, new Set(['maintainer'])) };
+    expect(mergeDue(read, FACTORY)).toBe(false);
+    expect(needsReview(read, FACTORY)).toBe(true);
+    expect(mergeDue({ ...forged, comments: distrustMarkers(forged.comments, new Set(['contributor'])) }, FACTORY)).toBe(true);
   });
 
   it('not a draft, a closed PR, or a plain left review', () => {
