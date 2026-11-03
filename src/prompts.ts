@@ -46,11 +46,12 @@ ${list}`;
 const ISSUE_IMAGES = `An image in the issue or its comments is part of the spec, as binding as its text. Download it and look at it: when a plain download fails, \`gh api\` on the issue or comment with \`-H 'Accept: application/vnd.github.full+json'\` returns its body with signed image links.`;
 
 /**
- * How an implementer checks a screen against the design it was pointed at: by
+ * How an implementer checks a screen against an image its issue carries: by
  * looking, at the same width and state, and saying what differs. One sentence,
- * not a procedure — the agent is trusted to compare two images.
+ * not a procedure — the agent is trusted to compare two images. Only the
+ * issue's own images: the repo keeps a design system, not screens to match.
  */
-const DESIGN_MATCH = `Where the issue or its groom notes point at a design — an image, or a board in the repo — open it at the same width and state as your screen and compare the two. Under **Ran**, list each visible difference you kept and why; "it lines up" is not a finding.`;
+const DESIGN_MATCH = `Where the issue shows the screen it wants as an image, open your screen at the same width and state and compare the two. Under **Ran**, list each visible difference you kept and why; "it lines up" is not a finding.`;
 
 export function groomPrompt(task: Task, principles: string, budget: RunBudget, epicLabel?: string): string {
   const epicVerdict = epicLabel === undefined ? '' : `
@@ -135,8 +136,6 @@ Three verdicts:
 
 On a re-review — the epic already carries a 🏭 Factory groom comment — that comment is the record its children were written and groomed against, and what brought you back is a human reply, a revised design it links, a child that landed, a child groomed needs-work, or something the record waited on that closed. A needs-work child's groom may have found the record wrong against the code, or the child not worth building: weigh what it found — correct the record and write what the child now needs, or let the child go: add a line \`CLOSE: #<issue number>\` after the verdict for each, and the factory closes it as not planned. A child you leave needs-work does not bring you back again. Direction changed here costs the children real work, so the record ratchets: keep every settled decision unless the reply names it, the code has moved from under it, or it now pulls against the principles. A decision a merged or in-flight child already relies on is reversed only when the reply asks for that in so many words, and then your comment says what the reversal costs in code that exists. Say plainly which decisions changed and which stand, so the children are re-judged against the difference rather than re-argued from scratch.
 
-When the epic changes what a screen renders — a page, a flow, anything a design board or mockup shows — the design is the target its children are measured against, and the record says where this epic stops short of it. Each child is built and judged against its own text, so the screens drift from the design a little with every one that lands; this review is where that drift is caught. On a re-review, before you write the next slice or call the epic done, open the design and the running app at the same state and width (\`agent-browser\` is on this machine; a board in the repo opens from \`file://\`) and compare them, screen by screen: layout, spacing, type, colour, labels, data shown. A difference inside the direction the record settled is the next slice's work, as children; one outside it is named in your comment and left. Done means the screens match the design as far as the record meant them to, not that every child closed.
-
 ${epicChildren(budget)}
 
 ## Principles
@@ -148,9 +147,7 @@ ${principles}`;
  * Re-reviewing an epic whose direction is settled and that nobody has replied
  * to since: the factory's own bookkeeping brought it back. It keeps the work
  * tracking the record rather than settling the direction again, so it starts
- * from the record and what changed since, and compares only the screens the
- * landed children touched until it is about to call the epic done. Runs the
- * ordinary worker model; settling runs `groom.epicModel` (see settlesDirection).
+ * from the record and what changed since. Runs the ordinary worker model; settling runs `groom.epicModel` (see settlesDirection).
  */
 export function trackEpicPrompt(task: Task, principles: string, budget: RunBudget): string {
   return `Re-review GitHub issue #${task.issueNumber} — an epic — for the software factory.
@@ -159,8 +156,6 @@ ${task.url}
 Its direction is settled. The latest 🏭 Factory groom comment on it is the record its children were written and groomed against, and nobody has replied since. What brought you back is the factory's own bookkeeping: the slice that record wrote has landed or been groomed needs-work, or something it waited on closed. This review keeps the work tracking that record; it does not settle the direction again. You are reviewing, not implementing, so change nothing.
 
 Start from the record and what has happened since it: the children that landed (read their pull requests rather than the whole codebase again), the ones groomed needs-work and what their grooms found, and whatever the record waited on that closed. Read other code only where one of those raises a question about the record. A needs-work child's groom may have found the record wrong against the code, or the child not worth building: weigh what it found — correct the record and write what the child now needs, or let the child go: add a line \`CLOSE: #<issue number>\` after the verdict for each, and the factory closes it as not planned. A child you leave needs-work does not bring you back again. The record ratchets: keep every settled decision unless the code has moved from under it or it now pulls against the principles, and say plainly which decisions changed and which stand.
-
-When the epic changes what a screen renders, the design is the target its children are measured against, and the screens drift from it a little with every child that lands. Open the design and the running app at the same state and width (\`agent-browser\` is on this machine; a board in the repo opens from \`file://\`) for the screens the children since the record touched, and compare them: layout, spacing, type, colour, labels, data shown. Before you call the epic done, compare every screen it covers the same way: done means the screens match the design as far as the record meant them to, not that every child closed. A difference inside the direction the record settled is the next slice's work, as children; one outside it is named in your comment and left.
 
 Three verdicts:
 - groomed — the record stands, with any corrections you made to it, and the next slice is written below, or nothing is left to write until something lands.
