@@ -1,7 +1,8 @@
 #!/bin/zsh
 # One full factory tick on the Claude Code worker, for launchd (see
 # contrib/com.deeptempo.factory.claude-code.plist). launchd gives a near-empty
-# PATH, so this sets it; the lock keeps a slow tick from overlapping the next.
+# PATH, so this sets it; the lock keeps a slow tick from overlapping the next,
+# and from updating the checkout under a tick still running.
 set -u
 ROOT="${0:A:h:h}"
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
@@ -23,6 +24,8 @@ if ! mkdir "$LOCK" 2>/dev/null; then
 fi
 echo $$ > "$LOCK/pid"
 trap 'rm -rf "$LOCK"' EXIT
+
+"$ROOT/contrib/update.sh"
 
 LOG="telemetry/tick-claude-$(date -u +%Y%m%dT%H%M).log"
 echo "[$(date -u +%FT%TZ)] tick start → $LOG" >> telemetry/launchd.log

@@ -921,6 +921,12 @@ Two options; both just invoke the idempotent tick.
 
 **Local (launchd, macOS):** copy `contrib/com.deeptempo.factory.plist` to
 `~/Library/LaunchAgents/`, adjust paths, then `launchctl load` it.
+Each local tick first runs `contrib/update.sh`, which fast-forwards the checkout to the
+newest commit on the default branch whose CI passed, so every machine runs the same
+factory without anyone pulling. A checkout on another branch is left alone; one with
+commits of its own, or uncommitted changes in the way, keeps running what it has and
+raises an alert. A change that needs a human on each machine (a plist, a new `.env`
+key) still needs saying.
 
 **GitHub Actions:** `.github/workflows/factory.yml` (dispatched by the babysitter, and
 scheduled every two hours as a backstop for when the Mac sleeps: a scheduled run stands
