@@ -66,6 +66,29 @@ OS Login maps your Google identity to a Linux user (`sam@deeptempo.ai` is
 for sudo) on the project or the instance, and `roles/iap.tunnelResourceAccessor` for
 the tunnel. Anyone with OS Login can read the tokens in `.env`.
 
+## Reading the alerts and the journal from your laptop
+
+The checkout lives in the operator's home on the host, readable to every OS Login user
+(`.env` is not). One line prints the alerts:
+
+```bash
+gcloud compute ssh factory-host-1 --zone us-west1-a --project prod-loglm --tunnel-through-iap --command 'cat /home/sam_deeptempo_ai/vigil-factory/telemetry/babysit/ALERTS.md'
+```
+
+Swap `ALERTS.md` for `journal.md` to read what the babysitter saw, or `tail -n 30
+/home/sam_deeptempo_ai/vigil-factory/telemetry/launchd.log` for tick and pass starts
+and ends. To keep a copy locally:
+
+```bash
+gcloud compute scp factory-host-1:/home/sam_deeptempo_ai/vigil-factory/telemetry/babysit/ALERTS.md ./factory-ALERTS.md --zone us-west1-a --project prod-loglm --tunnel-through-iap
+```
+
+Access: `roles/compute.osLogin`, `roles/iap.tunnelResourceAccessor` and
+`roles/compute.viewer` on the project (the last is what `gcloud compute ssh` needs to
+find the instance). Running `docker` or a tick by hand as yourself also needs
+`roles/compute.osAdminLogin`, for the `sudo` that adds you to the docker group; the
+cron jobs run as the operator and need none of that.
+
 ## Operating it
 
 - A tick by hand: `~/vigil-factory/contrib/gcp/tick.sh` (foreground), or
