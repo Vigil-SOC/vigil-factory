@@ -11,6 +11,8 @@ export FACTORY_WORKER=claude-code
 export FACTORY_MODEL=opus
 # The subscription, not the Cursor budget, pays for these: run twice the jobs.
 export FACTORY_MAX_JOBS=6
+# This Mac is the factory's; a plain local run gets one session, this one four.
+export FACTORY_MAX_SESSIONS=4
 export FACTORY_CLAUDE_BIN="$HOME/.local/bin/claude"
 cd "$ROOT" || exit 1
 

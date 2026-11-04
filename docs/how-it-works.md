@@ -837,7 +837,9 @@ to. Everything else — prompts, phases, labels, telemetry — is the same eithe
   later tick's handback is a fresh session on the PR's own branch (never a fork's). A run
   gets `worker.localMaxRunMinutes` (default `maxRunMinutes` + 60), since sessions share one
   machine; the groomer still sizes against `maxRunMinutes`. At most
-  `worker.localMaxSessions` sessions (default 4) run at once, every phase's together,
+  `worker.localMaxSessions` sessions (default 1, so a laptop stays usable beside a run;
+  `FACTORY_MAX_SESSIONS=<n>` raises it for one tick, and the Mac's and the GCP host's
+  tick scripts ask for 4) run at once, every phase's together,
   and the rest queue; time in the queue is not charged to a budget. A run that pushes
   code and runs out of budget is interrupted and resumed for one last 15-minute turn to
   commit, push, and open its PR with what it has, saying what it did not verify. Auth is
@@ -889,7 +891,9 @@ is Claude Code's estimate of what the run would have cost on the API, not a bill
 `worker.kind` for one tick; in Actions, the manual dispatch has a `worker` input that does
 the same. That is the move when the Cursor account is out of usage: nothing else changes.
 `FACTORY_MAX_JOBS=<n>` overrides `maxConcurrentJobs` the same way, for a local tick that
-spends the machine's subscription rather than the Cursor budget the committed value is sized for.
+spends the machine's subscription rather than the Cursor budget the committed value is sized for,
+and `FACTORY_MAX_SESSIONS=<n>` overrides `worker.localMaxSessions` for a host that can carry
+more than one Claude Code session at once.
 
 **Switching models.** `worker.models` holds alternatives to `worker.model` by name, and
 `FACTORY_MODEL=<name>` runs one of them for one tick; the manual dispatch's `model` input

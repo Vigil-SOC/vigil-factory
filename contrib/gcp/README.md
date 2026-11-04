@@ -6,7 +6,7 @@ A VM in `prod-loglm` (us-west1-a) that runs a factory tick every two hours on th
 awake. Ticks are idempotent and claim their work, so this host, the Mac and the
 Actions backstop can all run at once.
 
-What it is: an e2-standard-8 (8 vCPU, 32 GB), 200 GB pd-balanced disk, Ubuntu 24.04
+What it is: an e2-standard-16 (16 vCPU, 64 GB, enough for four Claude Code sessions and their review containers at once), 200 GB pd-balanced disk, Ubuntu 24.04
 LTS, network tag `factory`, OS Login on, **no service account** (the agents run with
 `--dangerously-skip-permissions` and nothing here needs Google Cloud APIs). It has an
 ephemeral external IP for egress only; the project firewall admits nothing inbound but
@@ -15,7 +15,7 @@ privileged container each), Node 24, `gh`, Claude Code pinned to the Mac's versi
 `~/.local/bin/claude`, the checkout in `~/vigil-factory`, and a cron entry
 (`47 */2 * * *`, off the Actions schedule `17 */2`) running `contrib/gcp/tick.sh`.
 
-Cost: about $196/month on demand for the VM in us-west1 (e2-standard-8, ~$0.268/h
+Cost: about $390/month on demand for the VM in us-west1 (e2-standard-16, ~$0.536/h
 × 730 h), plus ~$20/month for the 200 GB pd-balanced disk and a few dollars for the
 external IP: roughly **$220/month**. Stopping the VM stops the compute charge; the
 disk is still billed.
@@ -84,3 +84,20 @@ the tunnel. Anyone with OS Login can read the tokens in `.env`.
   prod-loglm`), provision, and re-add `GH_TOKEN`.
 - `update.sh`'s alerts (`contrib/babysit/alert.sh`) land in
   `telemetry/babysit/ALERTS.md` on the VM; the macOS notification does not exist here.
+
+## The babysitter
+
+`contrib/gcp/babysit.sh` runs every 90 minutes from cron (installed by `setup.sh`):
+the same `contrib/babysit/prompt.md` the Mac's babysitter runs, with this host's tick
+filled in. It merges the factory's PRs with the VM's `GH_TOKEN`, starts a tick through
+`contrib/gcp/tick.sh` when none runs, and writes alerts to `telemetry/babysit/ALERTS.md`
+(no notification here; read that file, or the journal in `telemetry/babysit/journal.md`).
+Its pass logs are `telemetry/babysit/pass-gcp-*.log`. A Mac babysitter and this one may
+run at once: merging an already-merged PR is a no-op, and each keeps its own journal.
+
+## Sessions at once
+
+A plain `npm run factory -- run` anywhere gets one Claude Code session at a time
+(`worker.localMaxSessions`, default 1). `tick.sh` on this host asks for four through
+`FACTORY_MAX_SESSIONS`; put `FACTORY_MAX_SESSIONS=<n>` in the VM's `.env` to change it
+without editing the script. `FACTORY_MAX_JOBS` (6 here) bounds pipelines the same way.

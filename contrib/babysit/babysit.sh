@@ -35,7 +35,15 @@ token="$(grep -E '^[[:space:]]*CLAUDE_CODE_OAUTH_TOKEN[[:space:]]*=' "$ROOT/.env
 [[ -n "$token" ]] && export CLAUDE_CODE_OAUTH_TOKEN="$token"
 
 LOG="$DIR/pass-$(date -u +%Y%m%dT%H%MZ).log"
-claude -p "$(cat "$ROOT/contrib/babysit/prompt.md")" --model opus --effort medium --dangerously-skip-permissions > "$LOG" 2>&1
+# prompt.md is shared with the GCP host; the host-specific lines are filled here.
+prompt="$(sed \
+  -e 's|{{TICK_HOW}}|`contrib/tick-claude-code.sh` under the launchd job `com.deeptempo.factory.claude-code`|g' \
+  -e 's|{{TICK_LOG}}|telemetry/tick-claude-<UTC start>.log|g' \
+  -e 's|{{TICK_PID}}|telemetry/.tick.lock/pid|g' \
+  -e 's|{{TICK_LOCK}}|telemetry/.tick.lock|g' \
+  -e "s|{{TICK_START}}|launchctl kickstart gui/$(id -u)/com.deeptempo.factory.claude-code|g" \
+  "$ROOT/contrib/babysit/prompt.md")"
+claude -p "$prompt" --model opus --effort medium --dangerously-skip-permissions > "$LOG" 2>&1
 rc=$?
 if (( rc != 0 )) || [[ ! -s "$LOG" ]]; then
   # The tick needs no judgment to start, so a failed session still starts it.

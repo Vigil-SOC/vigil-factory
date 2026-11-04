@@ -11,10 +11,9 @@ has already made a decision and only machinery stood between it and the result, 
 the decision out (section 2 says which). Writing code, judging issues, and judging
 other people's PRs are not yours.
 
-- Factory repo: this checkout. While Cursor is out of usage the tick runs on this Mac,
-  not in Actions: `contrib/tick-claude-code.sh` under the launchd job
-  `com.deeptempo.factory.claude-code` (Claude Code worker, Opus, up to 6 jobs). Its logs
-  are `telemetry/tick-claude-<UTC start>.log`, and `telemetry/launchd.log` has one start
+- Factory repo: this checkout. While Cursor is out of usage the tick runs on this host,
+  not in Actions: {{TICK_HOW}} (Claude Code worker, Opus, up to 6 jobs). Its logs
+  are `{{TICK_LOG}}`, and `telemetry/launchd.log` has one start
   and one end line per tick. The Actions workflow `factory-tick` is disabled; never
   dispatch or re-enable it.
 - Target repo: the one in `factory.config.json` (`repo.owner`/`repo.name`).
@@ -27,7 +26,7 @@ Read the local tick logs that started or ended since your last journal entry
 (`tail -20 telemetry/launchd.log` lists them). The factory's own log lines, without the
 polling noise:
 
-    grep '^\[' telemetry/tick-claude-<…>.log | grep -v 'still running$\|: RUNNING$'
+    grep '^\[' {{TICK_LOG}} | grep -v 'still running$\|: RUNNING$'
 
 The structured record of every groom, run, and outcome is `telemetry/runs.jsonl` in this
 checkout (one JSON row per line, `type` = groom | run | review | env | deps | simplify |
@@ -172,15 +171,15 @@ is the factory's verdict; leave it. Never relabel the issue yourself.
 
 ## 3. Start the next tick
 
-If no local tick is running (`telemetry/.tick.lock/pid` is missing or names a dead
-process), start one: `launchctl kickstart gui/$(id -u)/com.deeptempo.factory.claude-code`.
+If no local tick is running (`{{TICK_PID}}` is missing or names a dead
+process), start one: `{{TICK_START}}`.
 Then confirm `telemetry/launchd.log` gains a "tick start" line within a minute. The job
 also starts itself every two hours, and a tick started while another runs just skips.
 
 A tick that is running is usually just running — let it be, even for hours; it awaits
 its agents. One whose log has had no new line for 90 minutes is hung (healthy ticks
 have gone quiet for over half an hour while their agents work). Kill its pid, remove
-`telemetry/.tick.lock`, start the next tick, and say so in the journal. Alert only if
+`{{TICK_LOCK}}`, start the next tick, and say so in the journal. Alert only if
 the new tick will not start, or if this keeps happening.
 
 ## 4. Alert, journal, finish
