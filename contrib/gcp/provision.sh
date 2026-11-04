@@ -23,8 +23,10 @@ if [[ -z "$status" ]]; then
   # nothing on this machine needs Google Cloud APIs, so it gets no GCP identity.
   # The ephemeral external IP is for egress only (GitHub, npm, Anthropic); the
   # firewall admits nothing inbound but IAP SSH.
+  # e2-standard-16 carries four sessions and their review containers; an
+  # e2-standard-8 (half the price) carries two, with FACTORY_MAX_SESSIONS=2 in .env.
   gcloud compute instances create "$NAME" "${G[@]}" \
-    --machine-type=e2-standard-16 \
+    --machine-type="${FACTORY_MACHINE_TYPE:-e2-standard-16}" \
     --image-family=ubuntu-2404-lts-amd64 --image-project=ubuntu-os-cloud \
     --boot-disk-size=200GB --boot-disk-type=pd-balanced \
     --tags=factory \

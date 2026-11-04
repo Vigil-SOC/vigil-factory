@@ -17,8 +17,38 @@ privileged container each), Node 24, `gh`, Claude Code pinned to the Mac's versi
 
 Cost: about $390/month on demand for the VM in us-west1 (e2-standard-16, ~$0.536/h
 × 730 h), plus ~$20/month for the 200 GB pd-balanced disk and a few dollars for the
-external IP: roughly **$220/month**. Stopping the VM stops the compute charge; the
-disk is still billed.
+external IP: roughly **$415/month**. An e2-standard-8 (`FACTORY_MACHINE_TYPE=e2-standard-8`
+at creation, `FACTORY_MAX_SESSIONS=2` in `.env`) is about half that. Stopping the VM
+stops the compute charge; the disk is still billed.
+
+## One host per person
+
+Each person who runs the factory gets a host of their own, provisioned from their
+own laptop so it carries their own `.env`: their Claude Code token (`claude setup-token`)
+and their own `GH_TOKEN`. Never share a host, and never put someone else's Claude token
+on one:
+
+- The guard that keeps two agents from starting Vigil's stack at once (the live slot in
+  `telemetry/machine/`) is per checkout. Two checkouts on one Docker daemon get past it,
+  and the stack's fixed container names and ports collide: a live test fails, or one
+  agent removes the other's containers.
+- The Claude Code login is per host. A second person's agents on your host spend your
+  subscription.
+- Hosts need nothing from each other. Ticks coordinate through GitHub (claims on
+  issues, `factory:reviewing` on PRs, stale-claim timeouts), the same way the Mac, the
+  Actions backstop and `factory-host-1` already run at once. Babysitters likewise:
+  merging a PR another host already merged is a no-op.
+
+To get yours:
+
+```bash
+# from your own vigil-factory checkout, with your .env beside it
+FACTORY_MACHINE_TYPE=e2-standard-8 contrib/gcp/provision.sh factory-host-<you>
+```
+
+Then append your `GH_TOKEN` on the VM (next section) and run the same command again.
+The project roles in "Getting on it" cover any instance, so no further access is needed.
+Name hosts `factory-host-<name>`; `factory-host-1` is the operator's.
 
 ## Files
 
