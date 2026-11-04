@@ -928,6 +928,13 @@ commits of its own, or uncommitted changes in the way, keeps running what it has
 raises an alert. A change that needs a human on each machine (a plist, a new `.env`
 key) still needs saying.
 
+**GCP host (cron, Linux):** `contrib/gcp/` builds a VM in `prod-loglm` that runs the
+`claude-code` worker's tick every two hours from cron, as the Mac's launchd job does, so
+scale-out work does not depend on a laptop. `provision.sh <name>` creates it and runs
+`setup.sh` (Docker for the per-run containers, Node, `gh`, Claude Code, the checkout,
+the cron entry); `push-env.sh` is how `.env` gets there. It needs a `GH_TOKEN` of its
+own, scoped to the factory's repos. See `contrib/gcp/README.md`.
+
 **GitHub Actions:** `.github/workflows/factory.yml` (dispatched by the babysitter, and
 scheduled every two hours as a backstop for when the Mac sleeps: a scheduled run stands
 down while any tick started in the last three hours. It may overlap the local tick safely,
