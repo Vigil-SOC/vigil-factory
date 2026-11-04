@@ -24,7 +24,7 @@ if [[ -z "$status" ]]; then
   # The ephemeral external IP is for egress only (GitHub, npm, Anthropic); the
   # firewall admits nothing inbound but IAP SSH.
   gcloud compute instances create "$NAME" "${G[@]}" \
-    --machine-type=e2-standard-8 \
+    --machine-type=e2-standard-16 \
     --image-family=ubuntu-2404-lts-amd64 --image-project=ubuntu-os-cloud \
     --boot-disk-size=200GB --boot-disk-type=pd-balanced \
     --tags=factory \

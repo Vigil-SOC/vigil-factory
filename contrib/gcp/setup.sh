@@ -1,6 +1,6 @@
 #!/bin/bash
 # Make this Ubuntu 24.04 VM a factory host: Docker, Node 24, gh, Claude Code,
-# the factory checkout, and a cron entry for contrib/gcp/tick.sh. Runs as the
+# the factory checkout, and cron entries for contrib/gcp/tick.sh and babysit.sh. Runs as the
 # login user (with sudo), from provision.sh; safe to re-run.
 # Expects ~/vigil-factory/.env with GH_TOKEN (push-env.sh puts it there).
 # FACTORY_BRANCH=<branch> checks out a branch other than main (see below).
@@ -69,8 +69,13 @@ install_cron() {
   [[ -x "$DIR/contrib/gcp/tick.sh" ]] || return 0
   say "cron"
   mkdir -p "$DIR/telemetry"
-  local line="47 */2 * * * $DIR/contrib/gcp/tick.sh >> $DIR/telemetry/cron.stdout.log 2>&1"
-  { crontab -l 2>/dev/null | grep -v 'contrib/gcp/tick.sh' || true; echo "$line"; } | crontab -
+  local tick="47 */2 * * * $DIR/contrib/gcp/tick.sh >> $DIR/telemetry/cron.stdout.log 2>&1"
+  # The babysitter every 90 minutes (cron has no 90-minute step: on the hour
+  # every third hour, and at :30 of the hours between), merging what the
+  # factory built and starting a tick if none runs. See contrib/gcp/babysit.sh.
+  local sit1="0 */3 * * * $DIR/contrib/gcp/babysit.sh >> $DIR/telemetry/cron.stdout.log 2>&1"
+  local sit2="30 1-23/3 * * * $DIR/contrib/gcp/babysit.sh >> $DIR/telemetry/cron.stdout.log 2>&1"
+  { crontab -l 2>/dev/null | grep -v 'contrib/gcp/tick.sh\|contrib/gcp/babysit.sh' || true; echo "$tick"; echo "$sit1"; echo "$sit2"; } | crontab -
 }
 
 if [[ -z "$token" ]]; then
