@@ -60,7 +60,7 @@ grep -q 'HOME/.local/bin' "$HOME/.profile" 2>/dev/null || echo 'export PATH="$HO
 
 # The token for the clone, the fetches and the agents' pushes: GH_TOKEN in
 # .env, the VM's own (README). Nothing falls back to another login.
-token="$(grep -E '^[[:space:]]*GH_TOKEN[[:space:]]*=' "$DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"' ")"
+token="$(grep -E '^[[:space:]]*GH_TOKEN[[:space:]]*=' "$DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"' ")" || true
 
 # Every two hours at :47, off the Actions schedule (17 */2). The tick's own
 # lock makes one still running when the next is due skip; without GH_TOKEN it
