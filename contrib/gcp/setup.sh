@@ -58,9 +58,27 @@ if [[ "$(claude --version 2>/dev/null | awk '{print $1}')" != "$CLAUDE_VERSION" 
 fi
 grep -q 'HOME/.local/bin' "$HOME/.profile" 2>/dev/null || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.profile"
 
-# The token for the clone, from the .env push-env.sh put there.
+# The token for the clone, the fetches and the agents' pushes: GH_TOKEN in
+# .env, the VM's own (README). Nothing falls back to another login.
 token="$(grep -E '^[[:space:]]*GH_TOKEN[[:space:]]*=' "$DIR/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"' ")"
-[[ -n "$token" ]] || { echo "no GH_TOKEN in $DIR/.env; run contrib/gcp/push-env.sh first" >&2; exit 1; }
+
+# Every two hours at :47, off the Actions schedule (17 */2). The tick's own
+# lock makes one still running when the next is due skip; without GH_TOKEN it
+# stops at once, so the entry can wait for the token.
+install_cron() {
+  [[ -x "$DIR/contrib/gcp/tick.sh" ]] || return 0
+  say "cron"
+  mkdir -p "$DIR/telemetry"
+  local line="47 */2 * * * $DIR/contrib/gcp/tick.sh >> $DIR/telemetry/cron.stdout.log 2>&1"
+  { crontab -l 2>/dev/null | grep -v 'contrib/gcp/tick.sh' || true; echo "$line"; } | crontab -
+}
+
+if [[ -z "$token" ]]; then
+  install_cron
+  say "versions: node $(node -v), $(claude --version), $(gh --version | head -1), $(docker --version)"
+  echo "== setup: waiting for GH_TOKEN: append GH_TOKEN=<token> to $DIR/.env (see contrib/gcp/README.md), then re-run setup. Skipped: the checkout, npm ci." >&2
+  exit 3
+fi
 export GH_TOKEN="$token"
 
 # The checkout. .env is already in $DIR, so it is initialised in place rather
@@ -89,13 +107,7 @@ if [[ "$(git -C "$DIR" symbolic-ref -q --short HEAD)" != "$branch" ]] || ! git -
 fi
 say "npm ci"
 (cd "$DIR" && npm ci --silent)
-mkdir -p "$DIR/telemetry"
-
-say "cron"
-# Every two hours at :47, off the Actions schedule (17 */2). The tick's own
-# lock makes one still running when the next is due skip.
-line="47 */2 * * * $DIR/contrib/gcp/tick.sh >> $DIR/telemetry/cron.stdout.log 2>&1"
-{ crontab -l 2>/dev/null | grep -v 'contrib/gcp/tick.sh' || true; echo "$line"; } | crontab -
+install_cron
 
 say "versions: node $(node -v), $(claude --version), $(gh --version | head -1), $(docker --version)"
 say "ok"

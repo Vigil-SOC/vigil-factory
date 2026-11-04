@@ -47,5 +47,11 @@ done
 
 "$HERE/push-env.sh" "$NAME"
 gcloud compute scp "$HERE/setup.sh" "$NAME:/tmp/factory-setup.sh" "${G[@]}" --tunnel-through-iap --quiet
-"${SSH[@]}" --command "FACTORY_BRANCH=${FACTORY_BRANCH:-main} bash /tmp/factory-setup.sh"
+rc=0
+"${SSH[@]}" --command "FACTORY_BRANCH=${FACTORY_BRANCH:-main} bash /tmp/factory-setup.sh" || rc=$?
+if (( rc == 3 )); then
+  echo "$NAME is built but waiting for GH_TOKEN: append it to ~/vigil-factory/.env on the VM, then re-run: $0 $NAME" >&2
+  exit 3
+fi
+(( rc == 0 )) || { echo "setup on $NAME failed (exit $rc)" >&2; exit "$rc"; }
 echo "done: $NAME is set up. Get on it with: gcloud compute ssh $NAME --zone $ZONE --project $PROJECT --tunnel-through-iap"

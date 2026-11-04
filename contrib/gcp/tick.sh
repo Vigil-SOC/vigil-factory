@@ -35,6 +35,13 @@ while IFS= read -r line; do
   [[ -n "${!key+x}" ]] || export "$key=$value"
 done < <(cat .env 2>/dev/null)
 
+# The VM's own token, scoped to the factory's repos (contrib/gcp/README.md).
+# Without it nothing can fetch, push or open a PR, and nothing may stand in.
+if [[ -z "${GH_TOKEN:-}" ]]; then
+  echo "[$(date -u +%FT%TZ)] tick not started: GH_TOKEN is unset in $ROOT/.env; append GH_TOKEN=<token> (see contrib/gcp/README.md)" | tee -a telemetry/launchd.log >&2
+  exit 3
+fi
+
 export FACTORY_WORKER=claude-code
 # worker.model is Grok (a Cursor model); Claude Code runs the Opus alternative.
 export FACTORY_MODEL=opus
