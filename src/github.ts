@@ -67,14 +67,27 @@ let trusted: Promise<Set<string>> | undefined;
 /**
  * Who may write a factory marker: this runner's own account, and every member
  * of the org that owns the repo. Membership is read with the runner's token, so
- * private members count; a token that cannot see them trusts only itself.
+ * private members count. A repo a user owns has no org, and trusts only the runner.
+ *
+ * A token that reaches the org but cannot see its private members (a
+ * fine-grained PAT without the org's Members: read) gets back a list without
+ * the runner in it. Trusting only itself then is not safe, it is a loop: every
+ * other runner's groom comment reads as a human reply, so each runner's groom
+ * voids the others' and the same epics are groomed on every tick. So that
+ * stops the tick, saying what the token is missing.
  */
 function trustedAuthors(repo: string): Promise<Set<string>> {
   return (trusted ??= (async () => {
     const owner = repo.split('/')[0]!;
-    const members = await gh(['api', '--paginate', `orgs/${owner}/members`, '--jq', '.[].login'])
-      .then((out) => out.split('\n').filter(Boolean), () => []);
-    return new Set([await ghLogin(), ...members]);
+    const [me, members] = await Promise.all([
+      ghLogin(),
+      gh(['api', '--paginate', `orgs/${owner}/members`, '--jq', '.[].login'])
+        .then((out) => out.split('\n').filter(Boolean), () => null),
+    ]);
+    if (members && !members.includes(me)) {
+      throw new Error(`${me}'s token cannot see ${owner}'s members, so other runners' factory comments would read as human replies and their grooms would void each other's. Give the token the organization permission Members: read (or read:org), or run as a member of ${owner}.`);
+    }
+    return new Set([me, ...(members ?? [])]);
   })());
 }
 

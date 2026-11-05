@@ -69,7 +69,9 @@ Name hosts `factory-host-<name>`; `factory-host-1` is the operator's.
 The VM needs `GH_TOKEN` in `~/vigil-factory/.env`: `gh`, `update.sh`'s fetch, and the
 agents' clones, pushes and PRs all use it. It is the VM's own: a fine-grained PAT (or
 GitHub App token) scoped to `Vigil-SOC/vigil` and `Vigil-SOC/vigil-factory` with
-contents, pull requests, issues and checks read/write, plus whatever the factory's
+contents, pull requests, issues and checks read/write, the organization permission
+Members: read (without it the tick stops: other people's runners' comments would read as
+human replies, and their epic grooms and this host's would void each other's), plus whatever the factory's
 phases need on the target repo (Dependabot and code scanning alerts, security
 advisories). Do **not** use anyone's personal `gh auth token`: everyone with OS Login
 on this VM can read it (docs/threat-model.md already names the broad PAT as a risk).
