@@ -421,6 +421,8 @@ On your session branch, bring in each PR's changes (\`git fetch origin <its bran
 
 A bump that conflicts with another in a way you cannot resolve, or needs more than a small compatibility change to the code, is dropped: leave it out and say why.
 
+A GitHub Actions bump changes the workflows themselves. Read what the new major version changed against how this repo's workflows use that action, and make the small workflow change it needs; a workflow that only runs on a schedule, a release or a tag is not exercised by this PR's CI, so read those with that in mind.
+
 Do not test live. CI runs the repo's checks on the PR, the factory merges it on green, and a red check comes back to you once; if a bump broke it and the fix is not small, drop that bump rather than build around it.
 
 The PR description lists what it carries, one line per Dependabot PR: \`Supersedes #<number>\`. The factory closes exactly those once it merges, so keep that list true if you drop one later. Then one line per PR you dropped: \`Dropped #<number>: <why>\`. The factory files each dropped bump as an issue that an implementer takes up from your words alone, so say what breaks and what taking the upgrade would need. Then a **Verification** section: **Ran** — the regeneration and anything else you checked; **Did not run** — the live test, and CI's checks, which are CI's.
