@@ -200,11 +200,24 @@ export interface PrData {
 
 const PR_FIELDS = 'number,url,title,state,isDraft,createdAt,mergedAt,closedAt,body,reviews,comments,headRefName,additions,deletions,author';
 
-let login: Promise<string> | undefined;
+let user: Promise<{ login: string; id: number }> | undefined;
 
 /** The account this runner acts as on GitHub, and so the author of every PR it opens. */
 export function ghLogin(): Promise<string> {
-  return (login ??= ghJson<{ login: string }>(['api', 'user']).then((u) => u.login));
+  return (user ??= ghJson<{ login: string; id: number }>(['api', 'user'])).then((u) => u.login);
+}
+
+/**
+ * The author of the commits an agent makes where no git identity is set (a CI
+ * runner, a fresh VM, a container): the runner's own account, by its noreply
+ * address, so GitHub attributes each commit to the account that pushed it. An
+ * address that maps to no account makes a commit "unattributed", and the
+ * target repo's ruleset then holds any PR carrying one for an extra approval:
+ * the factory's fixes on someone else's PR (#3816) could never merge.
+ */
+export async function ghCommitIdentity(): Promise<{ name: string; email: string }> {
+  const u = await (user ??= ghJson<{ login: string; id: number }>(['api', 'user']));
+  return { name: u.login, email: `${u.id}+${u.login}@users.noreply.github.com` };
 }
 
 export async function listPrsByLabel(repo: string, label: string, state: 'open' | 'closed' | 'merged' | 'all', limit = 50): Promise<PrData[]> {
