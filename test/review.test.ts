@@ -316,6 +316,7 @@ describe('review prompt', () => {
   it('judges a PR on its own direction, with no issue or epic behind it', () => {
     expect(p).toContain('A PR needs no issue or epic behind it');
     expect(p).toContain('Never close one for linking none');
+    expect(p).toContain('a past verdict, not a premise');
   });
 
   it('narrows a PR to the part worth having rather than closing it whole', () => {
