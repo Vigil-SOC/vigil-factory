@@ -318,6 +318,12 @@ describe('review prompt', () => {
     expect(p).toContain('Never close one for linking none');
   });
 
+  it('narrows a PR to the part worth having rather than closing it whole', () => {
+    expect(p).toContain('A PR need not land whole or not at all');
+    expect(p).toContain('Close it only when nothing in it is worth having on its own');
+    expect(p).toContain('what you took out');
+  });
+
   it('deletes the unit and integration tests a PR carries rather than closing or leaving it', () => {
     expect(p).toContain('delete any the PR carries in a commit of your own');
     expect(p).toContain('never a reason to close or leave it');

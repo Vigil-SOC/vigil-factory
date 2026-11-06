@@ -179,7 +179,9 @@ A pull request needs no issue or epic behind it. It brings its own direction,
 and the review judges that direction and the code together, in one pass,
 against everything above: whether Vigil does SOC work better with it, whether
 it is one correct change, and whether it does what it says. A PR is never
-closed, or sent to an epic, for lacking one.
+closed, or sent to an epic, for lacking one. Like an issue, it may be
+narrower than it asks: the part worth having lands, the rest is taken out and
+named, and only a PR with nothing worth keeping is closed.
 
 Vagueness is not one of those reasons. The implementer is a capable agent: it
 chooses names, payloads, signatures, and structure, and does not need the issue
