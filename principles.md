@@ -65,7 +65,7 @@ whose surface area no longer matches its value.
 - Deleting code, collapsing two mechanisms into one, or removing a layer is
   worth more than an equivalent amount of new code.
 - If a change needs a new module, a new config surface, and a new abstraction to
-  connect them, it is almost certainly too large or the wrong shape.
+  connect them, it is almost certainly the wrong shape.
 
 ## Every abstraction must fight for its life
 
@@ -155,7 +155,7 @@ An issue is not ready when there is no such change — when it pulls against the
 above, when its premise is already false in the code, or when it is too large
 with no smaller correct piece inside it.
 
-Product direction enters through epics, and only through epics. An issue that
+An issue's product direction enters through epics. An issue that
 is a direction rather than a PR is an epic whether or not it was filed as one:
 the groomer says so and the factory labels it. An epic is groomed as a
 direction, not a PR: the question is whether it is worth building toward —
@@ -174,6 +174,12 @@ nothing: a child whose point depends on it is needs-work, blocked on the epic.
 A human who disagrees with a settled direction replies on the epic, and it is
 groomed again with that reply in view. That is the veto; nothing waits for an
 approval that was not asked for.
+
+A pull request needs no issue or epic behind it. It brings its own direction,
+and the review judges that direction and the code together, in one pass,
+against everything above: whether Vigil does SOC work better with it, whether
+it is one correct change, and whether it does what it says. A PR is never
+closed, or sent to an epic, for lacking one.
 
 Vagueness is not one of those reasons. The implementer is a capable agent: it
 chooses names, payloads, signatures, and structure, and does not need the issue

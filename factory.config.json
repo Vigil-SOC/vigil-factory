@@ -88,6 +88,7 @@
   },
   "review": {
     "enabled": true,
+    "model": "opus",
     "maxPerTick": 5
   },
   "deps": {

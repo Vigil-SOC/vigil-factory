@@ -313,6 +313,11 @@ describe('review prompt', () => {
     expect(p).not.toContain('the full suites CI runs');
   });
 
+  it('judges a PR on its own direction, with no issue or epic behind it', () => {
+    expect(p).toContain('A PR needs no issue or epic behind it');
+    expect(p).toContain('Never close one for linking none');
+  });
+
   it('deletes the unit and integration tests a PR carries rather than closing or leaving it', () => {
     expect(p).toContain('delete any the PR carries in a commit of your own');
     expect(p).toContain('never a reason to close or leave it');
