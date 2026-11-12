@@ -213,7 +213,7 @@ export function ghLogin(): Promise<string> {
  * address, so GitHub attributes each commit to the account that pushed it. An
  * address that maps to no account makes a commit "unattributed", and the
  * target repo's ruleset then holds any PR carrying one for an extra approval:
- * the factory's fixes on someone else's PR (#3816) could never merge.
+ * the factory's fixes on someone else's PR could never merge.
  */
 export async function ghCommitIdentity(): Promise<{ name: string; email: string }> {
   const u = await (user ??= ghJson<{ login: string; id: number }>(['api', 'user']));

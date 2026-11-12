@@ -16,7 +16,7 @@ something, and the design assumes it can be.
 | --- | --- | --- |
 | `FACTORY_GH_TOKEN` (or the `gh` login) | Actions secret; the tick's environment | Push branches, open, label, close and merge PRs, and comment on the target repo; read its alerts and, with the right scope, its private advisories |
 | `CURSOR_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` | Actions secrets; `.env` | Spend on the Cursor account or Claude subscription |
-| `worker.agentEnv` credentials (`OPENROUTER_API_KEY` today) | Same | Spend, and whatever the named service allows |
+| `worker.agentEnv` credentials | Same | Spend, and whatever the named service allows |
 | The target repository | GitHub | Its default branch, releases, and every secret its own workflows can read |
 | The machine running a tick | The `claude-code` worker, and the Actions runner | Whatever that machine can reach |
 | The `telemetry` branch | This repo | Spend, run history, and the GitHub logins of contributors |
@@ -103,7 +103,7 @@ Be clear-eyed about these when deciding whether to run a factory on a given repo
    permissions, and nothing else. In Actions the tick step also holds every other
    secret in its environment.
 4. **The factory can merge without a person.** The review phase merges outside PRs on
-   its own verdict, and the optional babysitter in `contrib/babysit/` merges the
+   its own verdict, and a babysitter, where a deployment runs one, merges the
    factory's own PRs unattended. CI is then the only gate on those. Branch protection
    with required checks and, if you want a human in the loop, a required review is the
    control for this; the factory respects it and never bypasses it.

@@ -68,8 +68,8 @@ export function concluded(pr: Pick<DepsPr, 'headRefOid' | 'comments'>): boolean 
  * (changes under `.github/`) are offered like any other. The batch PR is the
  * runner's own, and the runner has write access, so the `.github/` rule (a
  * change there only from an author with write access) is met by who opens the
- * batch, not by Dependabot. #2330 sat open for three weeks while they were
- * left for a human.
+ * batch, not by Dependabot. Left out, they sat open for weeks waiting on a
+ * human.
  */
 export function depsQueue(prs: DepsPr[]): DepsPr[] {
   return prs

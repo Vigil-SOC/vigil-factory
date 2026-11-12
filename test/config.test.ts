@@ -155,7 +155,7 @@ describe('local run budget', () => {
 });
 
 describe('local sessions', () => {
-  it('runs four claude-code sessions at once unless set, and refuses what is not a count', () => {
+  it('runs one claude-code session at once unless set, and refuses what is not a count', () => {
     expect(loadConfig(configDir({})).worker.localMaxSessions).toBe(1);
     expect(loadConfig(configDir({ localMaxSessions: 2 })).worker.localMaxSessions).toBe(2);
     expect(() => loadConfig(configDir({ localMaxSessions: 0 }))).toThrow(/localMaxSessions/);
