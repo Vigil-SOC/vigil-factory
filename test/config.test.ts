@@ -42,6 +42,20 @@ describe('agent credentials', () => {
   });
 });
 
+describe('tests policy', () => {
+  it('a config that predates it keeps no tests; a deployment turns it on', () => {
+    expect(loadConfig(configDir({})).tests).toEqual({ keep: false });
+    expect(loadConfig(configDir({}, {}, { tests: { keep: true } })).tests.keep).toBe(true);
+  });
+});
+
+describe('merge policy', () => {
+  it('no deployment bypasses an approval unless it says so', () => {
+    expect(loadConfig(configDir({})).merge).toEqual({ bypassApproval: false });
+    expect(loadConfig(configDir({}, {}, { merge: { bypassApproval: true } })).merge.bypassApproval).toBe(true);
+  });
+});
+
 describe('model override', () => {
   const models = {
     opus: { id: 'claude-opus-5-5', params: { effort: 'medium' } },

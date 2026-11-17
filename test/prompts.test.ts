@@ -204,6 +204,17 @@ describe('simplification', () => {
     }
   });
 
+  it('a repo that keeps its tests says so to both, in place of the no-tests rule', () => {
+    const kept = [implementPrompt(task, [], true), simplifyPrompt({ recentPrs: [], declinedPrs: [], budget: { maxRunMinutes: 90 }, keepTests: true })];
+    for (const prompt of kept) {
+      expect(prompt).toContain('This repo keeps its tests and CI runs them');
+      expect(prompt).toContain('never weaken, skip, or delete a test to make a change pass');
+      expect(prompt).not.toContain('Do not write unit or integration tests');
+    }
+    expect(p).toContain('Do not write unit or integration tests');
+    expect(p).not.toContain('This repo keeps its tests');
+  });
+
   it('states the line-count rule and names the ways agents cheat it', () => {
     expect(p).toContain('remove more lines than it adds');
     expect(p).toContain('no helper to replace three plain lines');

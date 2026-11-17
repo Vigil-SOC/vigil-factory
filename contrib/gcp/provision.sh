@@ -4,11 +4,18 @@
 # copy .env to it (push-env.sh), then run setup.sh on it. Re-running against an
 # existing instance just pushes .env and re-runs setup, which is idempotent.
 # Usage: contrib/gcp/provision.sh <instance-name>
+# The host runs the factory this checkout is: the repo its `origin` names,
+# checked out in ~/<repo name> (FACTORY_REPO=<owner/name> overrides).
 # FACTORY_GCP_PROJECT / FACTORY_GCP_ZONE override the project and zone;
-# FACTORY_BRANCH puts the host's checkout on a branch other than main.
+# FACTORY_BRANCH puts the host's checkout on a branch other than main;
+# FACTORY_BABYSIT=0 leaves the babysitter's cron entries out, for a deployment
+# whose pull requests a person merges.
 set -euo pipefail
 NAME="${1:?usage: provision.sh <instance-name>}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
+REPO="${FACTORY_REPO:-$(git -C "$HERE" remote get-url origin | sed -E 's#^(git@github\.com:|https://github\.com/)##; s#(\.git)?/?$##')}"
+[[ "$REPO" == */* ]] || { echo "cannot tell which factory repo this is from origin; set FACTORY_REPO=<owner/name>" >&2; exit 1; }
+DIR_NAME="${REPO##*/}"
 PROJECT="${FACTORY_GCP_PROJECT:-prod-loglm}"
 ZONE="${FACTORY_GCP_ZONE:-us-west1-a}"
 G=(--project "$PROJECT" --zone "$ZONE")
@@ -30,7 +37,7 @@ if [[ -z "$status" ]]; then
     --image-family=ubuntu-2404-lts-amd64 --image-project=ubuntu-os-cloud \
     --boot-disk-size=200GB --boot-disk-type=pd-balanced \
     --tags=factory \
-    --labels=role=vigil-factory \
+    --labels="role=$(tr '[:upper:].' '[:lower:]-' <<<"$DIR_NAME")" \
     --metadata=enable-oslogin=TRUE \
     --no-service-account --no-scopes
 elif [[ "$status" != RUNNING ]]; then
@@ -50,9 +57,9 @@ done
 "$HERE/push-env.sh" "$NAME"
 gcloud compute scp "$HERE/setup.sh" "$NAME:/tmp/factory-setup.sh" "${G[@]}" --tunnel-through-iap --quiet
 rc=0
-"${SSH[@]}" --command "FACTORY_BRANCH=${FACTORY_BRANCH:-main} bash /tmp/factory-setup.sh" || rc=$?
+"${SSH[@]}" --command "FACTORY_REPO=$REPO FACTORY_BRANCH=${FACTORY_BRANCH:-main} FACTORY_BABYSIT=${FACTORY_BABYSIT:-1} bash /tmp/factory-setup.sh" || rc=$?
 if (( rc == 3 )); then
-  echo "$NAME is built but waiting for GH_TOKEN: append it to ~/vigil-factory/.env on the VM, then re-run: $0 $NAME" >&2
+  echo "$NAME is built but waiting for GH_TOKEN: append it to ~/$DIR_NAME/.env on the VM, then re-run: $0 $NAME" >&2
   exit 3
 fi
 (( rc == 0 )) || { echo "setup on $NAME failed (exit $rc)" >&2; exit "$rc"; }

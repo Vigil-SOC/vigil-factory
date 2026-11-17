@@ -23,7 +23,9 @@ trap 'rm -rf "$LOCK"' EXIT
 # tick. A pass does not wait for a running tick: a local one awaits its agents
 # for hours, and merging does not need it finished. The tick's lock holds its
 # pid; a lock whose pid is gone is a tick that died.
-TICK_JOB="gui/$(id -u)/com.deeptempo.factory.claude-code"
+# contrib/install-launchd.sh gives each checkout's jobs a prefix of their own.
+TICK_LABEL="${FACTORY_LAUNCHD_PREFIX:-com.deeptempo.factory}.claude-code"
+TICK_JOB="gui/$(id -u)/$TICK_LABEL"
 live_tick() {
   kill -0 "$(cat "$ROOT/telemetry/.tick.lock/pid" 2>/dev/null)" 2>/dev/null
 }
@@ -37,11 +39,11 @@ token="$(grep -E '^[[:space:]]*CLAUDE_CODE_OAUTH_TOKEN[[:space:]]*=' "$ROOT/.env
 LOG="$DIR/pass-$(date -u +%Y%m%dT%H%MZ).log"
 # prompt.md is shared with the GCP host; the host-specific lines are filled here.
 prompt="$(sed \
-  -e 's|{{TICK_HOW}}|`contrib/tick-claude-code.sh` under the launchd job `com.deeptempo.factory.claude-code`|g' \
+  -e "s|{{TICK_HOW}}|\`contrib/tick-claude-code.sh\` under the launchd job \`$TICK_LABEL\`|g" \
   -e 's|{{TICK_LOG}}|telemetry/tick-claude-<UTC start>.log|g' \
   -e 's|{{TICK_PID}}|telemetry/.tick.lock/pid|g' \
   -e 's|{{TICK_LOCK}}|telemetry/.tick.lock|g' \
-  -e "s|{{TICK_START}}|launchctl kickstart gui/$(id -u)/com.deeptempo.factory.claude-code|g" \
+  -e "s|{{TICK_START}}|launchctl kickstart $TICK_JOB|g" \
   "$ROOT/contrib/babysit/prompt.md")"
 claude -p "$prompt" --model opus --effort medium --dangerously-skip-permissions > "$LOG" 2>&1
 rc=$?

@@ -146,6 +146,13 @@ export interface FactoryConfig {
    *  agent, the lockfile regenerated, and the batch merged on green CI under
    *  the review phase's rules. Off by default: it merges. */
   deps: { enabled: boolean };
+  /** How the factory merges. `bypassApproval` (default false): when the base
+   *  branch requires an approving review and that review is the only thing
+   *  missing — no conflict, every check green, every required check reported —
+   *  merge with `--admin`. For a deployment whose runner is a person's account
+   *  standing in for a service account: it cannot approve the PRs it opened,
+   *  so without this they wait for someone else. Never past a check. */
+  merge: { bypassApproval: boolean };
   /** The security phase: each tick one agent takes the most severe group of
    *  the repo's open Dependabot and code scanning alerts, at or above
    *  `minSeverity`, that one PR can fix, and opens that PR — no issue, no
@@ -159,6 +166,12 @@ export interface FactoryConfig {
    * on one issue is the collision the factory exists to avoid.
    */
   assignedIssues: { groom: boolean; implement: boolean };
+  /** Whether the target repo keeps unit and integration tests. Off (the
+   *  default), agents write none, verify by running the change, and a review
+   *  deletes the ones an outside PR carries. On, for a repo whose tests are
+   *  part of what it ships, agents follow the repo's own practice and never
+   *  weaken or delete a test to make a change pass. */
+  tests: { keep: boolean };
   telemetryDir: string;
   staleRunHours: number;
   /** The throttle, in one number: how many jobs may exist at once, counting
@@ -271,6 +284,8 @@ export function loadConfig(root: string = projectRoot): FactoryConfig {
   config.review.enabled ??= false;
   config.deps ??= { enabled: false };
   config.deps.enabled ??= false;
+  config.merge ??= { bypassApproval: false };
+  config.merge.bypassApproval ??= false;
   config.review.maxPerTick ??= 3;
   if (!Number.isInteger(config.review.maxPerTick) || config.review.maxPerTick < 1) {
     throw new Error(`review.maxPerTick must be a positive integer, got ${JSON.stringify(config.review.maxPerTick)}`);
@@ -285,6 +300,8 @@ export function loadConfig(root: string = projectRoot): FactoryConfig {
   // that pulls this in without asking for it, so this defaults on rather than
   // preserving the old take-anything behavior.
   config.assignedIssues ??= { groom: true, implement: false };
+  config.tests ??= { keep: false };
+  config.tests.keep ??= false;
   config.environment ??= { enabled: true, maxPrsPerPass: 3 };
   config.environment.maxPrsPerPass ??= 3;
   if (!Number.isInteger(config.environment.maxPrsPerPass) || config.environment.maxPrsPerPass < 1) {
