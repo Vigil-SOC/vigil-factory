@@ -3,6 +3,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { ModelSpec, WorkerKind } from './types.ts';
+import type { Verification } from './prompts.ts';
 import { parseSeverity, type Severity } from './security.ts';
 
 /**
@@ -172,6 +173,14 @@ export interface FactoryConfig {
    *  part of what it ships, agents follow the repo's own practice and never
    *  weaken or delete a test to make a change pass. */
   tests: { keep: boolean };
+  /** How a change is shown to work in the target repo. `file` names a
+   *  Markdown file beside this config whose text every agent that vouches for
+   *  a change is handed in place of the built-in live test, and the
+   *  environment agent is handed as the list of what the machine must carry.
+   *  Unset (the default), the built-in stands: start the app, use it through
+   *  its real entry point, look at every screen a change touches. Set it for a
+   *  repo that is proved another way, or where a live run must never happen. */
+  verify: { file?: string };
   telemetryDir: string;
   staleRunHours: number;
   /** The throttle, in one number: how many jobs may exist at once, counting
@@ -302,6 +311,7 @@ export function loadConfig(root: string = projectRoot): FactoryConfig {
   config.assignedIssues ??= { groom: true, implement: false };
   config.tests ??= { keep: false };
   config.tests.keep ??= false;
+  config.verify ??= {};
   config.environment ??= { enabled: true, maxPrsPerPass: 3 };
   config.environment.maxPrsPerPass ??= 3;
   if (!Number.isInteger(config.environment.maxPrsPerPass) || config.environment.maxPrsPerPass < 1) {
@@ -330,6 +340,17 @@ export function loadPrinciples(config: FactoryConfig, root: string = projectRoot
     throw new Error(`groom.principlesFile not found: ${path}`);
   }
   return readFileSync(path, 'utf8').trim();
+}
+
+/** What agents are told about proving a change in the target repo: whether it
+ *  keeps tests, and the deployment's own verification text where it has one. */
+export function loadVerification(config: FactoryConfig, root: string = projectRoot): Verification {
+  if (!config.verify.file) return { keepTests: config.tests.keep };
+  const path = resolve(root, config.verify.file);
+  if (!existsSync(path)) {
+    throw new Error(`verify.file not found: ${path}`);
+  }
+  return { keepTests: config.tests.keep, live: readFileSync(path, 'utf8').trim() };
 }
 
 export function repoSlug(config: FactoryConfig): string {

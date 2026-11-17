@@ -30,7 +30,7 @@
 
 import { resolve } from 'node:path';
 import type { CodingWorker, CurrentRun, DepsRecord, EnvRecord, GroomRecord, ReviewRecord, RunHandle, RunRecord, RunResult, SecurityRecord, SimplifyRecord, Task, TokenUsage } from './types.ts';
-import { agentCredentials, claudeBin, epicGroomModel, githubTokenForAgents, reviewModel, loadConfig, loadDotEnv, loadPrinciples, projectRoot, repoSlug, requireCursorApiKey, type FactoryConfig } from './config.ts';
+import { agentCredentials, claudeBin, epicGroomModel, githubTokenForAgents, reviewModel, loadConfig, loadDotEnv, loadPrinciples, loadVerification, projectRoot, repoSlug, requireCursorApiKey, type FactoryConfig } from './config.ts';
 import { RunBudgetExceeded } from './types.ts';
 import { CursorWorker } from './worker.ts';
 import { ClaudeCodeWorker } from './claudeCodeWorker.ts';
@@ -425,7 +425,7 @@ export async function runEnvironmentPhase(
   log(`environment: reading ${prUrls.length} factory PR(s) for verification the agents could not run: ${prUrls.join(' ')}`);
 
   const startedAt = new Date().toISOString();
-  const handle = await worker.start(environmentPrompt(prUrls, verdicts, agentCredentials(config).present), {
+  const handle = await worker.start(environmentPrompt(prUrls, verdicts, agentCredentials(config).present, loadVerification(config)), {
     autoCreatePR: true,
     name: 'factory-env',
   });
@@ -565,7 +565,7 @@ async function simplifyPromptFor(ctx: FactoryContext): Promise<string> {
     recentPrs: recentlyMergedFactoryPrs(merged, 5),
     declinedPrs: declinedSimplifications(closed),
     budget: ctx.config.worker,
-    keepTests: ctx.config.tests.keep,
+    verification: loadVerification(ctx.config),
   });
 }
 
@@ -845,7 +845,7 @@ async function reviewOne(ctx: FactoryContext, worker: CodingWorker, pr: ReviewPr
   // checked out by Cursor or pushed to, so its agent starts on the default
   // branch, and a session branch it commits to becomes the replacement PR.
   // It verifies against a fresh instance of the app, on a machine of its own.
-  const handle = await worker.start(reviewPrompt({ ...pr, authorMayChangeGithub }, principles, config.tests.keep), {
+  const handle = await worker.start(reviewPrompt({ ...pr, authorMayChangeGithub }, principles, loadVerification(config)), {
     ...(pr.isCrossRepository ? { autoCreatePR: true, pushOnly: true } : { prUrl: pr.url }),
     withholdCredentials: true,
     container: true,
@@ -1346,7 +1346,7 @@ function securityPromptFor(config: FactoryConfig, inputs: { offered: OfferedAler
     advisories: inputs.offered.filter((o) => o.alert.kind === 'advisory').map(offeredLine),
     openPrs: inputs.openPrs,
     budget: { maxRunMinutes: config.worker.maxRunMinutes },
-    keepTests: config.tests.keep,
+    verification: loadVerification(config),
   });
 }
 
@@ -1821,7 +1821,7 @@ async function dryRun(ctx: FactoryContext, allCandidates: Task[]): Promise<void>
   } else {
     const prUrls = unread.fresh.slice(0, config.environment.maxPrsPerPass);
     log(`environment: would read ${prUrls.length} of ${unread.fresh.length} unread factory PR(s)${unread.stale.length ? `, ignoring ${unread.stale.length} written before the environment changed` : ''}. Its prompt would be:`);
-    console.log(`\n${environmentPrompt(prUrls, verdicts, agentCredentials(ctx.config).present)}\n`);
+    console.log(`\n${environmentPrompt(prUrls, verdicts, agentCredentials(ctx.config).present, loadVerification(ctx.config))}\n`);
   }
 
   const review = await reviewInputs(config);
@@ -1832,7 +1832,7 @@ async function dryRun(ctx: FactoryContext, allCandidates: Task[]): Promise<void>
     const due = [...review.reopen, ...review.open];
     if (due.length) {
       log(`review: would review ${Math.min(due.length, config.review.maxPerTick)} of ${due.length} PR(s) from outside the factory — ${due.map((p) => `#${p.number}${review.reopen.includes(p) ? ' (reopen)' : ''}`).join(' ')}. Prompt for #${due[0]!.number}:`);
-      console.log(`\n${reviewPrompt({ ...due[0]!, authorMayChangeGithub: mayMergeGithub(await collaboratorPermission(repoSlug(config), due[0]!.author.login)) }, '<principles.md>', config.tests.keep)}\n`);
+      console.log(`\n${reviewPrompt({ ...due[0]!, authorMayChangeGithub: mayMergeGithub(await collaboratorPermission(repoSlug(config), due[0]!.author.login)) }, '<principles.md>', loadVerification(config))}\n`);
     }
   }
 
@@ -1874,7 +1874,7 @@ async function runPipeline(
   const { config, state } = ctx;
   const startedAt = new Date().toISOString();
 
-  const handle = await worker.start(implementPrompt(task, agentCredentials(config).present, config.tests.keep), {
+  const handle = await worker.start(implementPrompt(task, agentCredentials(config).present, loadVerification(config)), {
     autoCreatePR: true,
     name: `factory: #${task.issueNumber} ${task.title}`.slice(0, 100),
   });

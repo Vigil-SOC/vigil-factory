@@ -61,6 +61,7 @@ function config(maxConcurrentJobs: number): FactoryConfig {
     security: { enabled: false, minSeverity: 'high' },
     assignedIssues: { groom: true, implement: false },
     tests: { keep: false },
+    verify: {},
     telemetryDir: 'telemetry',
     staleRunHours: 24,
     maxConcurrentJobs,
