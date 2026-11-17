@@ -41,6 +41,14 @@ live_tick() {
 token="$(grep -E '^[[:space:]]*CLAUDE_CODE_OAUTH_TOKEN[[:space:]]*=' "$ROOT/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"' ")"
 [[ -n "$token" ]] && export CLAUDE_CODE_OAUTH_TOKEN="$token"
 
+# What a babysitter may do is the deployment's call. Its own babysit.md, when
+# it has one, is the session's prompt in place of the engine's (the same
+# {{...}} lines are filled in), and FACTORY_BABYSIT_MERGES=0 in .env takes
+# merging and approving out of the session's reach, whatever the prompt says.
+PROMPT="$ENGINE/contrib/babysit/prompt.md"; [[ -f "$ROOT/babysit.md" ]] && PROMPT="$ROOT/babysit.md"
+merges="${FACTORY_BABYSIT_MERGES:-$(grep -E '^[[:space:]]*FACTORY_BABYSIT_MERGES[[:space:]]*=' "$ROOT/.env" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"' ")}"
+deny=(); [[ "$merges" == 0 ]] && deny=(--disallowedTools "Bash(gh pr merge:*)" "Bash(gh pr review:*)")
+
 LOG="$DIR/pass-$(date -u +%Y%m%dT%H%MZ).log"
 # prompt.md is shared with the GCP host; the host-specific lines are filled here.
 prompt="$(sed \
@@ -50,8 +58,8 @@ prompt="$(sed \
   -e 's|{{TICK_PID}}|telemetry/.tick.lock/pid|g' \
   -e 's|{{TICK_LOCK}}|telemetry/.tick.lock|g' \
   -e "s|{{TICK_START}}|launchctl kickstart $TICK_JOB|g" \
-  "$ENGINE/contrib/babysit/prompt.md")"
-claude -p "$prompt" --model opus --effort medium --dangerously-skip-permissions > "$LOG" 2>&1
+  "$PROMPT")"
+claude -p "$prompt" --model opus --effort medium --dangerously-skip-permissions "${deny[@]}" > "$LOG" 2>&1
 rc=$?
 if (( rc != 0 )) || [[ ! -s "$LOG" ]]; then
   # The tick needs no judgment to start, so a failed session still starts it.
