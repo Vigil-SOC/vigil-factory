@@ -4,7 +4,10 @@
 # PATH, so this sets it; the lock keeps a slow tick from overlapping the next,
 # and from updating the checkout under a tick still running.
 set -u
-ROOT="${0:A:h:h}"
+# ENGINE is the factory's code and ROOT the deployment it runs: one checkout
+# that is both, or the directory an engine is installed in as a package.
+ENGINE="${0:A:h:h}"
+ROOT="${ENGINE%%/node_modules/*}"
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 export FACTORY_WORKER=claude-code
 export FACTORY_CLAUDE_BIN="$HOME/.local/bin/claude"
@@ -34,11 +37,11 @@ fi
 echo $$ > "$LOCK/pid"
 trap 'rm -rf "$LOCK"' EXIT
 
-"$ROOT/contrib/update.sh"
+"$ENGINE/contrib/update.sh"
 
 LOG="telemetry/tick-claude-$(date -u +%Y%m%dT%H%M).log"
 echo "[$(date -u +%FT%TZ)] tick start → $LOG" >> telemetry/launchd.log
-npm run factory -- run >> "$LOG" 2>&1
+node "$ENGINE/bin/factory.mjs" run >> "$LOG" 2>&1
 rc=$?
 echo "[$(date -u +%FT%TZ)] tick end rc=$rc → $LOG" >> telemetry/launchd.log
 exit $rc

@@ -5,10 +5,13 @@
 # near-empty one, a lock so a slow tick does not overlap the next (or have the
 # checkout updated under it), and .env exported for update.sh's gh and git.
 # The body is one block, so bash has read all of it before update.sh can
-# fast-forward this file.
+# replace this file.
 {
 set -u
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# ENGINE is the factory's code and ROOT the deployment it runs: one checkout
+# that is both, or the directory an engine is installed in as a package.
+ENGINE="$(cd "$(dirname "$0")/../.." && pwd)"
+ROOT="${ENGINE%%/node_modules/*}"
 export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
 cd "$ROOT" || exit 1
 mkdir -p telemetry
@@ -55,11 +58,11 @@ export FACTORY_CLAUDE_BIN="$HOME/.local/bin/claude"
 # setup.sh pins Claude Code; the host and its review containers stay on it.
 export DISABLE_AUTOUPDATER=1
 
-"$ROOT/contrib/update.sh"
+"$ENGINE/contrib/update.sh"
 
 LOG="telemetry/tick-gcp-$(date -u +%Y%m%dT%H%M).log"
 echo "[$(date -u +%FT%TZ)] tick start (gcp $(hostname)) → $LOG" >> telemetry/launchd.log
-npm run factory -- run >> "$LOG" 2>&1
+node "$ENGINE/bin/factory.mjs" run >> "$LOG" 2>&1
 rc=$?
 echo "[$(date -u +%FT%TZ)] tick end rc=$rc → $LOG" >> telemetry/launchd.log
 exit $rc

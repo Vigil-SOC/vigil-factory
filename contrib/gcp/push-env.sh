@@ -9,7 +9,9 @@
 # Usage: contrib/gcp/push-env.sh <instance-name>
 set -euo pipefail
 NAME="${1:?usage: push-env.sh <instance-name>}"
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+ENGINE="$(cd "$(dirname "$0")/../.." && pwd)"
+# The deployment: this checkout, or the one this engine is installed in.
+ROOT="${ENGINE%%/node_modules/*}"
 REPO="${FACTORY_REPO:-$(git -C "$ROOT" remote get-url origin | sed -E 's#^(git@github\.com:|https://github\.com/)##; s#(\.git)?/?$##')}"
 [[ "$REPO" == */* ]] || { echo "cannot tell which factory repo this is from origin; set FACTORY_REPO=<owner/name>" >&2; exit 1; }
 DIR_NAME="${REPO##*/}"

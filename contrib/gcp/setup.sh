@@ -69,25 +69,38 @@ token="$(grep -E '^[[:space:]]*GH_TOKEN[[:space:]]*=' "$DIR/.env" 2>/dev/null | 
 # Every two hours at :47, off the Actions schedule (17 */2). The tick's own
 # lock makes one still running when the next is due skip; without GH_TOKEN it
 # stops at once, so the entry can wait for the token.
+# The engine's scripts: in the checkout itself, or in the engine the checkout
+# installs as a package (node_modules/<name>/ or node_modules/@<scope>/<name>/).
+engine_scripts() {
+  local tick
+  for tick in "$DIR"/contrib/gcp/tick.sh "$DIR"/node_modules/*/contrib/gcp/tick.sh "$DIR"/node_modules/@*/*/contrib/gcp/tick.sh; do
+    [[ -x "$tick" ]] && { dirname "$tick"; return 0; }
+  done
+  return 1
+}
+
 install_cron() {
-  [[ -x "$DIR/contrib/gcp/tick.sh" ]] || return 0
+  local gcp
+  gcp="$(engine_scripts)" || return 0
   say "cron"
   mkdir -p "$DIR/telemetry"
-  local tick="47 */2 * * * $DIR/contrib/gcp/tick.sh >> $DIR/telemetry/cron.stdout.log 2>&1"
+  local tick="47 */2 * * * $gcp/tick.sh >> $DIR/telemetry/cron.stdout.log 2>&1"
   # The babysitter every 90 minutes (cron has no 90-minute step: on the hour
   # every third hour, and at :30 of the hours between), merging what the
   # factory built and starting a tick if none runs. See contrib/gcp/babysit.sh.
-  local sit1="0 */3 * * * $DIR/contrib/gcp/babysit.sh >> $DIR/telemetry/cron.stdout.log 2>&1"
-  local sit2="30 1-23/3 * * * $DIR/contrib/gcp/babysit.sh >> $DIR/telemetry/cron.stdout.log 2>&1"
-  # Only this checkout's entries are replaced: another factory's stay.
-  { crontab -l 2>/dev/null | grep -vF "$DIR/contrib/gcp/" || true; echo "$tick"
+  local sit1="0 */3 * * * $gcp/babysit.sh >> $DIR/telemetry/cron.stdout.log 2>&1"
+  local sit2="30 1-23/3 * * * $gcp/babysit.sh >> $DIR/telemetry/cron.stdout.log 2>&1"
+  # Only this checkout's entries are replaced: another factory's stay. Every
+  # entry of this one logs to its own telemetry directory, wherever its
+  # scripts are.
+  { crontab -l 2>/dev/null | grep -vF ">> $DIR/telemetry/cron.stdout.log" || true; echo "$tick"
     if [[ "${FACTORY_BABYSIT:-1}" != 0 ]]; then echo "$sit1"; echo "$sit2"; fi; } | crontab -
 }
 
 if [[ -z "$token" ]]; then
   install_cron
   say "versions: node $(node -v), $(claude --version), $(gh --version | head -1), $(docker --version)"
-  echo "== setup: waiting for GH_TOKEN: append GH_TOKEN=<token> to $DIR/.env (see contrib/gcp/README.md), then re-run setup. Skipped: the checkout, npm ci." >&2
+  echo "== setup: waiting for GH_TOKEN: append GH_TOKEN=<token> to $DIR/.env (see contrib/gcp/README.md), then re-run setup. Skipped: the checkout, npm install." >&2
   exit 3
 fi
 export GH_TOKEN="$token"
@@ -116,8 +129,11 @@ if [[ "$(git -C "$DIR" symbolic-ref -q --short HEAD)" != "$branch" ]] || ! git -
     git -C "$DIR" checkout -q -f -b "$branch" --track "origin/$branch"
   fi
 fi
-say "npm ci"
-(cd "$DIR" && npm ci --silent)
+# A checkout with a lockfile is installed exactly as locked; a deployment that
+# tracks its engine keeps none, and gets the newest its package.json asks for.
+if [[ -f "$DIR/package-lock.json" ]]; then install=ci; else install=install; fi
+say "npm $install"
+(cd "$DIR" && npm "$install" --silent)
 install_cron
 
 say "versions: node $(node -v), $(claude --version), $(gh --version | head -1), $(docker --version)"

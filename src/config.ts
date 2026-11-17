@@ -1,6 +1,5 @@
 import { readFileSync, existsSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 
 import type { ModelSpec, WorkerKind } from './types.ts';
 import type { Verification } from './prompts.ts';
@@ -189,7 +188,14 @@ export interface FactoryConfig {
   maxConcurrentJobs: number;
 }
 
-export const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+/**
+ * The deployment: the directory whose factory.config.json, principles, .env and
+ * telemetry this run uses. It is where the factory is run from, not where its
+ * code is, so one installed engine serves any number of deployments and a
+ * deployment holds no engine code. `npm run factory` in a checkout of the
+ * engine runs there, which makes that checkout a deployment too.
+ */
+export const projectRoot = resolve(process.env.FACTORY_ROOT || process.cwd());
 
 /** Minimal .env loader: KEY=value lines, no expansion. Never overrides real env. */
 export function loadDotEnv(root: string = projectRoot): void {
@@ -208,7 +214,7 @@ export function loadConfig(root: string = projectRoot): FactoryConfig {
   const path = resolve(root, 'factory.config.json');
   if (!existsSync(path)) {
     throw new Error(
-      `factory.config.json not found at ${path} — copy factory.config.example.json and point it at your target repo.`,
+      `factory.config.json not found at ${path} — run the factory from the directory that holds it (or set FACTORY_ROOT), or copy factory.config.example.json there and point it at your target repo.`,
     );
   }
   const config = JSON.parse(readFileSync(path, 'utf8')) as FactoryConfig;

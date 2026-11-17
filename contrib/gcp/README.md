@@ -52,11 +52,13 @@ Name hosts `factory-host-<name>`; `factory-host-1` is the operator's.
 
 ## A host for another factory
 
-A copy of this repo pointed at another target (its own `factory.config.json` and
-`principles.md`) gets its host the same way, from its own checkout. `provision.sh` reads
-the factory repo from the checkout's `origin`, and the VM gets `~/<repo name>` with that
-repo's `.env`, lock, logs and cron entries; wherever this page says `~/vigil-factory`,
-that is the directory. `FACTORY_BABYSIT=0 contrib/gcp/provision.sh <name>` installs the
+A deployment for another target (a repo with its own `factory.config.json` and
+`principles.md` that installs this engine as a package) gets its host the same way, from
+its own checkout: `node_modules/vigil-factory/contrib/gcp/provision.sh <name>`.
+`provision.sh` reads the factory repo from the checkout's `origin`, and the VM gets
+`~/<repo name>` with that repo's `.env`, lock, logs and cron entries; wherever this page
+says `~/vigil-factory`, that is the directory, and wherever it says `contrib/`, that is
+`node_modules/vigil-factory/contrib/` there. `FACTORY_BABYSIT=0 contrib/gcp/provision.sh <name>` installs the
 tick without the babysitter, for a deployment whose pull requests a person merges.
 
 Two factories can share one VM, each in its own directory. Share one only when you would

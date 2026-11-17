@@ -6,7 +6,12 @@
 # instead of launchd, and alerting only into telemetry/babysit/ALERTS.md.
 {
 set -u
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# ENGINE is the factory's code and ROOT the deployment it runs: one checkout
+# that is both, or the directory an engine is installed in as a package.
+ENGINE="$(cd "$(dirname "$0")/../.." && pwd)"
+ROOT="${ENGINE%%/node_modules/*}"
+# The engine's scripts as the session will name them, from ROOT.
+CONTRIB="${ENGINE#"$ROOT"/}/contrib"; [[ "$ENGINE" == "$ROOT" ]] && CONTRIB=contrib
 export PATH="$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin"
 cd "$ROOT" || exit 1
 DIR="$ROOT/telemetry/babysit"
@@ -33,16 +38,17 @@ live_tick() {
   kill -0 "$(cat "$ROOT/telemetry/.tick-gcp.pid" 2>/dev/null)" 2>/dev/null
 }
 start_tick() {
-  nohup "$ROOT/contrib/gcp/tick.sh" >/dev/null 2>&1 &
+  nohup "$ENGINE/contrib/gcp/tick.sh" >/dev/null 2>&1 &
 }
 
 prompt="$(sed \
-  -e 's|{{TICK_HOW}}|`contrib/gcp/tick.sh` under cron on this GCP host (it runs `contrib/update.sh` first)|g' \
+  -e "s|{{CONTRIB}}|$CONTRIB|g" \
+  -e "s|{{TICK_HOW}}|\`$CONTRIB/gcp/tick.sh\` under cron on this GCP host (it runs \`$CONTRIB/update.sh\` first)|g" \
   -e 's|{{TICK_LOG}}|telemetry/tick-gcp-<UTC start>.log|g' \
   -e 's|{{TICK_PID}}|telemetry/.tick-gcp.pid|g' \
   -e 's|{{TICK_LOCK}}|telemetry/.tick-gcp.lock|g' \
-  -e 's|{{TICK_START}}|nohup contrib/gcp/tick.sh >/dev/null 2>\&1 \&|g' \
-  "$ROOT/contrib/babysit/prompt.md")"
+  -e "s|{{TICK_START}}|nohup $CONTRIB/gcp/tick.sh >/dev/null 2>\&1 \&|g" \
+  "$ENGINE/contrib/babysit/prompt.md")"
 
 LOG="$DIR/pass-gcp-$(date -u +%Y%m%dT%H%MZ).log"
 echo "[$(date -u +%FT%TZ)] babysit pass start → $LOG" >> telemetry/launchd.log
@@ -52,7 +58,7 @@ echo "[$(date -u +%FT%TZ)] babysit pass end rc=$rc → $LOG" >> telemetry/launch
 if (( rc != 0 )) || [[ ! -s "$LOG" ]]; then
   dispatched="no tick was started"
   if ! live_tick; then start_tick; dispatched="a tick was started anyway"; fi
-  "$ROOT/contrib/babysit/alert.sh" "babysitter pass failed" \
+  "$ENGINE/contrib/babysit/alert.sh" "babysitter pass failed" \
     "claude exited $rc; nothing was merged and $dispatched this pass. Log: $LOG"
 fi
 find "$DIR" -name 'pass-gcp-*.log' -mtime +14 -delete

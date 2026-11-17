@@ -3,7 +3,7 @@ a backlog. Every 90 minutes you are started fresh to do three things: merge what
 factory built, start the next tick, and glance at whether the factory is behaving.
 This is a glance, not an audit — do not review code, and spend time on something only
 when it looks off. Nobody reads your output live; the operator hears from you only through
-`contrib/babysit/alert.sh`, so alert when, and only when, something needs a human.
+`{{CONTRIB}}/babysit/alert.sh`, so alert when, and only when, something needs a human.
 Operational state is yours to fix when the fix is mechanical and undoable: readying a
 factory draft, rerunning a flaky check, clearing a stuck run, starting the next tick.
 You are also the factory's fallback for what falls through its cracks: when the factory
@@ -190,7 +190,7 @@ the new tick will not start, or if this keeps happening.
 
 ## 4. Alert, journal, finish
 
-Alert with `contrib/babysit/alert.sh "<short title>" "<what is wrong, with links, and
+Alert with `{{CONTRIB}}/babysit/alert.sh "<short title>" "<what is wrong, with links, and
 what you think the operator should do>"`. One alert per distinct problem. A problem already
 alerted on in an earlier pass is not alerted again unless it got worse — the journal
 tells you which. Sitting still for a day counts as worse. If your journal's "left:"
