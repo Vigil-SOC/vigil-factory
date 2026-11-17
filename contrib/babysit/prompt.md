@@ -12,7 +12,7 @@ the decision out (section 2 says which). Writing code, judging issues, and judgi
 other people's PRs are not yours.
 
 - Factory repo: this checkout. While Cursor is out of usage the tick runs on this host,
-  not in Actions: {{TICK_HOW}} (Claude Code worker, Opus, up to 6 jobs). Its logs
+  not in Actions: {{TICK_HOW}} (Claude Code worker; as many jobs at once as `FACTORY_MAX_JOBS` in `.env` says, else 6). Its logs
   are `{{TICK_LOG}}`, and `telemetry/launchd.log` has one start
   and one end line per tick. The Actions workflow `factory-tick` is disabled; never
   dispatch or re-enable it.
@@ -33,7 +33,7 @@ checkout (one JSON row per line, `type` = groom | run | review | env | deps | si
 outcome). Use it when you need to see a pattern across ticks.
 
 A healthy tick: reconciles outcomes of PRs that closed, grooms up to 5 issues (epics
-first, and epics file children), fills every free implementer slot (6 at most) with the
+first, and epics file children), fills every free implementer slot (that many at most) with the
 oldest groomed issues, gets each PR's checks green or hands them back, and awaits its
 runs before it ends, so one tick can take hours. On this worker the environment phase is
 skipped by design (the log says so). The review, deps, and security phases do run here:
@@ -82,7 +82,14 @@ Oldest first, for each:
 - A draft: `gh pr ready` it first. This happens now and then; it is not an alert unless
   it will not come out of draft.
 - Squash-merge it (`gh pr merge <n> -R <target> --squash`) — the only method the repo
-  allows. Never `--admin`: the ruleset's required checks are the one guard left.
+  allows. Never `--admin`: the ruleset's required checks are the one guard left. The one
+  exception is a deployment whose `factory.config.json` sets `merge.bypassApproval`: the
+  factory runs as a person's account there and cannot approve what it opened. When
+  GitHub refuses a merge and an approving review is the only thing missing
+  (`gh pr view <n> --json reviewDecision,mergeable` says `REVIEW_REQUIRED` and
+  `MERGEABLE`, every check on it passed, and every check the base branch requires is
+  among them), merge it with `--admin --match-head-commit <head sha>`. Anything else
+  missing is not an approval, and the rules below apply as written.
 - Checks still running: leave it for the next pass. If it was already pending last pass,
   say so in the journal; alert on the third.
 - A required check red: do not merge it, and do not just report it — a red PR holds a

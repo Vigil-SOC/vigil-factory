@@ -2,12 +2,16 @@
 # Make this Ubuntu 24.04 VM a factory host: Docker, Node 24, gh, Claude Code,
 # the factory checkout, and cron entries for contrib/gcp/tick.sh and babysit.sh. Runs as the
 # login user (with sudo), from provision.sh; safe to re-run.
-# Expects ~/vigil-factory/.env with GH_TOKEN (push-env.sh puts it there).
+# FACTORY_REPO=<owner/name> is the factory repo this host runs (provision.sh
+# passes its own checkout's); the checkout is ~/<repo name>, so a second
+# factory on the same host gets a directory and cron entries of its own.
+# Expects ~/<repo name>/.env with GH_TOKEN (push-env.sh puts it there).
 # FACTORY_BRANCH=<branch> checks out a branch other than main (see below).
+# FACTORY_BABYSIT=0 installs the tick alone, without the babysitter.
 set -euo pipefail
 CLAUDE_VERSION="${FACTORY_CLAUDE_VERSION:-2.1.318}"
 REPO="${FACTORY_REPO:-Vigil-SOC/vigil-factory}"
-DIR="$HOME/vigil-factory"
+DIR="$HOME/${REPO##*/}"
 export DEBIAN_FRONTEND=noninteractive
 say() { echo "== setup: $*"; }
 
@@ -75,7 +79,9 @@ install_cron() {
   # factory built and starting a tick if none runs. See contrib/gcp/babysit.sh.
   local sit1="0 */3 * * * $DIR/contrib/gcp/babysit.sh >> $DIR/telemetry/cron.stdout.log 2>&1"
   local sit2="30 1-23/3 * * * $DIR/contrib/gcp/babysit.sh >> $DIR/telemetry/cron.stdout.log 2>&1"
-  { crontab -l 2>/dev/null | grep -v 'contrib/gcp/tick.sh\|contrib/gcp/babysit.sh' || true; echo "$tick"; echo "$sit1"; echo "$sit2"; } | crontab -
+  # Only this checkout's entries are replaced: another factory's stay.
+  { crontab -l 2>/dev/null | grep -vF "$DIR/contrib/gcp/" || true; echo "$tick"
+    if [[ "${FACTORY_BABYSIT:-1}" != 0 ]]; then echo "$sit1"; echo "$sit2"; fi; } | crontab -
 }
 
 if [[ -z "$token" ]]; then

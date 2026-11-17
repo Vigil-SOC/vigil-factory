@@ -636,7 +636,11 @@ a teammate's branch — is simpler: its agent works on the PR's own branch.
   runs held for a maintainer's approval are approved by the factory once the review passes,
   since that review is the maintainer's read the hold asks for;
 - within the repo's own rules — never `--admin`, though the factory's token could bypass
-  them, because a merge that needed to is one the repo said no to;
+  them, because a merge that needed to is one the repo said no to. Where the base branch
+  requires an approving review, the factory's merge verdict is that review: it approves
+  as the runner's account, then merges. The one bypass a deployment may ask for is
+  `merge.bypassApproval`, for the PRs the runner opened itself and so cannot approve
+  (see [Policy knobs](#policy-knobs));
 - and a PR that changes anything under `.github/` only when its author has write access to
   the repo. Workflows run with the repo's secrets, and the rule is about who could already
   run one: a collaborator with write can push a workflow to a branch and watch it run, so the
@@ -924,8 +928,12 @@ npm run check                      # typecheck + unit tests
 
 Two options; both just invoke the idempotent tick.
 
-**Local (launchd, macOS):** copy `contrib/com.deeptempo.factory.plist` to
-`~/Library/LaunchAgents/`, adjust paths, then `launchctl load` it.
+**Local (launchd, macOS):** `contrib/install-launchd.sh` installs and starts this checkout's
+two jobs, the tick every two hours and the babysitter every 90 minutes, from the plists in
+`contrib/` with the checkout's own path and labels of its own (`com.deeptempo.<factory repo
+name>.claude-code` and `.babysit`), so two factories on one Mac run side by side.
+`--uninstall` removes them. `FACTORY_MODEL`, `FACTORY_MAX_JOBS` and `FACTORY_MAX_SESSIONS`
+in `.env` size the tick.
 Each local tick first runs `contrib/update.sh`, which fast-forwards the checkout to the
 newest commit on the default branch whose CI passed, so every machine runs the same
 factory without anyone pulling. A checkout on another branch is left alone; one with
@@ -994,6 +1002,21 @@ committed.
   vetting an assigned issue costs its assignee nothing, implementing one collides with
   them. Set `implement` to `true` for a repo where assignment means triage rather than
   intent.
+- `factory.config.json` → `tests` — `keep` (default false): whether the target repo keeps
+  unit and integration tests. Off, agents write none, a change is verified by running it,
+  and a review deletes the ones an outside PR carries. On, for a repo whose tests are part
+  of what it ships, agents follow the repo's own practice (update the tests a change makes
+  wrong, add one where the repo would have one) and never weaken, skip, or delete a test
+  to make a change pass; a review fixes a PR that did.
+- `factory.config.json` → `merge` — `bypassApproval` (default false): when the base branch
+  requires an approving review and that review is the only thing missing (no conflict,
+  every check green, every required check reported), the factory merges with `--admin`.
+  For a deployment whose runner is a person's account standing in for a service account:
+  nobody approves their own PR, so a dependency batch, a review's replacement, or a
+  teammate's PR opened under that same account would wait for someone else. It never
+  passes a red, pending or missing check, and the factory reads the checks itself before
+  it uses it. The babysitter follows the same setting for the factory's own PRs. Prefer a
+  second account that can approve, when there is one.
 - `factory.config.json` → `environment` — `enabled` (default true) and `maxPrsPerPass`
   (default 3): the phase that owns the cloud-agent environment. Off means the factory
   keeps opening PRs whose verification was blocked and never fixes the cause.

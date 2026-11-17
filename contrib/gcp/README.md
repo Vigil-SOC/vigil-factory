@@ -50,6 +50,21 @@ Then append your `GH_TOKEN` on the VM (next section) and run the same command ag
 The project roles in "Getting on it" cover any instance, so no further access is needed.
 Name hosts `factory-host-<name>`; `factory-host-1` is the operator's.
 
+## A host for another factory
+
+A copy of this repo pointed at another target (its own `factory.config.json` and
+`principles.md`) gets its host the same way, from its own checkout. `provision.sh` reads
+the factory repo from the checkout's `origin`, and the VM gets `~/<repo name>` with that
+repo's `.env`, lock, logs and cron entries; wherever this page says `~/vigil-factory`,
+that is the directory. `FACTORY_BABYSIT=0 contrib/gcp/provision.sh <name>` installs the
+tick without the babysitter, for a deployment whose pull requests a person merges.
+
+Two factories can share one VM, each in its own directory. Share one only when you would
+let either target's agents read the other's `.env` and source: a review of an outside PR
+runs a stranger's code in a privileged container on the same Docker daemon, and that is
+not a boundary to keep a private repository's credentials behind. The live slot is per
+checkout too, so two targets whose stacks bind the same ports will collide.
+
 ## Files
 
 - `provision.sh <name>`: create the VM (or start it, if stopped), wait for SSH, push
@@ -62,7 +77,8 @@ Name hosts `factory-host-<name>`; `factory-host-1` is the operator's.
   they never go in git. It never sends `GH_TOKEN` and keeps the one already on the VM.
 - `tick.sh`: one tick, for cron. Exports `.env`, runs `contrib/update.sh`, then
   `npm run factory -- run` with `FACTORY_WORKER=claude-code FACTORY_MODEL=opus
-  FACTORY_MAX_JOBS=6`, as the Mac does.
+  FACTORY_MAX_JOBS=6`, as the Mac does. `FACTORY_MODEL`, `FACTORY_MAX_JOBS` and
+  `FACTORY_MAX_SESSIONS` in the VM's `.env` change those.
 
 ## GitHub credentials
 
