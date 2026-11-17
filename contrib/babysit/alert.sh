@@ -3,7 +3,8 @@
 # and on a Mac a notification too (the GCP host has only the file).
 # Usage: alert.sh "<title>" "<message>"
 set -u
-ROOT="${0:A:h:h:h}"
+ENGINE="${0:A:h:h:h}"
+ROOT="${ENGINE%%/node_modules/*}"
 title="Factory: ${1:-alert}"
 msg="${2:-}"
 mkdir -p "$ROOT/telemetry/babysit"

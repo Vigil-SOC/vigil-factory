@@ -46,8 +46,25 @@ npm run factory -- run --dry-run   # show what a tick would do, launch nothing
 npm run factory -- run             # one tick
 ```
 
-To point it at your own project, start from `factory.config.example.json` and
-`principles.example.md`.
+## Running it on your own project
+
+Do not copy this repo. Make a small one that holds your policy and installs the engine:
+
+```bash
+npm init -y
+npm install github:Vigil-SOC/vigil-factory#release
+cp node_modules/vigil-factory/factory.config.example.json factory.config.json
+cp node_modules/vigil-factory/principles.example.md principles.md
+npx factory check           # the policy loads
+npx factory run --dry-run   # what a tick would do
+```
+
+`factory.config.json` names your repo and `principles.md` says what is worth building
+in it. If the built-in live test does not fit how your repo is proved, say how in a
+file of your own and name it in `verify.file`. Every factory then runs the same engine,
+and yours picks up each release.
+[A deployment for another repo](docs/how-it-works.md#a-deployment-for-another-repo)
+has the rest.
 
 ## Learn more
 

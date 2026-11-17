@@ -1,19 +1,39 @@
 {
   "name": "vigil-factory",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
-  "description": "An opinionated software factory: agents groom the backlog, build and live-verify the change, and review what the community sends. Configured here to build Vigil.",
+  "description": "An opinionated software factory: agents groom the backlog, build and live-verify the change, and review what the community sends. One engine; each deployment brings its own factory.config.json and principles.md.",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Vigil-SOC/vigil-factory.git"
+  },
+  "bin": {
+    "factory": "bin/factory.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "contrib",
+    "docs",
+    "factory.config.example.json",
+    "principles.example.md",
+    ".env.example"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
     "factory": "tsx src/cli.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "check": "npm run typecheck && npm run test"
   },
+  "dependencies": {
+    "tsx": "^4.19.0"
+  },
   "devDependencies": {
     "@types/node": "^24.0.0",
-    "tsx": "^4.19.0",
     "typescript": "^5.9.0",
     "vitest": "^3.2.0"
   }

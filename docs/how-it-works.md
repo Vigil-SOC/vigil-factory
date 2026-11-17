@@ -821,9 +821,58 @@ cp .env.example .env       # Cursor API key (cursor.com/dashboard → API Keys),
 gh auth status             # gh must be authenticated with repo scope on the target repo
 ```
 
-`factory.config.example.json` and `principles.example.md` are the blank
-versions a second deployment would start from. `telemetry/` is gitignored; the
-record lives on the `telemetry` branch (see [Telemetry](#telemetry)).
+`telemetry/` is gitignored; the record lives on the `telemetry` branch (see
+[Telemetry](#telemetry)).
+
+### A deployment for another repo
+
+A second factory does not copy this repo. It is a small repo of its own that holds
+policy and installs the engine as a package, so every factory runs the same engine and
+none of them carries code to keep in step:
+
+```
+factory.config.json   target repo, worker, labels, which phases run   (from factory.config.example.json)
+principles.md         what is worth building in that repo             (from principles.example.md)
+verify.md             how a change is shown to work there, if the built-in live test does not fit
+package.json          names the engine
+.npmrc                package-lock=false
+.gitignore            node_modules/  telemetry/  .env
+.github/workflows/ci.yml   one job, `check`
+```
+
+```json
+{ "name": "my-factory", "private": true,
+  "dependencies": { "vigil-factory": "github:Vigil-SOC/vigil-factory#release" } }
+```
+
+`release` is this repo's `main` at its newest commit whose CI passed, so a red push here
+never reaches a deployment. With no lockfile, `npm update` moves a deployment to the
+newest release, and `contrib/update.sh` runs it before every tick on a host. To hold a
+deployment on one engine instead, name a commit (`#<sha>`) in place of `release`.
+
+```bash
+npm install
+npx factory check          # the policy loads: config parses, the files it names exist
+npx factory run --dry-run  # what a tick would do
+```
+
+The engine reads everything from the directory it is run in (`FACTORY_ROOT` overrides):
+`factory.config.json`, the principles and verification files, `.env`, and `telemetry/`.
+`npx factory <command>` there is `npm run factory -- <command>` here.
+
+A deployment's CI is one job named `check` that runs `npm install && npx factory check`.
+`contrib/update.sh` moves a host's checkout only to a commit that job passed on, the
+same rule this repo's hosts follow, so a config that does not parse stays off the fleet.
+A deployment without that job never updates its own checkout.
+
+The scripts under `contrib/` run from the package as they do from a checkout. Each
+works out the deployment from where it is installed, so on a host the entries are
+`node_modules/vigil-factory/contrib/gcp/tick.sh`, `…/contrib/install-launchd.sh` and so on,
+and `.env`, the lock, the logs and the alerts stay in the deployment's own directory.
+
+When the engine lacks something a deployment needs, the change goes into the engine
+as a setting with a default that leaves every other deployment as it was. An installed
+package cannot be edited in place, which is the point.
 
 ### Workers
 
@@ -935,8 +984,9 @@ name>.claude-code` and `.babysit`), so two factories on one Mac run side by side
 `--uninstall` removes them. `FACTORY_MODEL`, `FACTORY_MAX_JOBS` and `FACTORY_MAX_SESSIONS`
 in `.env` size the tick.
 Each local tick first runs `contrib/update.sh`, which fast-forwards the checkout to the
-newest commit on the default branch whose CI passed, so every machine runs the same
-factory without anyone pulling. A checkout on another branch is left alone; one with
+newest commit on the default branch whose CI passed and, in a deployment that installs
+the engine as a package, updates the engine to the newest release, so every machine runs
+the same factory without anyone pulling. A checkout on another branch is left alone; one with
 commits of its own, or uncommitted changes in the way, keeps running what it has and
 raises an alert. A change that needs a human on each machine (a plist, a new `.env`
 key) still needs saying.

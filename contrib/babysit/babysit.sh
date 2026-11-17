@@ -4,7 +4,12 @@
 # anything looks wrong. The judgment is a headless Claude session running
 # prompt.md; this wrapper only alerts if the session itself fails.
 set -u
-ROOT="${0:A:h:h:h}"
+# ENGINE is the factory's code and ROOT the deployment it runs: one checkout
+# that is both, or the directory an engine is installed in as a package.
+ENGINE="${0:A:h:h:h}"
+ROOT="${ENGINE%%/node_modules/*}"
+# The engine's scripts as the session will name them, from ROOT.
+CONTRIB="${ENGINE#$ROOT/}/contrib"; [[ "$ENGINE" == "$ROOT" ]] && CONTRIB=contrib
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 cd "$ROOT" || exit 1
 DIR="$ROOT/telemetry/babysit"
@@ -39,12 +44,13 @@ token="$(grep -E '^[[:space:]]*CLAUDE_CODE_OAUTH_TOKEN[[:space:]]*=' "$ROOT/.env
 LOG="$DIR/pass-$(date -u +%Y%m%dT%H%MZ).log"
 # prompt.md is shared with the GCP host; the host-specific lines are filled here.
 prompt="$(sed \
-  -e "s|{{TICK_HOW}}|\`contrib/tick-claude-code.sh\` under the launchd job \`$TICK_LABEL\`|g" \
+  -e "s|{{CONTRIB}}|$CONTRIB|g" \
+  -e "s|{{TICK_HOW}}|\`$CONTRIB/tick-claude-code.sh\` under the launchd job \`$TICK_LABEL\`|g" \
   -e 's|{{TICK_LOG}}|telemetry/tick-claude-<UTC start>.log|g' \
   -e 's|{{TICK_PID}}|telemetry/.tick.lock/pid|g' \
   -e 's|{{TICK_LOCK}}|telemetry/.tick.lock|g' \
   -e "s|{{TICK_START}}|launchctl kickstart $TICK_JOB|g" \
-  "$ROOT/contrib/babysit/prompt.md")"
+  "$ENGINE/contrib/babysit/prompt.md")"
 claude -p "$prompt" --model opus --effort medium --dangerously-skip-permissions > "$LOG" 2>&1
 rc=$?
 if (( rc != 0 )) || [[ ! -s "$LOG" ]]; then
@@ -53,7 +59,7 @@ if (( rc != 0 )) || [[ ! -s "$LOG" ]]; then
   if ! live_tick && launchctl kickstart "$TICK_JOB" 2>/dev/null; then
     dispatched="a tick was started anyway"
   fi
-  "$ROOT/contrib/babysit/alert.sh" "babysitter pass failed" \
+  "$ENGINE/contrib/babysit/alert.sh" "babysitter pass failed" \
     "claude exited $rc; nothing was merged and $dispatched this pass. Log: $LOG"
 fi
 find "$DIR" -name 'pass-*.log' -mtime +14 -delete
