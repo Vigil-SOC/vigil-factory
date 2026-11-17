@@ -1008,6 +1008,17 @@ committed.
   of what it ships, agents follow the repo's own practice (update the tests a change makes
   wrong, add one where the repo would have one) and never weaken, skip, or delete a test
   to make a change pass; a review fixes a PR that did.
+- `factory.config.json` → `verify` — `file` (default unset): a Markdown file beside the
+  config that says **how a change is shown to work in the target repo**. Unset, agents get
+  the built-in live test: start the app, use the change through its real entry point, and
+  look at every screen it touches in a browser. That suits an app with screens and an API.
+  A repo proved another way (infrastructure that is planned and never applied, a library
+  with nothing to start, a system where a live run touches something shared) writes its
+  own, and the implementer, the simplifier, the security fixer and the reviewer are handed
+  that text in place of the built-in, under a "Verifying a change in this repo" heading.
+  The environment agent is handed it too, as the list of tools the agents' machine has to
+  carry. Write it to the agent: what to run for which kind of change, and what must never
+  be run. Like `principles.md`, it is this deployment's policy and not the engine's.
 - `factory.config.json` → `merge` — `bypassApproval` (default false): when the base branch
   requires an approving review and that review is the only thing missing (no conflict,
   every check green, every required check reported), the factory merges with `--admin`.

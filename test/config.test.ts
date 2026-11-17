@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { agentCredentials, epicGroomModel, loadConfig, reviewModel } from '../src/config.ts';
+import { agentCredentials, epicGroomModel, loadConfig, loadVerification, reviewModel } from '../src/config.ts';
 
 function configDir(worker: Record<string, unknown>, groom: Record<string, unknown> = {}, rest: Record<string, unknown> = {}): string {
   const dir = mkdtempSync(resolve(tmpdir(), 'factory-config-'));
@@ -46,6 +46,24 @@ describe('tests policy', () => {
   it('a config that predates it keeps no tests; a deployment turns it on', () => {
     expect(loadConfig(configDir({})).tests).toEqual({ keep: false });
     expect(loadConfig(configDir({}, {}, { tests: { keep: true } })).tests.keep).toBe(true);
+  });
+});
+
+describe('verification', () => {
+  it('a deployment with no file of its own gets the built-in live test', () => {
+    const dir = configDir({});
+    expect(loadVerification(loadConfig(dir), dir)).toEqual({ keepTests: false });
+  });
+
+  it('a deployment\'s own file is what agents are handed, beside its tests policy', () => {
+    const dir = configDir({}, {}, { tests: { keep: true }, verify: { file: 'verify.md' } });
+    writeFileSync(resolve(dir, 'verify.md'), '\nPlan the recipe; never apply it.\n');
+    expect(loadVerification(loadConfig(dir), dir)).toEqual({ keepTests: true, live: 'Plan the recipe; never apply it.' });
+  });
+
+  it('a file the config names and the deployment lacks stops the tick', () => {
+    const dir = configDir({}, {}, { verify: { file: 'verify.md' } });
+    expect(() => loadVerification(loadConfig(dir), dir)).toThrow(/verify\.file not found/);
   });
 });
 

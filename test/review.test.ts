@@ -331,7 +331,7 @@ describe('review prompt', () => {
   });
 
   it('in a repo that keeps its tests, a test the PR weakened is a defect to fix, and none is deleted', () => {
-    const kept = reviewPrompt({ number: 12, url: 'https://github.com/o/r/pull/12', isCrossRepository: false, authorMayChangeGithub: false }, 'PRINCIPLES', true);
+    const kept = reviewPrompt({ number: 12, url: 'https://github.com/o/r/pull/12', isCrossRepository: false, authorMayChangeGithub: false }, 'PRINCIPLES', { keepTests: true });
     expect(kept).toContain('a test the PR weakens, skips, or deletes to pass is a defect you fix');
     expect(kept).not.toContain('delete any the PR carries');
   });
