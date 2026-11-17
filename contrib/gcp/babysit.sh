@@ -41,6 +41,13 @@ start_tick() {
   nohup "$ENGINE/contrib/gcp/tick.sh" >/dev/null 2>&1 &
 }
 
+# What a babysitter may do is the deployment's call. Its own babysit.md, when
+# it has one, is the session's prompt in place of the engine's (the same
+# {{...}} lines are filled in), and FACTORY_BABYSIT_MERGES=0 in .env takes
+# merging and approving out of the session's reach, whatever the prompt says.
+PROMPT="$ENGINE/contrib/babysit/prompt.md"; [[ -f "$ROOT/babysit.md" ]] && PROMPT="$ROOT/babysit.md"
+deny=(); [[ "${FACTORY_BABYSIT_MERGES:-1}" == 0 ]] && deny=(--disallowedTools "Bash(gh pr merge:*)" "Bash(gh pr review:*)")
+
 prompt="$(sed \
   -e "s|{{CONTRIB}}|$CONTRIB|g" \
   -e "s|{{TICK_HOW}}|\`$CONTRIB/gcp/tick.sh\` under cron on this GCP host (it runs \`$CONTRIB/update.sh\` first)|g" \
@@ -48,11 +55,11 @@ prompt="$(sed \
   -e 's|{{TICK_PID}}|telemetry/.tick-gcp.pid|g' \
   -e 's|{{TICK_LOCK}}|telemetry/.tick-gcp.lock|g' \
   -e "s|{{TICK_START}}|nohup $CONTRIB/gcp/tick.sh >/dev/null 2>\&1 \&|g" \
-  "$ENGINE/contrib/babysit/prompt.md")"
+  "$PROMPT")"
 
 LOG="$DIR/pass-gcp-$(date -u +%Y%m%dT%H%MZ).log"
 echo "[$(date -u +%FT%TZ)] babysit pass start → $LOG" >> telemetry/launchd.log
-claude -p "$prompt" --model opus --effort medium --dangerously-skip-permissions > "$LOG" 2>&1
+claude -p "$prompt" --model opus --effort medium --dangerously-skip-permissions ${deny[@]+"${deny[@]}"} > "$LOG" 2>&1
 rc=$?
 echo "[$(date -u +%FT%TZ)] babysit pass end rc=$rc → $LOG" >> telemetry/launchd.log
 if (( rc != 0 )) || [[ ! -s "$LOG" ]]; then

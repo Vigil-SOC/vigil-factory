@@ -865,6 +865,14 @@ A deployment's CI is one job named `check` that runs `npm install && npx factory
 same rule this repo's hosts follow, so a config that does not parse stays off the fleet.
 A deployment without that job never updates its own checkout.
 
+What the babysitter may do is a deployment's call too. A `babysit.md` at the
+deployment's root is the babysitter's prompt in place of the engine's
+`contrib/babysit/prompt.md`, with the same `{{TICK_HOW}}`, `{{TICK_LOG}}`, `{{TICK_PID}}`,
+`{{TICK_LOCK}}`, `{{TICK_START}}` and `{{CONTRIB}}` lines filled in for the host.
+`FACTORY_BABYSIT_MERGES=0` in `.env` denies the session `gh pr merge` and `gh pr review`
+outright, for a deployment where a person merges every PR; a prompt alone is an
+instruction, and this is the permission.
+
 The scripts under `contrib/` run from the package as they do from a checkout. Each
 works out the deployment from where it is installed, so on a host the entries are
 `node_modules/vigil-factory/contrib/gcp/tick.sh`, `…/contrib/install-launchd.sh` and so on,
