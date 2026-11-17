@@ -7,14 +7,21 @@ set -u
 ROOT="${0:A:h:h}"
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 export FACTORY_WORKER=claude-code
-# worker.model is Grok (a Cursor model); Claude Code runs the Opus alternative.
-export FACTORY_MODEL=opus
-# The subscription, not the Cursor budget, pays for these: run twice the jobs.
-export FACTORY_MAX_JOBS=6
-# This Mac is the factory's; a plain local run gets one session, this one four.
-export FACTORY_MAX_SESSIONS=4
 export FACTORY_CLAUDE_BIN="$HOME/.local/bin/claude"
 cd "$ROOT" || exit 1
+# FACTORY_MODEL, FACTORY_MAX_JOBS and FACTORY_MAX_SESSIONS in .env change the
+# three below without touching this file; the factory loads the rest of .env
+# itself, and what is already in the environment wins.
+for key in FACTORY_MODEL FACTORY_MAX_JOBS FACTORY_MAX_SESSIONS; do
+  value="$(grep -E "^[[:space:]]*${key}[[:space:]]*=" .env 2>/dev/null | tail -1 | cut -d= -f2- | tr -d "\"' ")"
+  [[ -n "$value" && -z "${(P)key:-}" ]] && export "$key=$value"
+done
+# worker.model is Grok (a Cursor model); Claude Code runs the Opus alternative.
+export FACTORY_MODEL="${FACTORY_MODEL:-opus}"
+# The subscription, not the Cursor budget, pays for these: run twice the jobs.
+export FACTORY_MAX_JOBS="${FACTORY_MAX_JOBS:-6}"
+# This Mac is the factory's; a plain local run gets one session, this one four.
+export FACTORY_MAX_SESSIONS="${FACTORY_MAX_SESSIONS:-4}"
 
 LOCK="$ROOT/telemetry/.tick.lock"
 if ! mkdir "$LOCK" 2>/dev/null; then

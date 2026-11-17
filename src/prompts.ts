@@ -179,12 +179,19 @@ const LIVE = `Test the change live when it has behavior worth seeing work: start
 
 /**
  * What "verified" means for an agent that opens a PR: the behavior live where
- * it has any. No unit or integration tests: agent-written ones mostly pinned the
- * code as it was and turned every later change into chores updating them. CI's
- * checks are CI's — the factory waits for them and hands a red check back to
- * the same agent.
+ * it has any. By default no unit or integration tests: agent-written ones mostly
+ * pinned the code as it was and turned every later change into chores updating
+ * them. A deployment whose target repo keeps its tests (`tests.keep`) says so
+ * instead, and there the tests are held to the repo's own practice. CI's checks
+ * are CI's — the factory waits for them and hands a red check back to the same
+ * agent.
  */
-const VERIFY = `- Do not write unit or integration tests: this repo does not keep them, so a change is verified by running it. ${LIVE} CI runs the repo's checks on the PR and hands a red check back to you, so you need not run them all here.`;
+function verifyRule(keepTests: boolean): string {
+  const tests = keepTests
+    ? 'This repo keeps its tests and CI runs them: do what the tests around your change do — update the ones it makes wrong, add one where the repo would have one for a change like it — and never weaken, skip, or delete a test to make a change pass.'
+    : 'Do not write unit or integration tests: this repo does not keep them, so a change is verified by running it.';
+  return `- ${tests} ${LIVE} CI runs the repo's checks on the PR and hands a red check back to you, so you need not run them all here.`;
+}
 
 /**
  * How every agent that opens a PR here works: verify, get a review where one is
@@ -192,10 +199,12 @@ const VERIFY = `- Do not write unit or integration tests: this repo does not kee
  * drift — a simplification is held to exactly the standard the code it removes
  * was built to.
  */
-const WORKING_RULES = `- Keep code concise, with brief inline comments only where useful.
-${VERIFY}
+function workingRules(keepTests: boolean): string {
+  return `- Keep code concise, with brief inline comments only where useful.
+${verifyRule(keepTests)}
 - When a change is large or subtle enough that fresh eyes would catch something, have a subagent review your diff before you open the PR. A real defect it finds in what you changed gets fixed now — a follow-up ships a bug you know about; anything else is dismissed with a sentence saying why. Do not restyle working code to a reviewer's taste.
 - End the PR description with a **Verification** section: **Ran** — each check and what it showed; **Did not run** — each you skipped, and why; **Blocked by the machine** — anything this environment lacked, anything you had to install or start by hand before a check would run, or a shipped config or script of this repo that would not start until you changed it — even if you then worked around it; "none" if nothing. The factory reads that last part to fix its own environment.`;
+}
 
 /**
  * What an agent is told about the credentials in its environment: names and
@@ -215,11 +224,11 @@ These environment variables are set on this machine. When the live test needs th
 ${list}`;
 }
 
-export function implementPrompt(task: Task, credentials: AgentCredential[] = []): string {
+export function implementPrompt(task: Task, credentials: AgentCredential[] = [], keepTests = false): string {
   return `Implement the GitHub issue below and open a PR that resolves it (reference "Closes #${task.issueNumber}").
 
 How we like to work in this repo:
-${WORKING_RULES}${credentialsSection(credentials)}
+${workingRules(keepTests)}${credentialsSection(credentials)}
 
 ## Issue #${task.issueNumber}: ${task.title}
 ${task.url}
@@ -270,7 +279,7 @@ export function resolveConflictsPrompt(prUrl: string, base: string): string {
  * look. The line-count rule is stated because the controller enforces it: a
  * simplification that adds code is closed before a human sees it.
  */
-export function simplifyPrompt(opts: { recentPrs: string[]; declinedPrs: string[]; budget: RunBudget }): string {
+export function simplifyPrompt(opts: { recentPrs: string[]; declinedPrs: string[]; budget: RunBudget; keepTests?: boolean }): string {
   const declined = opts.declinedPrs.length > 0
     ? `\n\n## Simplifications a human already declined\n\nDo not propose these again.\n\n${opts.declinedPrs.join('\n')}`
     : '';
@@ -288,7 +297,7 @@ The one rule the factory checks itself: **the PR must remove more lines than it 
 Behavior the code still needs is preserved; what you remove is what you have shown nothing uses. Pick one theme a reviewer can hold in their head — related removals are fine, a grab bag is not — and make it big enough to matter: you have about ${opts.budget.maxRunMinutes} minutes to find it, cut it, verify what remains, and open the PR.
 
 How we like to work in this repo:
-${WORKING_RULES}
+${workingRules(opts.keepTests === true)}
 - A live test here, where you run one, exercises the behavior you kept through the code you simplified.
 
 The PR description says what was removed, why nothing needs it, and the line count. Open no PR when there is nothing worth a reviewer's time — a padded one costs a human review, and one that grows the code is closed anyway.
@@ -364,7 +373,7 @@ ${prUrls.join('\n')}`;
  * commit it verified; the `.github/` rule is stated because the controller
  * enforces it. No credentials are handed over: this agent runs a stranger's code.
  */
-export function reviewPrompt(pr: { number: number; url: string; isCrossRepository: boolean; authorMayChangeGithub: boolean }, principles: string): string {
+export function reviewPrompt(pr: { number: number; url: string; isCrossRepository: boolean; authorMayChangeGithub: boolean }, principles: string, keepTests = false): string {
   // The agents' machine can push to a branch of this repo but not to a fork.
   const where = pr.isCrossRepository
     ? `It comes from a fork, which this machine cannot push to, so you start on your own session branch off the default branch. Review the PR's code detached: \`git fetch origin pull/${pr.number}/head && git checkout FETCH_HEAD\`. If it needs fixes, put its commits on your session branch — \`git checkout -B <the branch you started on> FETCH_HEAD\` — commit the fixes on top, and push it: \`git push -u origin HEAD\`. Nothing pushes it for you, and fixes left unpushed are lost with this machine. That branch becomes a replacement PR carrying the author's commits and yours, which the factory merges in place of this one, crediting the author. Do not open a PR yourself, and commit and push nothing to your session branch unless the PR needs fixes: any push there opens a PR.`
@@ -387,7 +396,9 @@ If it is worth having and conflicts with the default branch, or needs it merged 
 
 Then verify it: that it does what its description claims — or, if you narrowed it, what is left of that — not only that it compiles. CI runs the repo's checks on the commit you name, the factory merges only on green checks, and a red one comes back to you, so do not run those here. ${LIVE}
 
-Then fix what stands between it and merge rather than asking the author to: a defect you found, a piece the PR's own point needs. This repo keeps no unit or integration tests, so delete any the PR carries in a commit of your own; that alone is never a reason to close or leave it. Stay inside what the PR is for — scope it lacks is not yours to build, and a fix that grows into a rewrite means the PR was not close.
+Then fix what stands between it and merge rather than asking the author to: a defect you found, a piece the PR's own point needs. ${keepTests
+    ? 'This repo keeps its tests: a test the PR weakens, skips, or deletes to pass is a defect you fix, not one you merge.'
+    : 'This repo keeps no unit or integration tests, so delete any the PR carries in a commit of your own; that alone is never a reason to close or leave it.'} Stay inside what the PR is for — scope it lacks is not yours to build, and a fix that grows into a rewrite means the PR was not close.
 
 ${pr.authorMayChangeGithub
     ? 'The author has write access to this repo, so the factory merges a change under `.github/` from them like any other: workflows run with the repo\'s secrets, and they could already push one to a branch and run it. Read a workflow change with that in mind — what it runs, what it is handed, what it could weaken in the checks the factory merges on — and fix or close it on what you find, as with any file.'
@@ -457,7 +468,7 @@ export const BOOT_CHECK_PROMPT = 'This session only checks that the machine boot
  * a finding or closes a report on the agent's word and reason, the third sets
  * a report's severity to the agent's rating.
  */
-export function securityPrompt(opts: { alerts: string[]; advisories?: string[]; openPrs: string[]; budget: RunBudget }): string {
+export function securityPrompt(opts: { alerts: string[]; advisories?: string[]; openPrs: string[]; budget: RunBudget; keepTests?: boolean }): string {
   const advisories = opts.advisories ?? [];
   const open = opts.openPrs.length > 0
     ? `\n\n## Security PRs the factory already has open\n\nThese fix other alerts. Do not redo their work, and do not pick a group whose fix would conflict with theirs.\n\n${opts.openPrs.join('\n')}`
@@ -487,7 +498,7 @@ Below are the open ${what} no factory PR is fixing yet, most severe first. Start
 Read how each affected dependency is actually used, and where each flagged input actually comes from, before you change anything. A fix can be a deletion: a dependency nothing imports, a tool nothing runs, or code nothing calls is removed rather than patched, and leaves less to keep patched.${reportsRules}
 
 How we like to work in this repo:
-${WORKING_RULES}
+${workingRules(opts.keepTests === true)}
 - GitHub closes each alert itself once the default branch no longer has it, so fixed means that: every lockfile resolves a patched version, or the package is gone; the flagged flow is sanitized, or no longer exists.
 
 The PR is public, so its description says what was fixed and how; it need not walk through how to exploit what was there.

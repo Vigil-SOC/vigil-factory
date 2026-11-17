@@ -44,11 +44,12 @@ fi
 
 export FACTORY_WORKER=claude-code
 # worker.model is Grok (a Cursor model); Claude Code runs the Opus alternative.
-export FACTORY_MODEL=opus
+# FACTORY_MODEL, FACTORY_MAX_JOBS and FACTORY_MAX_SESSIONS in .env change these
+# three without touching this file.
+export FACTORY_MODEL="${FACTORY_MODEL:-opus}"
 # The subscription, not the Cursor budget, pays for these: run twice the jobs.
-export FACTORY_MAX_JOBS=6
-# Claude Code sessions at once. The host is sized for it (e2-standard-16, 64 GB);
-# FACTORY_MAX_SESSIONS=<n> in .env changes it without touching this file.
+export FACTORY_MAX_JOBS="${FACTORY_MAX_JOBS:-6}"
+# Claude Code sessions at once. The host is sized for it (e2-standard-16, 64 GB).
 export FACTORY_MAX_SESSIONS="${FACTORY_MAX_SESSIONS:-4}"
 export FACTORY_CLAUDE_BIN="$HOME/.local/bin/claude"
 # setup.sh pins Claude Code; the host and its review containers stay on it.
