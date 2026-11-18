@@ -90,6 +90,8 @@ export interface ReviewPr {
   body: string;
   author: { login: string; name?: string; is_bot?: boolean };
   headRefOid: string;
+  /** The branch it would merge into. */
+  baseRefName: string;
   /** From a fork: nothing here can push to its branch. */
   isCrossRepository: boolean;
   labels: { name: string }[];
@@ -242,7 +244,11 @@ export function mergeDue(pr: ReviewPr, factoryLabels: string[]): boolean {
  * due again only because main moved waits behind PRs that are new or changed,
  * and a PR whose reviews keep failing waits behind everything.
  */
-export function reviewQueue(prs: ReviewPr[], factoryLabels: string[], mainHead?: string): { open: ReviewPr[]; reopen: ReviewPr[]; merge: ReviewPr[] } {
+export function reviewQueue(all: ReviewPr[], factoryLabels: string[], mainHead?: string, onlyBase?: string): { open: ReviewPr[]; reopen: ReviewPr[]; merge: ReviewPr[] } {
+  // A PR into another branch is left alone entirely when `onlyBase` is given:
+  // a copy onto a release line is on the default branch by definition, which
+  // the review would read as a duplicate to close.
+  const prs = onlyBase === undefined ? all : all.filter((p) => p.baseRefName === onlyBase);
   const byNumber = (a: ReviewPr, b: ReviewPr) => a.number - b.number;
   const rank = (p: ReviewPr) => {
     if (failedReviews(p) >= FAILURES_TO_THE_BACK) return 2;

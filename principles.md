@@ -145,6 +145,15 @@ Reach for the shared standard before the custom integration.
   live suites. An issue, epic or PR that asks for unit or integration tests asks
   for something this repo does not keep.
 
+## What goes to the release line
+
+Vigil keeps a release branch that takes copies of fixes after they merge on the
+default branch. A fix goes there when it fixes a security problem, a crash, lost
+or corrupted data, or something serious with no workaround, and it needs no
+database change. New features, cleanup, and anything with a migration wait for
+the next minor release. A bug in code the release branch does not have is never
+a backport.
+
 ## Applying this to an issue
 
 First ask whether there is a correct change here that one PR can land. It may be

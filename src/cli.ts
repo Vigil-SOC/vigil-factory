@@ -5,7 +5,7 @@
 import { admissible, buildContext, buildWorker, candidateTasks, depsInputs, environmentInputs, implementIssues, log, openSet, reviewInputs, runEnvironmentPhase, runDepsPhase, runGroomPhase, runReviewPhase, runSecurityPhase, runSelector, runSimplifyPhase, selectorCandidates, securityInputs, simplifySkip, tick } from './controller.ts';
 import { loadConfig, loadPrinciples, loadVerification, projectRoot, repoSlug } from './config.ts';
 import { isEpic, isGroomed, needsGroom, verdict } from './groom.ts';
-import { defaultBranchHead } from './github.ts';
+import { acceptsIssues, defaultBranchHead } from './github.ts';
 import type { CodingWorker, CurrentRun } from './types.ts';
 
 const USAGE = `vigil-factory — thin software-factory control plane around Cursor cloud agents or local Claude Code
@@ -53,10 +53,18 @@ Environment: FACTORY_WORKER=cursor|claude-code overrides worker.kind for one inv
 `;
 
 /** A deployment's own CI: its policy loads. Needs no token and reaches nothing. */
-function check(): void {
+async function check(): Promise<void> {
   const config = loadConfig();
   loadPrinciples(config);
   loadVerification(config);
+  // Reading the repo is as far as this can tell without filing an issue: a
+  // token that reads it but may not write issues there still passes.
+  for (const repo of config.groom.refileRepos) {
+    const ok = await acceptsIssues(repo).catch((err: Error) => {
+      throw new Error(`groom.refileRepos: cannot reach ${repo} with this GitHub login: ${err.message}`);
+    });
+    if (!ok) throw new Error(`groom.refileRepos: ${repo} has issues turned off`);
+  }
   const verify = config.verify.file ? `, verification in ${config.verify.file}` : '';
   console.log(`ok: ${projectRoot} builds ${repoSlug(config)} on the ${config.worker.kind} worker, principles in ${config.groom.principlesFile}${verify}`);
 }
@@ -335,7 +343,7 @@ async function main(): Promise<void> {
       await implementIssues(issueNumbers, parallel);
       break;
     case 'check':
-      check();
+      await check();
       break;
     case 'status':
       await status();

@@ -101,6 +101,7 @@ interface Stamp {
   children?: number[];
   weighed?: number[];
   waiting?: number[];
+  refiled?: string;
 }
 
 /** What a stamp carries beyond the fingerprint: a child's premise, an epic's children. */
@@ -109,6 +110,10 @@ export interface StampExtras {
   children?: number[];
   /** An epic's children that were already needs-work when it was groomed. */
   weighed?: number[];
+  /** The release line a `BACKPORT:` answer was about, and the label it earns. */
+  backport?: { label: string; branch: string };
+  /** The copy a close verdict filed in another repo, by URL. */
+  refiled?: string;
 }
 
 /** The stamp's attributes, in any order. A stamp without `sha` is not one. */
@@ -124,6 +129,7 @@ function parseStamp(body: string): Stamp | null {
   const children = list('children');
   const weighed = list('weighed');
   const waiting = list('waiting');
+  const refiled = attrs.get('refiled');
   return {
     sha,
     ...(blocked ? { blocked: Number(blocked) } : {}),
@@ -131,6 +137,7 @@ function parseStamp(body: string): Stamp | null {
     ...(children?.length ? { children } : {}),
     ...(weighed?.length ? { weighed } : {}),
     ...(waiting?.length ? { waiting } : {}),
+    ...(refiled && /^https:\/\/\S+\/issues\/\d+$/.test(refiled) ? { refiled } : {}),
   };
 }
 
@@ -252,6 +259,24 @@ export function readBlocker(task: Task): number | null {
 /** What a groomed epic's held-back work waits on outside its slice. */
 export function readWaiting(task: Task): number[] {
   return latestStamp(task)?.waiting ?? [];
+}
+
+/**
+ * The copy of this issue the factory already filed elsewhere, if any groom of
+ * it did. Every groom comment is read, not only the latest: a reopened issue
+ * groomed to a close again must find the copy its first close made.
+ */
+export function readRefiled(task: Task): string | null {
+  for (const c of [...task.comments].reverse()) {
+    const refiled = parseStamp(c.body)?.refiled;
+    if (refiled) return refiled;
+  }
+  return null;
+}
+
+/** What a refiled copy opens with, then the original's own words. */
+export function refiledBody(task: Task): string {
+  return `Moved from ${task.url}${task.author ? `, filed by @${task.author}` : ''}.\n\n${task.body}`;
 }
 
 /** The epic record the current verdict was judged against, if it named one. */
@@ -465,6 +490,7 @@ export function groomComment(task: Task, reply: GroomReply, epic = false, extras
   if (extras.children?.length) attrs.push(`children=${extras.children.map((n) => `#${n}`).join(',')}`);
   if (extras.weighed?.length) attrs.push(`weighed=${extras.weighed.map((n) => `#${n}`).join(',')}`);
   if (epic && reply.verdict === 'groomed' && reply.waiting?.length) attrs.push(`waiting=${reply.waiting.map((n) => `#${n}`).join(',')}`);
+  if (extras.refiled && reply.verdict === 'close') attrs.push(`refiled=${extras.refiled}`);
   const stamp = `<!-- factory-groom ${attrs.join(' ')} -->`;
   const parts = [
     stamp,
@@ -473,6 +499,10 @@ export function groomComment(task: Task, reply: GroomReply, epic = false, extras
       : `${headline} Edit the description or reply here and it gets reviewed again on a later tick.`,
     reply.reasoning.trim(),
   ];
+  if (extras.backport && reply.backport !== undefined && reply.verdict === 'groomed') {
+    parts.push(`**Backport.** The bug is in \`${extras.backport.branch}\` too${reply.backport ? `: ${reply.backport}` : '.'} The factory adds the \`${extras.backport.label}\` label, so the fix is copied there once it merges; remove the label if that is wrong.`);
+  }
+  if (extras.refiled && reply.verdict === 'close') parts.push(`**Refiled.** This request continues at ${extras.refiled}.`);
   if (reply.notes) parts.push(`${NOTES_HEADING}\n\n${reply.notes.trim()}`);
   return parts.filter(Boolean).join('\n\n');
 }
@@ -587,12 +617,18 @@ export interface GroomReply {
   close?: number[];
   /** What a groomed epic's held-back work waits on, from `WAITING: #N` lines. */
   waiting?: number[];
+  /** Why a groomed bug's fix also goes to the release line, from a `BACKPORT: yes — <reason>` line. */
+  backport?: string;
+  /** The repo a close verdict sends the issue to, from a `REFILE: <owner/repo>` line. */
+  refile?: string;
 }
 
 const VERDICT_RE = /^\s*VERDICT:\s*(groomed|needs[-_ ]?work|epic|done|close)\s*$/gim;
 const BLOCKED_RE = /^\s*BLOCKED:\s*#?(\d+)\s*$/gim;
 const CLOSE_RE = /^\s*CLOSE:\s*#?(\d+)\s*$/gim;
 const WAITING_RE = /^\s*WAITING:\s*#?(\d+)\s*$/gim;
+const BACKPORT_RE = /^\s*BACKPORT:[ \t]*yes\b[ \t]*(?:[—–:-]+[ \t]*)?(.*)$/gim;
+const REFILE_RE = /^\s*REFILE:[ \t]*`?([\w.-]+\/[\w.-]+)`?[ \t]*$/gim;
 const NOTES_RE = /```notes[ \t]*\n([\s\S]*?)```/g;
 const CHILD_RE = /```child[ \t]*\n([\s\S]*?)```/g;
 
@@ -637,6 +673,10 @@ export function parseGroomReply(text: string): GroomReply | null {
   const children = parseDraftBlocks(text, 'child').drafts;
   const close = [...new Set([...text.matchAll(CLOSE_RE)].map((m) => Number(m[1])))];
   const waiting = [...new Set([...text.matchAll(WAITING_RE)].map((m) => Number(m[1])))];
+  const backportLine = [...text.matchAll(BACKPORT_RE)].at(-1);
+  const backport = backportLine && verdict === 'groomed' ? backportLine[1]!.trim().replace(/\.$/, '') : undefined;
+  const refileLine = [...text.matchAll(REFILE_RE)].at(-1)?.[1];
+  const refile = refileLine && verdict === 'close' ? refileLine : undefined;
 
   // The reasoning is everything except the machinery, for the issue comment.
   const reasoning = text
@@ -646,7 +686,9 @@ export function parseGroomReply(text: string): GroomReply | null {
     .replace(BLOCKED_RE, '')
     .replace(CLOSE_RE, '')
     .replace(WAITING_RE, '')
+    .replace(BACKPORT_RE, '')
+    .replace(REFILE_RE, '')
     .trim();
 
-  return { verdict, notes, reasoning, ...(blocked !== undefined ? { blocked } : {}), children, ...(close.length ? { close } : {}), ...(waiting.length ? { waiting } : {}) };
+  return { verdict, notes, reasoning, ...(blocked !== undefined ? { blocked } : {}), children, ...(close.length ? { close } : {}), ...(waiting.length ? { waiting } : {}), ...(backport !== undefined ? { backport } : {}), ...(refile !== undefined ? { refile } : {}) };
 }

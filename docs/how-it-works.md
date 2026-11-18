@@ -232,6 +232,26 @@ change. They are deliberately factory-local: they never reach the implementer, w
 only coding-level direction. That separation is the point — product direction is decided
 at grooming time, not at coding time.
 
+**A bug may also belong on a release line.** With `groom.backport` set (`{ label, branch }`,
+where `branch` is a glob such as `release/*`) and a matching branch in the target repo — the
+newest, when several match — the groom of a bug also asks whether the code the fix would
+touch exists on that branch and whether the fix meets the backport rule in `principles.md`.
+A yes is one line, `BACKPORT: yes — <reason>`: the factory says why in the groom comment and
+adds the label to the issue, and a person removes it if it is wrong. The implementer of a
+labelled issue is told to change only what the fix needs, and its PR carries the label
+before CI runs. Copying the fix after it merges is the target repo's own automation, not
+the factory's. Absent by default.
+
+**A close can send the request somewhere it belongs.** With `groom.refileRepos` listing
+repos, a close verdict may end with `REFILE: <owner/repo>` when the principles place the
+issue in one of them. The factory files a copy there — the title, and the body under a line
+saying where it came from and who filed it — then posts the close verdict with a link to
+the copy, then closes the original. A copy rather than a transfer, so an author who cannot
+see the other repo keeps their own issue. If the copy fails nothing is posted or closed, and
+the issue is groomed again; the verdict's stamp records the copy, so a reopened issue is
+never copied twice. A repo not on the list is ignored. `factory check` confirms each listed
+repo is reachable and takes issues. Empty by default.
+
 **State lives in the issue, not in a local file.** The verdict is the
 `factory:groomed` / `factory:needs-work` label — the thing you already read when
 browsing the issue list, and can already change. Nothing parses prose to find it.
@@ -685,7 +705,11 @@ branch: the agent merges the default branch in and resolves it, never rebasing o
 force-pushing the author's branch, and closes the PR only when the conflicts resolve
 by rewriting its change. Reviews do not count
 against `maxConcurrentJobs`; `review.maxPerTick` bounds how many run in one tick. The phase
-is off unless `review.enabled` is set, since it is the one that merges.
+is off unless `review.enabled` is set, since it is the one that merges. With
+`review.defaultBranchOnly` set, a PR into any other branch is left alone entirely — not
+reviewed, merged, or answered, and `review --pr N` on one says so and stops — for a repo
+whose release branches take copies of changes the default branch already has, which a
+review would close as duplicates. Off by default.
 
 ## Dependabot
 
@@ -1048,6 +1072,13 @@ committed.
 - `factory.config.json` → `groom.epicModel` — a name from `worker.models` for the epic
   grooms that settle a direction (unset = `worker.model`). The one place a stronger model
   buys the most: the direction every child is built against. See "Epics" above.
+- `factory.config.json` → `groom.backport` — `{ label, branch }` for a repo with a release
+  line: grooming labels the bugs whose fix belongs there too. Absent = never asked. See
+  "Grooming" above.
+- `factory.config.json` → `groom.refileRepos` — repos a close verdict may refile an issue
+  in instead of only closing it (default none).
+- `factory.config.json` → `review.defaultBranchOnly` — (default `false`) the review phase
+  leaves PRs into any branch but the default one alone.
 - `factory.config.json` → `security` — `enabled` (default true) and `minSeverity` (default
   `high`; `low`, `medium` — or `moderate` — `high`, `critical`): the phase that fixes the
   repo's open Dependabot and code scanning alerts, and its privately reported advisories, a

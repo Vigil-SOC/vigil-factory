@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   distrustMarkers, fingerprint, groomComment, groomNotes, groomState, hasLegacyBlock, isDraft, isEpic, isFactoryComment, isGroomed, needsGroom, openIssues,
   childDroppedComment, childrenFiledComment, epicRecognizedComment, openChildren, parentEpic, parseGroomReply, premiseOf, readBlocker, readChildren,
-  readFingerprint, readPremise, recordFingerprint, settlesDirection, stampExtrasFor, stripLegacyBlock, unaccountedBlockers, verdict,
+  readFingerprint, readPremise, readRefiled, recordFingerprint, refiledBody, settlesDirection, stampExtrasFor, stripLegacyBlock, unaccountedBlockers, verdict,
 } from '../src/groom.ts';
 import type { GroomVerdict, IssueComment, Task } from '../src/types.ts';
 
@@ -604,5 +604,62 @@ describe('a factory marker counts only from someone trusted', () => {
   it('leaves a stranger\'s ordinary comment alone', () => {
     const comments = [{ author: { login: 'stranger' }, body: 'plain words <!-- a note -->' }];
     expect(distrustMarkers(comments, trusted)).toEqual(comments);
+  });
+});
+
+describe('a backport answer', () => {
+  it('is read with its reason, only on a groomed verdict, and kept out of the reasoning', () => {
+    const reply = parseGroomReply('The parser drops the last row.\n\nVERDICT: groomed\nBACKPORT: yes — the same parser ships in the release.')!;
+    expect(reply.backport).toBe('the same parser ships in the release');
+    expect(reply.reasoning).toBe('The parser drops the last row.');
+    expect(parseGroomReply('Unclear.\n\nVERDICT: needs-work\nBACKPORT: yes — would apply')!.backport).toBeUndefined();
+    expect(parseGroomReply('Fine.\n\nVERDICT: groomed')!.backport).toBeUndefined();
+  });
+
+  it('is said in the groom comment, with the branch and the label a person may remove', () => {
+    const t = task(1, 'the parser drops the last row');
+    const reply = parseGroomReply('Why.\n\nVERDICT: groomed\nBACKPORT: yes — same parser on the release line')!;
+    const body = groomComment(t, reply, false, { backport: { label: 'backport', branch: 'release/0.6.x' } });
+    expect(body).toContain('`release/0.6.x`');
+    expect(body).toContain('same parser on the release line');
+    expect(body).toContain('`backport` label');
+    expect(groomComment(t, reply)).not.toContain('Backport');
+    expect(groomComment(t, parseGroomReply('Why.\n\nVERDICT: groomed')!, false, { backport: { label: 'backport', branch: 'release/0.6.x' } })).not.toContain('Backport');
+  });
+});
+
+describe('refiling a closed issue in another repo', () => {
+  const copy = 'https://github.com/o/private/issues/7';
+
+  it('the repo is read only from a close verdict, and kept out of the reasoning', () => {
+    const reply = parseGroomReply('Licence enforcement belongs to the wrapper.\n\nVERDICT: close\nREFILE: o/private')!;
+    expect(reply.refile).toBe('o/private');
+    expect(reply.reasoning).toBe('Licence enforcement belongs to the wrapper.');
+    expect(parseGroomReply('Later.\n\nVERDICT: needs-work\nREFILE: o/private')!.refile).toBeUndefined();
+    expect(parseGroomReply('Nothing here.\n\nVERDICT: close')!.refile).toBeUndefined();
+  });
+
+  it('the copy opens with where it came from and who filed it', () => {
+    const t = { ...task(3, 'Meter usage per seat.'), author: 'outsider' };
+    expect(refiledBody(t)).toBe('Moved from https://github.com/o/r/issues/3, filed by @outsider.\n\nMeter usage per seat.');
+    expect(refiledBody(task(3, 'Meter usage per seat.'))).toBe('Moved from https://github.com/o/r/issues/3.\n\nMeter usage per seat.');
+  });
+
+  it('the close comment links the copy and records it, so a later groom finds it instead of filing another', () => {
+    const t = task(3, 'Meter usage per seat.');
+    const reply = parseGroomReply('Belongs to the wrapper.\n\nVERDICT: close\nREFILE: o/private')!;
+    expect(readRefiled(t)).toBeNull();
+    const body = groomComment(t, reply, false, { refiled: copy });
+    expect(body).toContain(`continues at ${copy}`);
+    // Reopened, argued with, and groomed again: the first close's copy is still the copy.
+    const later = groomComment(t, parseGroomReply('Still nothing.\n\nVERDICT: needs-work')!);
+    expect(readRefiled(task(3, 'Meter usage per seat.', [body, 'But I need it here.', later]))).toBe(copy);
+  });
+
+  it('a verdict that is not a close records no copy', () => {
+    const t = task(3, 'Meter usage per seat.');
+    const body = groomComment(t, parseGroomReply('Fine.\n\nVERDICT: groomed')!, false, { refiled: copy });
+    expect(readRefiled(task(3, 'Meter usage per seat.', [body]))).toBeNull();
+    expect(body).not.toContain(copy);
   });
 });

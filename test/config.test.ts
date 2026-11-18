@@ -202,3 +202,26 @@ describe('usage pause', () => {
     expect(() => loadConfig(configDir({ pauseAtUsagePercent: 150 }))).toThrow(/pauseAtUsagePercent/);
   });
 });
+
+describe('release line and refile settings', () => {
+  it('all three are off unless a deployment asks', () => {
+    const config = loadConfig(configDir({}));
+    expect(config.review.defaultBranchOnly).toBe(false);
+    expect(config.groom.backport).toBeUndefined();
+    expect(config.groom.refileRepos).toEqual([]);
+  });
+
+  it('are read as written', () => {
+    const config = loadConfig(configDir({}, { backport: { label: 'backport', branch: 'release/*' }, refileRepos: ['o/private'] }, { review: { enabled: true, defaultBranchOnly: true } }));
+    expect(config.review.defaultBranchOnly).toBe(true);
+    expect(config.groom.backport).toEqual({ label: 'backport', branch: 'release/*' });
+    expect(config.groom.refileRepos).toEqual(['o/private']);
+  });
+
+  it('refuses a backport without both halves, and a refile repo that is not owner/repo', () => {
+    expect(() => loadConfig(configDir({}, { backport: { label: 'backport' } }))).toThrow(/groom.backport/);
+    expect(() => loadConfig(configDir({}, { backport: { label: '', branch: 'release/*' } }))).toThrow(/groom.backport/);
+    expect(() => loadConfig(configDir({}, { refileRepos: ['private'] }))).toThrow(/groom.refileRepos/);
+    expect(() => loadConfig(configDir({}, { refileRepos: ['https://github.com/o/private'] }))).toThrow(/groom.refileRepos/);
+  });
+});
