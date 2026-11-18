@@ -287,6 +287,11 @@ async function groomOne(
   // names its children. Either way the verdict says what would make it stale.
   const { backport: backportRule, refileRepos } = ctx.config.groom;
   const backport = !epic && reply.backport !== undefined && backportRule && releaseBranch ? { label: backportRule.label, branch: releaseBranch } : undefined;
+  // A refile the factory cannot read is not a plain close: closing here would
+  // lose the request the line set out to move, so the issue is groomed again.
+  if (!epic && refileRepos.length > 0 && reply.refileUnread) {
+    throw new Error(`a close verdict's REFILE line names no repo the factory can read: ${reply.refileUnread.slice(0, 120)}`);
+  }
   // Only a listed repo: the list is the deployment's, the line is an agent's.
   const refileRepo = epic || reply.refile === undefined ? undefined : refileRepos.find((r) => r.toLowerCase() === reply.refile!.toLowerCase());
   if (reply.refile !== undefined && !refileRepo) log(`#${task.issueNumber}: REFILE names ${reply.refile}, which groom.refileRepos does not list; closing without a copy`);

@@ -621,6 +621,8 @@ export interface GroomReply {
   backport?: string;
   /** The repo a close verdict sends the issue to, from a `REFILE: <owner/repo>` line. */
   refile?: string;
+  /** A close verdict's `REFILE` line that names no repo the factory can read. */
+  refileUnread?: string;
 }
 
 const VERDICT_RE = /^\s*VERDICT:\s*(groomed|needs[-_ ]?work|epic|done|close)\s*$/gim;
@@ -628,7 +630,10 @@ const BLOCKED_RE = /^\s*BLOCKED:\s*#?(\d+)\s*$/gim;
 const CLOSE_RE = /^\s*CLOSE:\s*#?(\d+)\s*$/gim;
 const WAITING_RE = /^\s*WAITING:\s*#?(\d+)\s*$/gim;
 const BACKPORT_RE = /^\s*BACKPORT:[ \t]*yes\b[ \t]*(?:[—–:-]+[ \t]*)?(.*)$/gim;
-const REFILE_RE = /^\s*REFILE:[ \t]*`?([\w.-]+\/[\w.-]+)`?[ \t]*$/gim;
+// Read loosely, since a line the factory cannot read closes the issue with no
+// copy: bold, a GitHub URL and a closing full stop all name the same repo.
+const REFILE_RE = /^\s*\**REFILE:\**[ \t]*[`<]?(?:https?:\/\/github\.com\/)?([\w.-]+\/[\w.-]+?)(?:\.git)?\/?[`>]?\.?\**[ \t]*$/gim;
+const REFILE_LINE_RE = /^[ \t]*[*_`>#-]*[ \t]*REFILE\b.*$/m;
 const NOTES_RE = /```notes[ \t]*\n([\s\S]*?)```/g;
 const CHILD_RE = /```child[ \t]*\n([\s\S]*?)```/g;
 
@@ -677,6 +682,7 @@ export function parseGroomReply(text: string): GroomReply | null {
   const backport = backportLine && verdict === 'groomed' ? backportLine[1]!.trim().replace(/\.$/, '') : undefined;
   const refileLine = [...text.matchAll(REFILE_RE)].at(-1)?.[1];
   const refile = refileLine && verdict === 'close' ? refileLine : undefined;
+  const refileUnread = verdict === 'close' && !refileLine ? text.match(REFILE_LINE_RE)?.[0].trim() : undefined;
 
   // The reasoning is everything except the machinery, for the issue comment.
   const reasoning = text
@@ -690,5 +696,5 @@ export function parseGroomReply(text: string): GroomReply | null {
     .replace(REFILE_RE, '')
     .trim();
 
-  return { verdict, notes, reasoning, ...(blocked !== undefined ? { blocked } : {}), children, ...(close.length ? { close } : {}), ...(waiting.length ? { waiting } : {}), ...(backport !== undefined ? { backport } : {}), ...(refile !== undefined ? { refile } : {}) };
+  return { verdict, notes, reasoning, ...(blocked !== undefined ? { blocked } : {}), children, ...(close.length ? { close } : {}), ...(waiting.length ? { waiting } : {}), ...(backport !== undefined ? { backport } : {}), ...(refile !== undefined ? { refile } : {}), ...(refileUnread ? { refileUnread } : {}) };
 }

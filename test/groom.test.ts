@@ -639,6 +639,27 @@ describe('refiling a closed issue in another repo', () => {
     expect(parseGroomReply('Nothing here.\n\nVERDICT: close')!.refile).toBeUndefined();
   });
 
+  it('the repo is read however the line is dressed: bold, a GitHub URL, a closing full stop', () => {
+    for (const line of ['REFILE: o/private.', 'REFILE: https://github.com/o/private', 'REFILE: <https://github.com/o/private/>', '**REFILE: o/private**', 'REFILE: `o/private`']) {
+      const reply = parseGroomReply(`Belongs to the wrapper.\n\nVERDICT: close\n${line}`)!;
+      expect(reply.refile, line).toBe('o/private');
+      expect(reply.refileUnread, line).toBeUndefined();
+      expect(reply.reasoning, line).toBe('Belongs to the wrapper.');
+    }
+    expect(parseGroomReply('Docs.\n\nVERDICT: close\nREFILE: o/site.js')!.refile).toBe('o/site.js');
+  });
+
+  it('a line that names no repo is reported rather than read as a plain close', () => {
+    const reply = parseGroomReply('Belongs to the wrapper.\n\nVERDICT: close\nREFILE: the wrapper repo')!;
+    expect(reply.refile).toBeUndefined();
+    expect(reply.refileUnread).toBe('REFILE: the wrapper repo');
+    expect(parseGroomReply('Elsewhere.\n\nVERDICT: close\nREFILE: https://github.com/o/private/issues')!.refileUnread).toBe('REFILE: https://github.com/o/private/issues');
+    // Prose about refiling, a close with no line, and any other verdict report nothing.
+    expect(parseGroomReply('Refile this by hand.\n\nVERDICT: close')!.refileUnread).toBeUndefined();
+    expect(parseGroomReply('Nothing here.\n\nVERDICT: close')!.refileUnread).toBeUndefined();
+    expect(parseGroomReply('Later.\n\nVERDICT: needs-work\nREFILE: the wrapper repo')!.refileUnread).toBeUndefined();
+  });
+
   it('the copy opens with where it came from and who filed it', () => {
     const t = { ...task(3, 'Meter usage per seat.'), author: 'outsider' };
     expect(refiledBody(t)).toBe('Moved from https://github.com/o/r/issues/3, filed by @outsider.\n\nMeter usage per seat.');
