@@ -163,10 +163,12 @@ export interface WorkSource {
     /** What the stamp carries beyond the fingerprint: for a child, the epic
      *  record it was judged against; for an epic, its open children. Both are
      *  what lets the verdict be revisited when the world moves. */
-    extras?: { premise?: { epic: number; sha: string } | null; children?: number[]; backport?: { label: string; branch: string; unlabelled?: boolean }; refiled?: string; refileFailed?: string; refileUnclear?: boolean },
+    extras?: { premise?: { epic: number; sha: string } | null; children?: number[]; backport?: { label: string; branch: string; unlabelled?: boolean }; refiled?: string; unbackported?: { label: string; branch: string; failed?: boolean }; refileFailed?: string; refileUnclear?: boolean; refileUnlisted?: string },
   ): Promise<void>;
   /** The groom found the bug on the release line too: label the issue for a backport. */
   markBackport(task: Task, label: string): Promise<void>;
+  /** A later groom found no backport: take off the label an earlier one added. */
+  unmarkBackport(task: Task, label: string): Promise<void>;
   /** File a copy of an issue in another repo, linked back to it. Returns the copy's URL. */
   refile(task: Task, repo: string): Promise<string>;
   /** File the children a groomed epic's groomer wrote, each linked back to the

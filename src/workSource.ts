@@ -2,7 +2,7 @@ import type { Task, WorkSource } from './types.ts';
 import type { FactoryConfig } from './config.ts';
 import { repoSlug } from './config.ts';
 import {
-  addIssueLabels, closeIssue, commentOnIssue, createIssue, editIssueBody, ensureLabel, findOwnIssueOpening, labelHistory, listOpenIssues, referenceState, removeIssueLabels,
+  addIssueLabels, closeIssue, commentOnIssue, createIssue, editIssueBody, ensureLabel, findFiledCopy, labelHistory, listOpenIssues, referenceState, removeIssueLabels,
 } from './github.ts';
 import {
   childDroppedComment, childrenFiledComment, epicRecognizedComment, failedAttemptComment, groomComment, hasLegacyBlock, isEpic, refiledBody, refiledOpening, stripLegacyBlock,
@@ -169,12 +169,17 @@ export class GitHubIssueSource implements WorkSource {
     await addIssueLabels(this.repo, task.issueNumber, [label]);
   }
 
+  async unmarkBackport(task: Task, label: string): Promise<void> {
+    await removeIssueLabels(this.repo, task.issueNumber, [label]);
+  }
+
   /** A copy, not a transfer: the original stays readable where its author
    *  filed it. Unlabelled, since the other repo's labels are its own. */
   async refile(task: Task, repo: string): Promise<string> {
     // The groom comment is the record of a copy, and it is posted after the
     // copy is filed: one that never got posted leaves a copy nothing records.
-    const earlier = await findOwnIssueOpening(repo, refiledOpening(task)).catch(() => null);
+    // A search that fails is a refile that fails, not a licence to file again.
+    const earlier = await findFiledCopy(this.repo, repo, refiledOpening(task));
     if (earlier) return earlier;
     const { url } = await createIssue(repo, task.title, refiledBody(task), []);
     return url;

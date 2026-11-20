@@ -237,7 +237,8 @@ where `branch` is a glob such as `release/*`) and a matching branch in the targe
 newest, when several match — the groom of a bug also asks whether the code the fix would
 touch exists on that branch and whether the fix meets the backport rule in `principles.md`.
 A yes is one line, `BACKPORT: yes — <reason>`: the factory says why in the groom comment and
-adds the label to the issue, and a person removes it if it is wrong. The implementer of a
+adds the label to the issue, and a person removes it if it is wrong. A later groom that
+finds no backport takes off a label an earlier groom added, and leaves one a person added. The implementer of a
 labelled issue is told to change only what the fix needs, and its PR carries the label
 before CI runs. Copying the fix after it merges is the target repo's own automation, not
 the factory's. Absent by default.
@@ -250,9 +251,10 @@ the copy, then closes the original. A copy rather than a transfer, so an author 
 see the other repo keeps their own issue. If the copy fails the issue is not closed: the
 verdict on record is needs-work, with a comment naming the repo it belongs in and saying it
 was not moved, and a reply there has it groomed again. A `REFILE` line the factory cannot
-match to a listed repo ends the same way, rather than as a close that loses the request.
+match to a listed repo, or one naming a repo not on the list, ends the same way, rather
+than as a close that loses the request.
 The verdict's stamp records a copy that was filed, and before filing the factory looks in
-the other repo for one it already made, so an issue is never copied twice. A repo not on the list is ignored. `factory check` confirms each listed
+the other repo for one it already made, so an issue is never copied twice. `factory check` confirms each listed
 repo is reachable and takes issues. Empty by default.
 
 **State lives in the issue, not in a local file.** The verdict is the

@@ -133,7 +133,7 @@ describe('the release line a backport goes to', () => {
   it('is read from the repo\'s branches, and is nothing when none matches', async () => {
     answer = () => 'main\nrelease/0.6.x\nfeature/x\n';
     expect(await matchingBranch('o/r', 'release/*')).toBe('release/0.6.x');
-    expect(calls[0]).toEqual(expect.arrayContaining(['api', 'repos/o/r/branches', '--paginate']));
+    expect(calls[0]).toEqual(expect.arrayContaining(['api', 'repos/o/r/git/matching-refs/heads/release/']));
     answer = () => 'main\n';
     expect(await matchingBranch('o/r', 'release/*')).toBeNull();
   });

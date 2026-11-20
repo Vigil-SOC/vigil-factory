@@ -274,9 +274,14 @@ export function newestMatch(branches: string[], glob: string): string | null {
   return branches.filter((b) => re.test(b)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).at(-1) ?? null;
 }
 
-/** The target's newest branch matching a glob, or null when it has none. */
+/**
+ * The target's newest branch matching a glob, or null when it has none. Only
+ * the branches under the glob's fixed prefix are listed: one call, where
+ * paging through every branch of a busy repo took nine.
+ */
 export async function matchingBranch(repo: string, glob: string): Promise<string | null> {
-  const out = await gh(['api', `repos/${repo}/branches`, '--paginate', '--jq', '.[].name']);
+  const prefix = glob.split('*')[0]!;
+  const out = await gh(['api', `repos/${repo}/git/matching-refs/heads/${prefix}`, '--jq', '.[].ref | ltrimstr("refs/heads/")']);
   return newestMatch(out.split('\n').map((l) => l.trim()).filter(Boolean), glob);
 }
 
@@ -287,16 +292,21 @@ export async function acceptsIssues(repo: string): Promise<boolean> {
 }
 
 /**
- * An issue this login filed in a repo whose body opens with the given text, by
- * URL: how a copy filed on a run that died before recording it is found again.
- * Only this login's, so nobody else can plant the issue a copy is taken for.
+ * An issue in `repo` whose body opens with the given text, by URL: how a copy
+ * filed on a run that died before recording it is found again. Any trusted
+ * author's, not only this login's: each person's host runs under its own
+ * login, so the copy may be another runner's. Only the trusted, so nobody
+ * else can plant the issue a copy is taken for.
  */
-export async function findOwnIssueOpening(repo: string, opening: string): Promise<string | null> {
-  const found = await ghJson<{ url: string; body: string }[]>([
-    'issue', 'list', '-R', repo, '--state', 'all', '--author', '@me',
-    '--search', `"${opening}" in:body`, '--limit', '20', '--json', 'url,body',
+export async function findFiledCopy(targetRepo: string, repo: string, opening: string): Promise<string | null> {
+  const [found, who] = await Promise.all([
+    ghJson<{ url: string; body: string; author: { login: string } | null }[]>([
+      'issue', 'list', '-R', repo, '--state', 'all',
+      '--search', `"${opening}" in:body`, '--limit', '20', '--json', 'url,body,author',
+    ]),
+    trustedAuthors(targetRepo),
   ]);
-  return found.find((i) => i.body.startsWith(opening) && !/^\d/.test(i.body.slice(opening.length)))?.url ?? null;
+  return found.find((i) => i.author && who.has(i.author.login) && i.body.startsWith(opening) && !/^\d/.test(i.body.slice(opening.length)))?.url ?? null;
 }
 
 /** The labels an issue carries now. */

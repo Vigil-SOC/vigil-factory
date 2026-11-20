@@ -39,7 +39,7 @@ import { FactoryState, ownPrs } from './state.ts';
 import { Telemetry } from './telemetry.ts';
 import { filterAssigned, filterClaimed, filterDrafts, filterEpics, parseSelection, type Selection } from './selector.ts';
 import { BOOT_CHECK_PROMPT, depsPrompt, environmentPrompt, fixChecksPrompt, forkFixChecksPrompt, missingChecksPrompt, resolveConflictsPrompt, groomEpicPrompt, groomPrompt, implementPrompt, type GroomExtras, trackEpicPrompt, reviewPrompt, securityPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
-import { factoryComment, isFactoryComment, groomState, isBlocker, isEpic, isGroomed, needsGroom, queueOrder, openChildren, openIssues, listedRepoIn, parseGroomReply, readRefiled, settlesDirection, stampExtrasFor, unaccountedBlockers, verdict, type GroomLabels, type OpenIssues, type StampExtras } from './groom.ts';
+import { factoryComment, isFactoryComment, factoryBackported, groomState, isBlocker, isEpic, isGroomed, needsGroom, queueOrder, openChildren, openIssues, listedRepoIn, parseGroomReply, readRefiled, settlesDirection, stampExtrasFor, unaccountedBlockers, verdict, type GroomLabels, type OpenIssues, type StampExtras } from './groom.ts';
 import { type LabelHistory, type PrCheck, addPrLabels, labelHistory, removeIssueLabels, approveHeldRuns, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, annotateAdvisory, dismissCodeScanningAlert, listAcceptedReports, listAdvisoryReports, listAllIssuesByLabel, listCodeScanningAlerts, listDependabotAlerts, listDependabotPrs, listPrsByLabel, listPrsForReview, markPrReady, matchingBranch, mergePr, prChecks, prMergeable, reopenPr, requiredChecks, userId, viewPr, viewPrForReview, collaboratorPermission } from './github.ts';
 import { ENV_AGENT_MARK, environmentChangedAt, filedIssueBody, parseEnvReport, recentVerdicts, skipReason, unreadFactoryPrs, withOpenedThisTick, workerSkipReason, type UnreadPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
@@ -294,10 +294,12 @@ async function groomOne(
   const refileRepo = !refileOn ? undefined
     : reply.refile !== undefined ? refileRepos.find((r) => r.toLowerCase() === reply.refile!.toLowerCase())
     : reply.refileUnread ? listedRepoIn(reply.refileUnread, refileRepos) : undefined;
-  if (reply.refile !== undefined && !refileRepo) log(`#${task.issueNumber}: REFILE names ${reply.refile}, which groom.refileRepos does not list; closing without a copy`);
-  // A refile line that still names nothing is not a plain close, which would
-  // lose the request, and not a failed groom, which is paid for again every
-  // tick: the verdict on record is needs-work until someone replies.
+  // A line naming a repo off the list, or naming nothing readable, is not a
+  // plain close, which would lose the request, and not a failed groom, which
+  // is paid for again every tick: the verdict on record is needs-work until
+  // someone replies. The prompt names only listed repos, so either is a slip.
+  const refileUnlisted = refileOn && reply.refile !== undefined && !refileRepo ? reply.refile : undefined;
+  if (refileUnlisted) log(`#${task.issueNumber}: REFILE names ${refileUnlisted}, which groom.refileRepos does not list; left open as needs-work`);
   const refileUnclear = refileOn && reply.refileUnread !== undefined && !refileRepo;
   if (refileUnclear) log(`#${task.issueNumber}: could not read where to refile; left open as needs-work: ${reply.refileUnread!.slice(0, 120)}`);
   // The copy is filed before the verdict goes on record, and a copy an earlier
@@ -306,7 +308,7 @@ async function groomOne(
   // where the request belongs and that it was not moved. That stamp holds
   // until someone replies, so a repo the factory cannot write to costs one
   // groom per issue rather than one every tick.
-  let refiled = refileRepo ? readRefiled(task) ?? undefined : undefined;
+  let refiled = refileRepo ? readRefiled(task, refileRepo) ?? undefined : undefined;
   let refileFailed: string | undefined;
   if (refileRepo && !refiled) {
     try {
@@ -316,7 +318,7 @@ async function groomOne(
       log(`#${task.issueNumber}: could not file a copy in ${refileRepo}; left open as needs-work: ${(err as Error).message}`);
     }
   }
-  const outcome = refileFailed || refileUnclear ? 'needs-work' as const : reply.verdict;
+  const outcome = refileFailed || refileUnclear || refileUnlisted ? 'needs-work' as const : reply.verdict;
   // Labelled before the comment that says so, so the comment can say what happened.
   let backportStamp: StampExtras['backport'] = backport;
   if (backport) {
@@ -325,8 +327,20 @@ async function groomOne(
       log(`#${task.issueNumber}: could not add the ${backport.label} label: ${err.message}`);
     });
   }
-  await ctx.source.recordGroom(task, { ...reply, verdict: outcome }, { ...stampExtrasFor(task, ctx.config.labels, open), ...(backportStamp ? { backport: backportStamp } : {}), ...(refiled ? { refiled } : {}), ...(refileFailed ? { refileFailed } : {}), ...(refileUnclear ? { refileUnclear } : {}) });
-  log(`groomed #${task.issueNumber}${epic ? ' (epic)' : ''} → ${outcome}${reply.notes ? ' (+notes)' : ''}${backport ? ` (backport to ${backport.branch})` : ''}${refiled ? ` (refiled as ${refiled})` : ''}${reply.blocked !== undefined ? ` (blocked on #${reply.blocked})` : ''}${epic && reply.waiting ? ` (waiting on ${reply.waiting.map((n) => `#${n}`).join(' ')})` : ''}`);
+  // A groom that was asked and found no backport takes off the label an
+  // earlier groom put on; otherwise the implementer is still held to a
+  // backport's limits and the PR is still copied. One a person added stays.
+  let unbackported: StampExtras['unbackported'];
+  if (!epic && backportRule && releaseBranch && outcome === 'groomed' && reply.backport === undefined
+    && task.labels.includes(backportRule.label) && factoryBackported(task)) {
+    unbackported = { label: backportRule.label, branch: releaseBranch };
+    await ctx.source.unmarkBackport(task, backportRule.label).catch((err: Error) => {
+      unbackported = { ...unbackported!, failed: true };
+      log(`#${task.issueNumber}: could not take off the ${backportRule.label} label: ${err.message}`);
+    });
+  }
+  await ctx.source.recordGroom(task, { ...reply, verdict: outcome }, { ...stampExtrasFor(task, ctx.config.labels, open), ...(backportStamp ? { backport: backportStamp } : {}), ...(unbackported ? { unbackported } : {}), ...(refiled ? { refiled } : {}), ...(refileFailed ? { refileFailed } : {}), ...(refileUnclear ? { refileUnclear } : {}), ...(refileUnlisted ? { refileUnlisted } : {}) });
+  log(`groomed #${task.issueNumber}${epic ? ' (epic)' : ''} → ${outcome}${reply.notes ? ' (+notes)' : ''}${backport ? ` (backport to ${backport.branch})` : ''}${unbackported ? ` (no longer a backport${unbackported.failed ? '; label not removed' : ''})` : ''}${refiled ? ` (refiled as ${refiled})` : ''}${reply.blocked !== undefined ? ` (blocked on #${reply.blocked})` : ''}${epic && reply.waiting ? ` (waiting on ${reply.waiting.map((n) => `#${n}`).join(' ')})` : ''}`);
 
   // A groomed epic's children are the work; the verdict alone builds nothing.
   // Filed after the verdict is on record so a child always points at an epic

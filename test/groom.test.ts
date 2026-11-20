@@ -669,12 +669,12 @@ describe('refiling a closed issue in another repo', () => {
   it('the close comment links the copy and records it, so a later groom finds it instead of filing another', () => {
     const t = task(3, 'Meter usage per seat.');
     const reply = parseGroomReply('Belongs to the wrapper.\n\nVERDICT: close\nREFILE: o/private')!;
-    expect(readRefiled(t)).toBeNull();
+    expect(readRefiled(t, 'o/private')).toBeNull();
     const body = groomComment(t, reply, false, { refiled: copy });
-    expect(body).toContain(`continues at ${copy}`);
+    expect(body).toContain(`continues at [private#7](${copy})`);
     // Reopened, argued with, and groomed again: the first close's copy is still the copy.
     const later = groomComment(t, parseGroomReply('Still nothing.\n\nVERDICT: needs-work')!);
-    expect(readRefiled(task(3, 'Meter usage per seat.', [body, 'But I need it here.', later]))).toBe(copy);
+    expect(readRefiled(task(3, 'Meter usage per seat.', [body, 'But I need it here.', later]), 'o/private')).toBe(copy);
   });
 
   it('a copy that could not be filed says so on the issue, and records no copy', () => {
@@ -682,17 +682,17 @@ describe('refiling a closed issue in another repo', () => {
     const reply = { ...parseGroomReply('Belongs to the wrapper.\n\nVERDICT: close\nREFILE: o/private')!, verdict: 'needs-work' as const };
     const body = groomComment(t, reply, false, { refileFailed: 'o/private' });
     expect(body).toContain('needs work');
-    expect(body).toContain('belongs in `o/private`');
+    expect(body).toContain('belongs in `private`');
     expect(body).toContain('could not file a copy');
     expect(body).not.toContain('closes it');
-    expect(readRefiled(task(3, 'Meter usage per seat.', [body]))).toBeNull();
+    expect(readRefiled(task(3, 'Meter usage per seat.', [body]), 'o/private')).toBeNull();
     expect(groomComment(t, reply)).not.toContain('Not moved');
   });
 
   it('a verdict that is not a close records no copy', () => {
     const t = task(3, 'Meter usage per seat.');
     const body = groomComment(t, parseGroomReply('Fine.\n\nVERDICT: groomed')!, false, { refiled: copy });
-    expect(readRefiled(task(3, 'Meter usage per seat.', [body]))).toBeNull();
+    expect(readRefiled(task(3, 'Meter usage per seat.', [body]), 'o/private')).toBeNull();
     expect(body).not.toContain(copy);
   });
 });
