@@ -709,6 +709,9 @@ const BLOCKED_RE = /^\s*BLOCKED:\s*#?(\d+)\s*$/gim;
 const CLOSE_RE = /^\s*CLOSE:\s*#?(\d+)\s*$/gim;
 const WAITING_RE = /^\s*WAITING:\s*#?(\d+)\s*$/gim;
 const BACKPORT_RE = /^\s*\**BACKPORT:\**[ \t]*yes\b\**[ \t]*(?:[—–:,-]+[ \t]*)?(.*?)\**[ \t]*$/gim;
+// Only a yes is read, but a "BACKPORT: no" the agent writes anyway is still
+// machinery, not reasoning for the issue comment.
+const BACKPORT_LINE_RE = /^\s*\**BACKPORT:.*$/gim;
 // Read loosely, since a line the factory cannot read keeps the issue open as
 // needs-work: bold, a GitHub URL and a closing full stop all name the same repo.
 const REFILE_RE = /^\s*\**REFILE:\**[ \t]*[`<]?(?:https?:\/\/github\.com\/)?([\w.-]+\/[\w.-]+?)(?:\.git)?\/?[`>]?\.?\**[ \t]*$/gim;
@@ -778,7 +781,8 @@ export function parseGroomReply(text: string): GroomReply | null {
   const waiting = [...new Set([...text.matchAll(WAITING_RE)].map((m) => Number(m[1])))];
   const backportLine = [...text.matchAll(BACKPORT_RE)].at(-1);
   const backport = backportLine && verdict === 'groomed' ? backportLine[1]!.trim().replace(/\.$/, '') : undefined;
-  const refileLine = [...text.matchAll(REFILE_RE)].at(-1)?.[1];
+  // "REFILE: n/a" has the shape of owner/repo, but it answers none.
+  const refileLine = [...text.matchAll(REFILE_RE)].filter((m) => !REFILE_NONE_RE.test(m[0].trim())).at(-1)?.[1];
   const refile = refileLine && verdict === 'close' ? refileLine : undefined;
   const unreadLine = verdict === 'close' && !refileLine ? text.match(REFILE_LINE_RE)?.[0] : undefined;
   const saysNone = unreadLine !== undefined && REFILE_NONE_RE.test(unreadLine) && !REPO_SHAPED_RE.test(unreadLine);
@@ -792,7 +796,7 @@ export function parseGroomReply(text: string): GroomReply | null {
     .replace(BLOCKED_RE, '')
     .replace(CLOSE_RE, '')
     .replace(WAITING_RE, '')
-    .replace(BACKPORT_RE, '')
+    .replace(BACKPORT_LINE_RE, '')
     .replace(REFILE_RE, '')
     .replace(unreadLine ?? '', '')
     .trim();

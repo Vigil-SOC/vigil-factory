@@ -1988,7 +1988,7 @@ async function runPipeline(
   // An issue carrying the backport label gets a fix small enough to copy, and
   // a PR carrying the label too: the target repo's copy runs on merge.
   const backport = config.groom.backport && task.labels.includes(config.groom.backport.label) ? config.groom.backport : undefined;
-  const releaseBranch = backport ? (await backportBranch(config).catch(() => null)) ?? backport.branch : undefined;
+  const releaseBranch = backport ? await backportBranch(config).catch(() => null) : undefined;
   const handle = await worker.start(implementPrompt(task, agentCredentials(config).present, loadVerification(config), releaseBranch), {
     autoCreatePR: true,
     name: `factory: #${task.issueNumber} ${task.title}`.slice(0, 100),

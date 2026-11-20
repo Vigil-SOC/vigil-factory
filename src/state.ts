@@ -213,7 +213,12 @@ export class FactoryState {
           continue;
         }
         await markPrReady(this.repo, pr.url);
-        const onIssue = this.config.groom.backport ? await issueLabels(this.repo, issue).catch(() => []) : [];
+        const onIssue = this.config.groom.backport
+          ? await issueLabels(this.repo, issue).catch((err: Error) => {
+            log(`could not read #${issue}'s labels, so ${pr.url} gets no ${this.config.groom.backport!.label} label even if #${issue} has one; add it by hand before it merges: ${err.message}`);
+            return [];
+          })
+          : [];
         await addPrLabels(this.repo, pr.url, [labels.factoryPr, ...backportLabelOn(this.config, onIssue)]);
         await addIssueLabels(this.repo, issue, [labels.issueInProgress]);
         await commentOnIssue(this.repo, issue, factoryComment(
