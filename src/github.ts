@@ -286,6 +286,25 @@ export async function acceptsIssues(repo: string): Promise<boolean> {
   return has_issues;
 }
 
+/**
+ * An issue this login filed in a repo whose body opens with the given text, by
+ * URL: how a copy filed on a run that died before recording it is found again.
+ * Only this login's, so nobody else can plant the issue a copy is taken for.
+ */
+export async function findOwnIssueOpening(repo: string, opening: string): Promise<string | null> {
+  const found = await ghJson<{ url: string; body: string }[]>([
+    'issue', 'list', '-R', repo, '--state', 'all', '--author', '@me',
+    '--search', `"${opening}" in:body`, '--limit', '20', '--json', 'url,body',
+  ]);
+  return found.find((i) => i.body.startsWith(opening) && !/^\d/.test(i.body.slice(opening.length)))?.url ?? null;
+}
+
+/** The labels an issue carries now. */
+export async function issueLabels(repo: string, issue: number): Promise<string[]> {
+  const out = await gh(['api', `repos/${repo}/issues/${issue}`, '--jq', '.labels[].name']);
+  return out.split('\n').map((l) => l.trim()).filter(Boolean);
+}
+
 export async function ensureLabel(repo: string, name: string, color: string, description: string): Promise<void> {
   // `--force` makes creation idempotent (updates if it exists).
   await gh(['label', 'create', name, '-R', repo, '--color', color, '--description', description, '--force']);

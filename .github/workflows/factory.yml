@@ -91,14 +91,6 @@ jobs:
       - name: Install Claude Code
         if: hashFiles('factory.config.json') != '' && (inputs.worker == 'claude-code' || (inputs.worker == '' && fromJSON(steps.kind.outputs.claude)))
         run: npm install -g @anthropic-ai/claude-code
-      # Under the tick's own token, before any agent runs: a repo in
-      # groom.refileRepos this token cannot reach would fail every copy, and
-      # each failed copy is a groom paid for again on the next tick.
-      - name: Check the policy and the repos it names
-        if: hashFiles('factory.config.json') != ''
-        run: npm run factory -- check
-        env:
-          GH_TOKEN: ${{ secrets.FACTORY_GH_TOKEN }}
       - if: hashFiles('factory.config.json') != ''
         run: npm run factory -- run
         env:

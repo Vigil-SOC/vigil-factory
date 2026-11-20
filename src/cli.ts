@@ -41,8 +41,9 @@ Usage:
                                        the capacity gate and without a groom: naming an issue is the verdict that it is
                                        one PR, and the attempt tests it as it would a groom's. Skips any already claimed,
                                        so re-running resumes.
-  npm run factory -- check             Check this deployment's policy without touching GitHub: factory.config.json parses and
-                                       the principles and verification files it names exist. What a deployment's CI runs.
+  npm run factory -- check             Check this deployment's policy: factory.config.json parses, the principles and
+                                       verification files it names exist, and each repo in groom.refileRepos is reachable
+                                       (the only step that touches GitHub). What a deployment's CI runs.
   npm run factory -- status            Show grooming progress, capacity, in-flight jobs, pending PRs, and recent telemetry.
   npm run factory -- abort [--issue N] Abandon stuck local pipelines — all of them, or just issue N's
                                        (cancels the runs if the worker still can).
@@ -52,7 +53,9 @@ Environment: FACTORY_WORKER=cursor|claude-code overrides worker.kind for one inv
              FACTORY_MAX_JOBS=<n> overrides maxConcurrentJobs.
 `;
 
-/** A deployment's own CI: its policy loads. Needs no token and reaches nothing. */
+/** A deployment's own CI: its policy loads. Reaches GitHub only for the repos in
+ *  `groom.refileRepos`, and needs a login that can read them; with none listed it
+ *  needs no token and reaches nothing. */
 async function check(): Promise<void> {
   const config = loadConfig();
   loadPrinciples(config);

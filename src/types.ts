@@ -163,7 +163,7 @@ export interface WorkSource {
     /** What the stamp carries beyond the fingerprint: for a child, the epic
      *  record it was judged against; for an epic, its open children. Both are
      *  what lets the verdict be revisited when the world moves. */
-    extras?: { premise?: { epic: number; sha: string } | null; children?: number[]; backport?: { label: string; branch: string }; refiled?: string },
+    extras?: { premise?: { epic: number; sha: string } | null; children?: number[]; backport?: { label: string; branch: string; unlabelled?: boolean }; refiled?: string; refileFailed?: string; refileUnclear?: boolean },
   ): Promise<void>;
   /** The groom found the bug on the release line too: label the issue for a backport. */
   markBackport(task: Task, label: string): Promise<void>;

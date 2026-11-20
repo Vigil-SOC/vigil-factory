@@ -14,7 +14,7 @@ something, and the design assumes it can be.
 
 | Asset | Where it lives | What it gives |
 | --- | --- | --- |
-| `FACTORY_GH_TOKEN` (or the `gh` login) | Actions secret; the tick's environment | Push branches, open, label, close and merge PRs, and comment on the target repo; read its alerts and, with the right scope, its private advisories |
+| `FACTORY_GH_TOKEN` (or the `gh` login) | Actions secret; the tick's environment | Push branches, open, label, close and merge PRs, and comment on the target repo; file issues in each repo in `groom.refileRepos`; read its alerts and, with the right scope, its private advisories |
 | `CURSOR_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` | Actions secrets; `.env` | Spend on the Cursor account or Claude subscription |
 | `worker.agentEnv` credentials | Same | Spend, and whatever the named service allows |
 | The target repository | GitHub | Its default branch, releases, and every secret its own workflows can read |
@@ -38,6 +38,7 @@ PR authors, commenters, fork owners, and the reporters of security advisories.
 | Input | Read by | Can run code? |
 | --- | --- | --- |
 | Issue titles, bodies and comments | The groomer, then the implementer of a groomed issue | Indirectly: the implementer builds what the issue says |
+| An issue's title and body, when a close verdict refiles it | Copied as written into a repo in `groom.refileRepos`, filed by the factory's login | No, but whatever reads issues there reads a stranger's words under the factory's name |
 | A PR's description, comments, diff and branch | The review agent | Yes: it builds and runs the PR to verify it |
 | Dependabot and code-scanning alerts | The deps and security agents | No, but the alert text is a model input |
 | Privately reported advisories | The security agent | No; the prompt treats a report as a claim to check |
@@ -56,6 +57,13 @@ security and hand-back agents are started with `withholdCredentials`
 (`src/controller.ts`), so they get none of `worker.agentEnv`. Implementers do get
 them, because they run the live test that needs the real service. An implementer
 builds from a groomed issue, not from a stranger's code.
+
+**A refile only reaches a repo the deployment listed.** A groomer's `REFILE:` line picks
+from `groom.refileRepos` and nothing else (`src/controller.ts`, `groomOne`): a repo not on
+the list is never written to, whatever the issue or the agent says. The copy opens with
+where it came from and who filed it, and a copy already filed is found again rather than
+made twice. It is the factory's login that files it, so the receiving repo must not read
+that author as a sign the text is trusted. Off unless a deployment lists a repo.
 
 **Untrusted phases get a machine of their own.** Reviews, deps and security work on
 code nobody here wrote. On the Cursor worker that is the agent's VM, discarded after

@@ -389,6 +389,12 @@ export function repoSlug(config: FactoryConfig): string {
   return `${config.repo.owner}/${config.repo.name}`;
 }
 
+/** The backport label for a PR, when its issue carries it: the target repo's copy runs on a labelled merge. */
+export function backportLabelOn(config: FactoryConfig, issueLabels: string[]): string[] {
+  const label = config.groom.backport?.label;
+  return label !== undefined && issueLabels.includes(label) ? [label] : [];
+}
+
 const WORKER_KINDS: readonly WorkerKind[] = ['cursor', 'claude-code'];
 
 function workerKind(value: unknown): WorkerKind {

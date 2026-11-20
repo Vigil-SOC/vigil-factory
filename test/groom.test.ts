@@ -677,6 +677,18 @@ describe('refiling a closed issue in another repo', () => {
     expect(readRefiled(task(3, 'Meter usage per seat.', [body, 'But I need it here.', later]))).toBe(copy);
   });
 
+  it('a copy that could not be filed says so on the issue, and records no copy', () => {
+    const t = task(3, 'Meter usage per seat.');
+    const reply = { ...parseGroomReply('Belongs to the wrapper.\n\nVERDICT: close\nREFILE: o/private')!, verdict: 'needs-work' as const };
+    const body = groomComment(t, reply, false, { refileFailed: 'o/private' });
+    expect(body).toContain('needs work');
+    expect(body).toContain('belongs in `o/private`');
+    expect(body).toContain('could not file a copy');
+    expect(body).not.toContain('closes it');
+    expect(readRefiled(task(3, 'Meter usage per seat.', [body]))).toBeNull();
+    expect(groomComment(t, reply)).not.toContain('Not moved');
+  });
+
   it('a verdict that is not a close records no copy', () => {
     const t = task(3, 'Meter usage per seat.');
     const body = groomComment(t, parseGroomReply('Fine.\n\nVERDICT: groomed')!, false, { refiled: copy });

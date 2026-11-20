@@ -247,9 +247,12 @@ repos, a close verdict may end with `REFILE: <owner/repo>` when the principles p
 issue in one of them. The factory files a copy there — the title, and the body under a line
 saying where it came from and who filed it — then posts the close verdict with a link to
 the copy, then closes the original. A copy rather than a transfer, so an author who cannot
-see the other repo keeps their own issue. If the copy fails nothing is posted or closed, and
-the issue is groomed again; the verdict's stamp records the copy, so a reopened issue is
-never copied twice. A repo not on the list is ignored. `factory check` confirms each listed
+see the other repo keeps their own issue. If the copy fails the issue is not closed: the
+verdict on record is needs-work, with a comment naming the repo it belongs in and saying it
+was not moved, and a reply there has it groomed again. A `REFILE` line the factory cannot
+match to a listed repo ends the same way, rather than as a close that loses the request.
+The verdict's stamp records a copy that was filed, and before filing the factory looks in
+the other repo for one it already made, so an issue is never copied twice. A repo not on the list is ignored. `factory check` confirms each listed
 repo is reachable and takes issues. Empty by default.
 
 **State lives in the issue, not in a local file.** The verdict is the
@@ -885,6 +888,8 @@ The engine reads everything from the directory it is run in (`FACTORY_ROOT` over
 `npx factory <command>` there is `npm run factory -- <command>` here.
 
 A deployment's CI is one job named `check` that runs `npm install && npx factory check`.
+With repos in `groom.refileRepos`, that job needs a token that can read each of them; with
+none it needs no token.
 `contrib/update.sh` moves a host's checkout only to a commit that job passed on, the
 same rule this repo's hosts follow, so a config that does not parse stays off the fleet.
 A deployment without that job never updates its own checkout.

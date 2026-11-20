@@ -30,7 +30,7 @@
 
 import { resolve } from 'node:path';
 import type { CodingWorker, CurrentRun, DepsRecord, EnvRecord, GroomRecord, ReviewRecord, RunHandle, RunRecord, RunResult, SecurityRecord, SimplifyRecord, Task, TokenUsage } from './types.ts';
-import { agentCredentials, claudeBin, epicGroomModel, githubTokenForAgents, reviewModel, loadConfig, loadDotEnv, loadPrinciples, loadVerification, projectRoot, repoSlug, requireCursorApiKey, type FactoryConfig } from './config.ts';
+import { agentCredentials, backportLabelOn, claudeBin, epicGroomModel, githubTokenForAgents, reviewModel, loadConfig, loadDotEnv, loadPrinciples, loadVerification, projectRoot, repoSlug, requireCursorApiKey, type FactoryConfig } from './config.ts';
 import { RunBudgetExceeded } from './types.ts';
 import { CursorWorker } from './worker.ts';
 import { ClaudeCodeWorker } from './claudeCodeWorker.ts';
@@ -39,7 +39,7 @@ import { FactoryState, ownPrs } from './state.ts';
 import { Telemetry } from './telemetry.ts';
 import { filterAssigned, filterClaimed, filterDrafts, filterEpics, parseSelection, type Selection } from './selector.ts';
 import { BOOT_CHECK_PROMPT, depsPrompt, environmentPrompt, fixChecksPrompt, forkFixChecksPrompt, missingChecksPrompt, resolveConflictsPrompt, groomEpicPrompt, groomPrompt, implementPrompt, type GroomExtras, trackEpicPrompt, reviewPrompt, securityPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
-import { factoryComment, isFactoryComment, groomState, isBlocker, isEpic, isGroomed, needsGroom, queueOrder, openChildren, openIssues, parseGroomReply, readRefiled, settlesDirection, stampExtrasFor, unaccountedBlockers, verdict, type GroomLabels, type OpenIssues } from './groom.ts';
+import { factoryComment, isFactoryComment, groomState, isBlocker, isEpic, isGroomed, needsGroom, queueOrder, openChildren, openIssues, listedRepoIn, parseGroomReply, readRefiled, settlesDirection, stampExtrasFor, unaccountedBlockers, verdict, type GroomLabels, type OpenIssues, type StampExtras } from './groom.ts';
 import { type LabelHistory, type PrCheck, addPrLabels, labelHistory, removeIssueLabels, approveHeldRuns, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, annotateAdvisory, dismissCodeScanningAlert, listAcceptedReports, listAdvisoryReports, listAllIssuesByLabel, listCodeScanningAlerts, listDependabotAlerts, listDependabotPrs, listPrsByLabel, listPrsForReview, markPrReady, matchingBranch, mergePr, prChecks, prMergeable, reopenPr, requiredChecks, userId, viewPr, viewPrForReview, collaboratorPermission } from './github.ts';
 import { ENV_AGENT_MARK, environmentChangedAt, filedIssueBody, parseEnvReport, recentVerdicts, skipReason, unreadFactoryPrs, withOpenedThisTick, workerSkipReason, type UnreadPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
@@ -287,23 +287,46 @@ async function groomOne(
   // names its children. Either way the verdict says what would make it stale.
   const { backport: backportRule, refileRepos } = ctx.config.groom;
   const backport = !epic && reply.backport !== undefined && backportRule && releaseBranch ? { label: backportRule.label, branch: releaseBranch } : undefined;
-  // A refile the factory cannot read is not a plain close: closing here would
-  // lose the request the line set out to move, so the issue is groomed again.
-  if (!epic && refileRepos.length > 0 && reply.refileUnread) {
-    throw new Error(`a close verdict's REFILE line names no repo the factory can read: ${reply.refileUnread.slice(0, 120)}`);
-  }
   // Only a listed repo: the list is the deployment's, the line is an agent's.
-  const refileRepo = epic || reply.refile === undefined ? undefined : refileRepos.find((r) => r.toLowerCase() === reply.refile!.toLowerCase());
+  // A line the parser could not read is searched for a listed repo, since a
+  // note after the name or a link around it still names it.
+  const refileOn = !epic && refileRepos.length > 0;
+  const refileRepo = !refileOn ? undefined
+    : reply.refile !== undefined ? refileRepos.find((r) => r.toLowerCase() === reply.refile!.toLowerCase())
+    : reply.refileUnread ? listedRepoIn(reply.refileUnread, refileRepos) : undefined;
   if (reply.refile !== undefined && !refileRepo) log(`#${task.issueNumber}: REFILE names ${reply.refile}, which groom.refileRepos does not list; closing without a copy`);
-  // The copy is filed before the verdict goes on record. If it fails this
-  // throws with no stamp left behind, so the issue stays open and is groomed
-  // again. A copy an earlier groom filed is reused, never made twice.
-  const refiled = refileRepo ? readRefiled(task) ?? await ctx.source.refile(task, refileRepo) : undefined;
-  await ctx.source.recordGroom(task, reply, { ...stampExtrasFor(task, ctx.config.labels, open), ...(backport ? { backport } : {}), ...(refiled ? { refiled } : {}) });
-  if (backport) {
-    await ctx.source.markBackport(task, backport.label).catch((err: Error) => log(`#${task.issueNumber}: could not add the ${backport.label} label: ${err.message}`));
+  // A refile line that still names nothing is not a plain close, which would
+  // lose the request, and not a failed groom, which is paid for again every
+  // tick: the verdict on record is needs-work until someone replies.
+  const refileUnclear = refileOn && reply.refileUnread !== undefined && !refileRepo;
+  if (refileUnclear) log(`#${task.issueNumber}: could not read where to refile; left open as needs-work: ${reply.refileUnread!.slice(0, 120)}`);
+  // The copy is filed before the verdict goes on record, and a copy an earlier
+  // groom filed is reused, never made twice. If it cannot be filed the issue
+  // is not closed: the verdict on record is needs-work, and the comment says
+  // where the request belongs and that it was not moved. That stamp holds
+  // until someone replies, so a repo the factory cannot write to costs one
+  // groom per issue rather than one every tick.
+  let refiled = refileRepo ? readRefiled(task) ?? undefined : undefined;
+  let refileFailed: string | undefined;
+  if (refileRepo && !refiled) {
+    try {
+      refiled = await ctx.source.refile(task, refileRepo);
+    } catch (err) {
+      refileFailed = refileRepo;
+      log(`#${task.issueNumber}: could not file a copy in ${refileRepo}; left open as needs-work: ${(err as Error).message}`);
+    }
   }
-  log(`groomed #${task.issueNumber}${epic ? ' (epic)' : ''} → ${reply.verdict}${reply.notes ? ' (+notes)' : ''}${backport ? ` (backport to ${backport.branch})` : ''}${refiled ? ` (refiled as ${refiled})` : ''}${reply.blocked !== undefined ? ` (blocked on #${reply.blocked})` : ''}${epic && reply.waiting ? ` (waiting on ${reply.waiting.map((n) => `#${n}`).join(' ')})` : ''}`);
+  const outcome = refileFailed || refileUnclear ? 'needs-work' as const : reply.verdict;
+  // Labelled before the comment that says so, so the comment can say what happened.
+  let backportStamp: StampExtras['backport'] = backport;
+  if (backport) {
+    await ctx.source.markBackport(task, backport.label).catch((err: Error) => {
+      backportStamp = { ...backport, unlabelled: true };
+      log(`#${task.issueNumber}: could not add the ${backport.label} label: ${err.message}`);
+    });
+  }
+  await ctx.source.recordGroom(task, { ...reply, verdict: outcome }, { ...stampExtrasFor(task, ctx.config.labels, open), ...(backportStamp ? { backport: backportStamp } : {}), ...(refiled ? { refiled } : {}), ...(refileFailed ? { refileFailed } : {}), ...(refileUnclear ? { refileUnclear } : {}) });
+  log(`groomed #${task.issueNumber}${epic ? ' (epic)' : ''} → ${outcome}${reply.notes ? ' (+notes)' : ''}${backport ? ` (backport to ${backport.branch})` : ''}${refiled ? ` (refiled as ${refiled})` : ''}${reply.blocked !== undefined ? ` (blocked on #${reply.blocked})` : ''}${epic && reply.waiting ? ` (waiting on ${reply.waiting.map((n) => `#${n}`).join(' ')})` : ''}`);
 
   // A groomed epic's children are the work; the verdict alone builds nothing.
   // Filed after the verdict is on record so a child always points at an epic
@@ -324,7 +347,7 @@ async function groomOne(
     await ctx.source.closeEpic(task);
     log(`epic #${task.issueNumber} is done: closed`);
   }
-  if (reply.verdict === 'close') {
+  if (outcome === 'close') {
     await ctx.source.closeTask(task);
     log(`#${task.issueNumber} has nothing to build: closed as not planned`);
   }
@@ -345,7 +368,7 @@ async function groomOne(
     taskId: task.id,
     issueNumber: task.issueNumber,
     issueTitle: task.title,
-    verdict: reply.verdict,
+    verdict: outcome,
     // Any prior verdict counts, whether it went stale on an edit or was
     // revisited via --force. Keying on 'stale' alone under-counts re-grooms.
     regroom: groomState(task, ctx.config.labels) !== 'ungroomed',
@@ -1952,7 +1975,7 @@ async function runPipeline(
   if (prUrl) {
     current.prUrl = prUrl;
     state.writeRun(current);
-    await addPrLabels(repoSlug(config), prUrl, [config.labels.factoryPr, ...(backport ? [backport.label] : [])]);
+    await addPrLabels(repoSlug(config), prUrl, [config.labels.factoryPr, ...backportLabelOn(config, task.labels)]);
   }
   const ci = prUrl ? await greenChecks(config, worker, handle, prUrl) : null;
   const usage = (await worker.usage(handle.agentId)) ?? null;

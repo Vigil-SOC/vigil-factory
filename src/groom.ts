@@ -111,9 +111,13 @@ export interface StampExtras {
   /** An epic's children that were already needs-work when it was groomed. */
   weighed?: number[];
   /** The release line a `BACKPORT:` answer was about, and the label it earns. */
-  backport?: { label: string; branch: string };
+  backport?: { label: string; branch: string; unlabelled?: boolean };
   /** The copy a close verdict filed in another repo, by URL. */
   refiled?: string;
+  /** The repo a close verdict named whose copy could not be filed. */
+  refileFailed?: string;
+  /** A close verdict's REFILE line named no listed repo the factory could read. */
+  refileUnclear?: boolean;
 }
 
 /** The stamp's attributes, in any order. A stamp without `sha` is not one. */
@@ -274,9 +278,14 @@ export function readRefiled(task: Task): string | null {
   return null;
 }
 
+/** What every copy of this issue opens with, and so what finds one again. */
+export function refiledOpening(task: Task): string {
+  return `Moved from ${task.url}`;
+}
+
 /** What a refiled copy opens with, then the original's own words. */
 export function refiledBody(task: Task): string {
-  return `Moved from ${task.url}${task.author ? `, filed by @${task.author}` : ''}.\n\n${task.body}`;
+  return `${refiledOpening(task)}${task.author ? `, filed by @${task.author}` : ''}.\n\n${task.body}`;
 }
 
 /** The epic record the current verdict was judged against, if it named one. */
@@ -500,9 +509,15 @@ export function groomComment(task: Task, reply: GroomReply, epic = false, extras
     reply.reasoning.trim(),
   ];
   if (extras.backport && reply.backport !== undefined && reply.verdict === 'groomed') {
-    parts.push(`**Backport.** The bug is in \`${extras.backport.branch}\` too${reply.backport ? `: ${reply.backport}` : '.'} The factory adds the \`${extras.backport.label}\` label, so the fix is copied there once it merges; remove the label if that is wrong.`);
+    const b = extras.backport;
+    const label = b.unlabelled
+      ? `The factory could not add the \`${b.label}\` label; add it by hand and the fix is copied there once it merges.`
+      : `The factory adds the \`${b.label}\` label, so the fix is copied there once it merges; remove the label if that is wrong.`;
+    parts.push(`**Backport.** The bug is in \`${b.branch}\` too${reply.backport ? `: ${reply.backport}.` : '.'} ${label}`);
   }
   if (extras.refiled && reply.verdict === 'close') parts.push(`**Refiled.** This request continues at ${extras.refiled}.`);
+  if (extras.refileFailed) parts.push(`**Not moved.** This request belongs in \`${extras.refileFailed}\`, but the factory could not file a copy there, so the issue stays open here. Reply once that is sorted and the factory tries again.`);
+  if (extras.refileUnclear) parts.push(`**Not moved.** The groom placed this request in another repo, but the factory could not tell which, so the issue stays open here. Reply here and the factory looks again.`);
   if (reply.notes) parts.push(`${NOTES_HEADING}\n\n${reply.notes.trim()}`);
   return parts.filter(Boolean).join('\n\n');
 }
@@ -629,11 +644,23 @@ const VERDICT_RE = /^\s*VERDICT:\s*(groomed|needs[-_ ]?work|epic|done|close)\s*$
 const BLOCKED_RE = /^\s*BLOCKED:\s*#?(\d+)\s*$/gim;
 const CLOSE_RE = /^\s*CLOSE:\s*#?(\d+)\s*$/gim;
 const WAITING_RE = /^\s*WAITING:\s*#?(\d+)\s*$/gim;
-const BACKPORT_RE = /^\s*BACKPORT:[ \t]*yes\b[ \t]*(?:[—–:-]+[ \t]*)?(.*)$/gim;
+const BACKPORT_RE = /^\s*\**BACKPORT:\**[ \t]*yes\b\**[ \t]*(?:[—–:,-]+[ \t]*)?(.*?)\**[ \t]*$/gim;
 // Read loosely, since a line the factory cannot read closes the issue with no
 // copy: bold, a GitHub URL and a closing full stop all name the same repo.
 const REFILE_RE = /^\s*\**REFILE:\**[ \t]*[`<]?(?:https?:\/\/github\.com\/)?([\w.-]+\/[\w.-]+?)(?:\.git)?\/?[`>]?\.?\**[ \t]*$/gim;
 const REFILE_LINE_RE = /^[ \t]*[*_`>#-]*[ \t]*REFILE\b.*$/m;
+// "REFILE: none" answers the question rather than leaving the line out.
+const REFILE_NONE_RE = /REFILE\W*(?:none|no|n\/a|nowhere)?\W*$/i;
+
+/**
+ * The one listed repo a line names, however the line is dressed: a note after
+ * the name or a link around it still names it. None when the line names no
+ * listed repo, or more than one.
+ */
+export function listedRepoIn(line: string, repos: string[]): string | undefined {
+  const named = repos.filter((r) => new RegExp(`(?<![\\w.-])${r.replace(/\./g, '\\.')}(?![\\w-])`, 'i').test(line));
+  return named.length === 1 ? named[0] : undefined;
+}
 const NOTES_RE = /```notes[ \t]*\n([\s\S]*?)```/g;
 const CHILD_RE = /```child[ \t]*\n([\s\S]*?)```/g;
 
@@ -682,7 +709,8 @@ export function parseGroomReply(text: string): GroomReply | null {
   const backport = backportLine && verdict === 'groomed' ? backportLine[1]!.trim().replace(/\.$/, '') : undefined;
   const refileLine = [...text.matchAll(REFILE_RE)].at(-1)?.[1];
   const refile = refileLine && verdict === 'close' ? refileLine : undefined;
-  const refileUnread = verdict === 'close' && !refileLine ? text.match(REFILE_LINE_RE)?.[0].trim() : undefined;
+  const unreadLine = verdict === 'close' && !refileLine ? text.match(REFILE_LINE_RE)?.[0] : undefined;
+  const refileUnread = unreadLine && !REFILE_NONE_RE.test(unreadLine.trim()) ? unreadLine.trim() : undefined;
 
   // The reasoning is everything except the machinery, for the issue comment.
   const reasoning = text
@@ -694,6 +722,7 @@ export function parseGroomReply(text: string): GroomReply | null {
     .replace(WAITING_RE, '')
     .replace(BACKPORT_RE, '')
     .replace(REFILE_RE, '')
+    .replace(unreadLine ?? '', '')
     .trim();
 
   return { verdict, notes, reasoning, ...(blocked !== undefined ? { blocked } : {}), children, ...(close.length ? { close } : {}), ...(waiting.length ? { waiting } : {}), ...(backport !== undefined ? { backport } : {}), ...(refile !== undefined ? { refile } : {}), ...(refileUnread ? { refileUnread } : {}) };

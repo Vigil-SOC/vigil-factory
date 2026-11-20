@@ -90,7 +90,7 @@ function refileSection(repos: string[] | undefined): string {
 Some issues belong in another repo. When the principles below place this issue in one of these, the verdict is close, with one line after it naming that repo:
 REFILE: <owner/repo>
 ${repos.map((r) => `- ${r}`).join('\n')}
-The factory files a copy of the issue there, links the two, and closes this one, so the request is not lost. Name no repo outside this list.
+The factory files a copy of the issue there, links the two, and closes this one, so the request is not lost. Name no repo outside this list, and when the issue belongs in none of them add no REFILE line at all.
 `;
 }
 
