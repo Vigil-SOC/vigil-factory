@@ -686,8 +686,8 @@ const BLOCKED_RE = /^\s*BLOCKED:\s*#?(\d+)\s*$/gim;
 const CLOSE_RE = /^\s*CLOSE:\s*#?(\d+)\s*$/gim;
 const WAITING_RE = /^\s*WAITING:\s*#?(\d+)\s*$/gim;
 const BACKPORT_RE = /^\s*\**BACKPORT:\**[ \t]*yes\b\**[ \t]*(?:[—–:,-]+[ \t]*)?(.*?)\**[ \t]*$/gim;
-// Read loosely, since a line the factory cannot read closes the issue with no
-// copy: bold, a GitHub URL and a closing full stop all name the same repo.
+// Read loosely, since a line the factory cannot read keeps the issue open as
+// needs-work: bold, a GitHub URL and a closing full stop all name the same repo.
 const REFILE_RE = /^\s*\**REFILE:\**[ \t]*[`<]?(?:https?:\/\/github\.com\/)?([\w.-]+\/[\w.-]+?)(?:\.git)?\/?[`>]?\.?\**[ \t]*$/gim;
 // "Refile:" in any case is the line; "Refile this by hand" is prose.
 const REFILE_LINE_RE = /^[ \t]*[*_`>#-]*[ \t]*(?:REFILE\b|[Rr]efile\**:).*$/m;
