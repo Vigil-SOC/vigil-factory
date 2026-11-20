@@ -291,6 +291,12 @@ export async function acceptsIssues(repo: string): Promise<boolean> {
   return has_issues;
 }
 
+/** Whether a repo has a label by this name. GitHub matches label names in any case. */
+export async function hasLabel(repo: string, label: string): Promise<boolean> {
+  const found = await ghJson<{ name: string }[]>(['label', 'list', '-R', repo, '--search', label, '--limit', '100', '--json', 'name']);
+  return found.some((l) => l.name.toLowerCase() === label.toLowerCase());
+}
+
 /**
  * An issue in `repo` whose body opens with the given text, by URL: how a copy
  * filed on a run that died before recording it is found again. Any trusted

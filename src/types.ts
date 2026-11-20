@@ -1,6 +1,8 @@
 // Core factory abstractions. Deliberately minimal: these exist to keep
 // Cursor-specific details out of the factory policy, not to be a framework.
 
+import type { StampExtras } from './groom.ts';
+
 export interface Task {
   id: string; // e.g. "acme/widgets#123"
   issueNumber: number;
@@ -163,7 +165,7 @@ export interface WorkSource {
     /** What the stamp carries beyond the fingerprint: for a child, the epic
      *  record it was judged against; for an epic, its open children. Both are
      *  what lets the verdict be revisited when the world moves. */
-    extras?: { premise?: { epic: number; sha: string } | null; children?: number[]; backport?: { label: string; branch: string; unlabelled?: boolean }; refiled?: string; unbackported?: { label: string; branch: string; failed?: boolean }; refileFailed?: string; refileUnclear?: boolean; refileUnlisted?: string },
+    extras?: StampExtras,
   ): Promise<void>;
   /** The groom found the bug on the release line too: label the issue for a backport. */
   markBackport(task: Task, label: string): Promise<void>;

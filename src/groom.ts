@@ -102,8 +102,10 @@ interface Stamp {
   weighed?: number[];
   waiting?: number[];
   refiled?: string;
-  backport?: 'added' | 'removed';
+  backport?: BackportMark;
 }
+
+type BackportMark = 'added' | 'removed' | 'declined';
 
 /** What a stamp carries beyond the fingerprint: a child's premise, an epic's children. */
 export interface StampExtras {
@@ -111,18 +113,18 @@ export interface StampExtras {
   children?: number[];
   /** An epic's children that were already needs-work when it was groomed. */
   weighed?: number[];
-  /** The release line a `BACKPORT:` answer was about, and the label it earns. */
-  backport?: { label: string; branch: string; unlabelled?: boolean };
+  /** The release line a `BACKPORT:` answer was about, the label it earns, and
+   *  what became of the label: put on, already there, could not be put on, or
+   *  left off because a person took off the one an earlier groom added. */
+  backport?: { label: string; branch: string; how: 'added' | 'already' | 'unlabelled' | 'declined' };
   /** The copy a close verdict filed in another repo, by URL. */
   refiled?: string;
   /** A groom that found no backport took off the label an earlier groom put on. */
   unbackported?: { label: string; branch: string; failed?: boolean };
-  /** The repo a close verdict named whose copy could not be filed. */
-  refileFailed?: string;
-  /** A close verdict's REFILE line named no listed repo the factory could read. */
-  refileUnclear?: boolean;
-  /** A close verdict's REFILE line named a repo `groom.refileRepos` does not list. */
-  refileUnlisted?: string;
+  /** Why a close verdict that named another repo left the issue open instead:
+   *  the copy could not be filed there, the REFILE line named a repo
+   *  `groom.refileRepos` does not list, or no repo could be read from it. */
+  notMoved?: { why: 'failed' | 'unlisted' | 'unclear'; repo?: string };
 }
 
 /** The stamp's attributes, in any order. A stamp without `sha` is not one. */
@@ -148,7 +150,7 @@ function parseStamp(body: string): Stamp | null {
     ...(weighed?.length ? { weighed } : {}),
     ...(waiting?.length ? { waiting } : {}),
     ...(refiled && /^https:\/\/\S+\/issues\/\d+$/.test(refiled) ? { refiled } : {}),
-    ...(backport === 'added' || backport === 'removed' ? { backport } : {}),
+    ...(backport === 'added' || backport === 'removed' || backport === 'declined' ? { backport } : {}),
   };
 }
 
@@ -288,15 +290,16 @@ export function readRefiled(task: Task, repo: string): string | null {
 }
 
 /**
- * Whether the backport label on this issue is the factory's: the newest groom
- * that touched it added it. One a person added is theirs, and stays.
+ * What the newest groom that touched the backport label did to it: `added`,
+ * `removed` (the factory took off its own), or `declined` (a person took off
+ * the factory's, and it stays off). Null when no groom touched it.
  */
-export function factoryBackported(task: Task): boolean {
+export function lastBackportMark(task: Task): BackportMark | null {
   for (const c of [...task.comments].reverse()) {
     const backport = parseStamp(c.body)?.backport;
-    if (backport) return backport === 'added';
+    if (backport) return backport;
   }
-  return false;
+  return null;
 }
 
 /** A repo by its name alone: `vigil-assured`, not `Vigil-SOC/vigil-assured`. */
@@ -315,9 +318,20 @@ export function refiledOpening(task: Task): string {
   return `Moved from ${task.url}`;
 }
 
+/**
+ * A bare `#N` in the other repo is that repo's issue N, so each one names the
+ * repo it came from. Code is left as written: GitHub links nothing there.
+ */
+const qualifyRefs = (body: string, repo: string): string =>
+  body
+    .split(/(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)/)
+    .map((part, i) => (i % 2 ? part : part.replace(/(?<![\w/&#])#(\d+)\b/g, `${repo}#$1`)))
+    .join('');
+
 /** What a refiled copy opens with, then the original's own words. */
 export function refiledBody(task: Task): string {
-  return `${refiledOpening(task)}${task.author ? `, filed by @${task.author}` : ''}.\n\n${task.body}`;
+  const [, owner, name] = new URL(task.url).pathname.split('/');
+  return `${refiledOpening(task)}${task.author ? `, filed by @${task.author}` : ''}.\n\n${qualifyRefs(task.body, `${owner}/${name}`)}`;
 }
 
 /** The epic record the current verdict was judged against, if it named one. */
@@ -532,7 +546,8 @@ export function groomComment(task: Task, reply: GroomReply, epic = false, extras
   if (extras.weighed?.length) attrs.push(`weighed=${extras.weighed.map((n) => `#${n}`).join(',')}`);
   if (epic && reply.verdict === 'groomed' && reply.waiting?.length) attrs.push(`waiting=${reply.waiting.map((n) => `#${n}`).join(',')}`);
   if (extras.refiled && reply.verdict === 'close') attrs.push(`refiled=${extras.refiled}`);
-  if (extras.backport && !extras.backport.unlabelled && reply.backport !== undefined && reply.verdict === 'groomed') attrs.push('backport=added');
+  const backported = extras.backport && reply.backport !== undefined && reply.verdict === 'groomed' ? extras.backport : undefined;
+  if (backported?.how === 'added' || backported?.how === 'declined') attrs.push(`backport=${backported.how}`);
   if (extras.unbackported && !extras.unbackported.failed) attrs.push('backport=removed');
   const stamp = `<!-- factory-groom ${attrs.join(' ')} -->`;
   const parts = [
@@ -542,11 +557,14 @@ export function groomComment(task: Task, reply: GroomReply, epic = false, extras
       : `${headline} Edit the description or reply here and it gets reviewed again on a later tick.`,
     reply.reasoning.trim(),
   ];
-  if (extras.backport && reply.backport !== undefined && reply.verdict === 'groomed') {
-    const b = extras.backport;
-    const label = b.unlabelled
-      ? `The factory could not add the \`${b.label}\` label; add it by hand and the fix is copied there once it merges.`
-      : `The factory adds the \`${b.label}\` label, so the fix is copied there once it merges; remove the label if that is wrong.`;
+  if (backported) {
+    const b = backported;
+    const label = {
+      added: `The factory adds the \`${b.label}\` label, so the fix is copied there once it merges; remove the label if that is wrong.`,
+      already: `The issue already carries the \`${b.label}\` label, so the fix is copied there once it merges.`,
+      unlabelled: `The factory could not add the \`${b.label}\` label; add it by hand and the fix is copied there once it merges.`,
+      declined: `Someone took off the \`${b.label}\` label an earlier groom added, so the factory leaves it off; add it back to have the fix copied there.`,
+    }[b.how];
     parts.push(`**Backport.** The bug is in \`${b.branch}\` too${reply.backport ? `: ${reply.backport}.` : '.'} ${label}`);
   }
   if (extras.unbackported) {
@@ -556,9 +574,14 @@ export function groomComment(task: Task, reply: GroomReply, epic = false, extras
       : `**Backport.** This fix no longer belongs on \`${u.branch}\`, so the factory took off the \`${u.label}\` label an earlier groom added; add it back if that is wrong.`);
   }
   if (extras.refiled && reply.verdict === 'close') parts.push(`**Refiled.** This request continues at ${copyLink(extras.refiled)}.`);
-  if (extras.refileFailed) parts.push(`**Not moved.** This request belongs in \`${repoName(extras.refileFailed)}\`, but the factory could not file a copy there, so the issue stays open here. Reply once that is sorted and the factory tries again.`);
-  if (extras.refileUnclear) parts.push(`**Not moved.** The groom placed this request in another repo, but the factory could not tell which, so the issue stays open here. Reply here and the factory looks again.`);
-  if (extras.refileUnlisted) parts.push(`**Not moved.** The groom placed this request in \`${repoName(extras.refileUnlisted)}\`, which is not a repo the factory files copies in, so the issue stays open here. Reply here and the factory looks again.`);
+  if (extras.notMoved) {
+    const { why, repo } = extras.notMoved;
+    parts.push(why === 'failed'
+      ? `**Not moved.** This request belongs in \`${repoName(repo!)}\`, but the factory could not file a copy there, so the issue stays open here. Reply once that is sorted and the factory tries again.`
+      : why === 'unlisted'
+      ? `**Not moved.** The groom placed this request in \`${repoName(repo!)}\`, which is not a repo the factory files copies in, so the issue stays open here. Reply here and the factory looks again.`
+      : `**Not moved.** The groom placed this request in another repo, but the factory could not tell which, so the issue stays open here. Reply here and the factory looks again.`);
+  }
   if (reply.notes) parts.push(`${NOTES_HEADING}\n\n${reply.notes.trim()}`);
   return parts.filter(Boolean).join('\n\n');
 }
@@ -702,7 +725,11 @@ const REPO_SHAPED_RE = /[\w.-]+\/[\w.-]{2,}/;
  * listed repo, or more than one.
  */
 export function listedRepoIn(line: string, repos: string[]): string | undefined {
-  const named = repos.filter((r) => new RegExp(`(?<![\\w.-])${r.replace(/\./g, '\\.')}(?![\\w-])`, 'i').test(line));
+  const escape = (s: string) => s.replace(/\./g, '\\.');
+  // The name alone counts too, as the factory's own comments write it, but not
+  // after another owner: `Other/vigil-assured` is a different repo.
+  const named = repos.filter((r) =>
+    new RegExp(`(?<![\\w.-])${escape(r)}(?![\\w-])|(?<![\\w./-])${escape(repoName(r))}(?![\\w-])`, 'i').test(line));
   return named.length === 1 ? named[0] : undefined;
 }
 const NOTES_RE = /```notes[ \t]*\n([\s\S]*?)```/g;

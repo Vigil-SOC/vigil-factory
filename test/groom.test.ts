@@ -619,12 +619,12 @@ describe('a backport answer', () => {
   it('is said in the groom comment, with the branch and the label a person may remove', () => {
     const t = task(1, 'the parser drops the last row');
     const reply = parseGroomReply('Why.\n\nVERDICT: groomed\nBACKPORT: yes — same parser on the release line')!;
-    const body = groomComment(t, reply, false, { backport: { label: 'backport', branch: 'release/0.6.x' } });
+    const body = groomComment(t, reply, false, { backport: { label: 'backport', branch: 'release/0.6.x', how: 'added' } });
     expect(body).toContain('`release/0.6.x`');
     expect(body).toContain('same parser on the release line');
     expect(body).toContain('`backport` label');
     expect(groomComment(t, reply)).not.toContain('Backport');
-    expect(groomComment(t, parseGroomReply('Why.\n\nVERDICT: groomed')!, false, { backport: { label: 'backport', branch: 'release/0.6.x' } })).not.toContain('Backport');
+    expect(groomComment(t, parseGroomReply('Why.\n\nVERDICT: groomed')!, false, { backport: { label: 'backport', branch: 'release/0.6.x', how: 'added' } })).not.toContain('Backport');
   });
 });
 
@@ -680,7 +680,7 @@ describe('refiling a closed issue in another repo', () => {
   it('a copy that could not be filed says so on the issue, and records no copy', () => {
     const t = task(3, 'Meter usage per seat.');
     const reply = { ...parseGroomReply('Belongs to the wrapper.\n\nVERDICT: close\nREFILE: o/private')!, verdict: 'needs-work' as const };
-    const body = groomComment(t, reply, false, { refileFailed: 'o/private' });
+    const body = groomComment(t, reply, false, { notMoved: { why: 'failed', repo: 'o/private' } });
     expect(body).toContain('needs work');
     expect(body).toContain('belongs in `private`');
     expect(body).toContain('could not file a copy');
