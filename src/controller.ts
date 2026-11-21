@@ -45,7 +45,7 @@ import { ENV_AGENT_MARK, environmentChangedAt, filedIssueBody, parseEnvReport, r
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
 import { carried, depsQueue, depsStamp, droppedReasons, skipReason as depsSkipReason, upgradeIssue, upgradeKey, upgradeKeyOf, type DepsPr } from './deps.ts';
 import { alertKey, fixedReports, keysIn, offeredLine, openReports, parseFixReply, securityQueue, securityStamp, skipReason as securitySkipReason, type FixReply, type OfferedAlert, type SecurityAlert } from './security.ts';
-import { closingRefs, coAuthorTrailer, isBot, latestReview, mayMergeGithub, parseReviewReply, reviewComment, failedReviews, reviewClaimed, reviewFailedMarker, reviewQueue, reviewStamp, sameCommit, skipReason as reviewSkipReason, supersedesBody, touchesGithub, type ReviewOutcome, type ReviewPr, type ReviewReply } from './review.ts';
+import { closingRefs, coAuthorTrailer, intoIgnoredBranch, isBot, latestReview, mayMergeGithub, parseReviewReply, reviewComment, failedReviews, reviewClaimed, reviewFailedMarker, reviewQueue, reviewStamp, sameCommit, skipReason as reviewSkipReason, supersedesBody, touchesGithub, type ReviewOutcome, type ReviewPr, type ReviewReply } from './review.ts';
 
 export function log(msg: string): void {
   console.log(`[${new Date().toISOString()}] ${msg}`);
@@ -765,7 +765,7 @@ export async function reviewInputs(config: FactoryConfig): Promise<{ skip: strin
     listPrsForReview(repo, 'closed', 50),
     defaultBranchHead(repo),
   ]);
-  const queue = reviewQueue([...open, ...closed], factoryPrLabels(config), main.sha, config.review.defaultBranchOnly ? main.branch : undefined);
+  const queue = reviewQueue([...open, ...closed], factoryPrLabels(config), main.sha, config.review.ignoreBranches);
   const skip = queue.open.length + queue.reopen.length + queue.merge.length === 0 ? 'no PR from outside the factory is new or changed since the factory last reviewed it, or waiting on a merge it decided' : null;
   return { skip, ...queue };
 }
@@ -790,12 +790,9 @@ export async function runReviewPhase(ctx: FactoryContext, worker: CodingWorker, 
       log(`review: #${opts.only} is not an open PR from outside the factory; nothing to review.`);
       return [];
     }
-    if (config.review.defaultBranchOnly) {
-      const { branch } = await defaultBranchHead(repoSlug(config));
-      if (pr.baseRefName !== branch) {
-        log(`review: #${opts.only} targets ${pr.baseRefName}, not ${branch}, and review.defaultBranchOnly is on; left alone.`);
-        return [];
-      }
+    if (intoIgnoredBranch(pr, config.review.ignoreBranches)) {
+      log(`review: #${opts.only} targets ${pr.baseRefName}, which review.ignoreBranches leaves alone.`);
+      return [];
     }
     picks = [{ pr, reopened: false }];
   } else {

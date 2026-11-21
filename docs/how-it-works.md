@@ -714,10 +714,11 @@ force-pushing the author's branch, and closes the PR only when the conflicts res
 by rewriting its change. Reviews do not count
 against `maxConcurrentJobs`; `review.maxPerTick` bounds how many run in one tick. The phase
 is off unless `review.enabled` is set, since it is the one that merges. With
-`review.defaultBranchOnly` set, a PR into any other branch is left alone entirely — not
-reviewed, merged, or answered, and `review --pr N` on one says so and stops — for a repo
-whose release branches take copies of changes the default branch already has, which a
-review would close as duplicates. Off by default.
+`review.ignoreBranches` listing branch globs (such as `release/*`), a PR into a matching
+branch is left alone entirely — not reviewed, merged, or answered, and `review --pr N` on
+one says so and stops — for a repo whose release branches take copies of changes the
+default branch already has, which a review would close as duplicates. PRs into any other
+branch are reviewed as before. Empty by default.
 
 ## Dependabot
 
@@ -1087,8 +1088,8 @@ committed.
   "Grooming" above.
 - `factory.config.json` → `groom.refileRepos` — repos a close verdict may refile an issue
   in instead of only closing it (default none).
-- `factory.config.json` → `review.defaultBranchOnly` — (default `false`) the review phase
-  leaves PRs into any branch but the default one alone.
+- `factory.config.json` → `review.ignoreBranches` — branch globs (default none) whose PRs
+  the review phase leaves alone, such as `release/*`.
 - `factory.config.json` → `security` — `enabled` (default true) and `minSeverity` (default
   `high`; `low`, `medium` — or `moderate` — `high`, `critical`): the phase that fixes the
   repo's open Dependabot and code scanning alerts, and its privately reported advisories, a

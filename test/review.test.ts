@@ -394,7 +394,7 @@ describe('reviewClaimed', () => {
 
 // A release branch takes copies of changes the default branch already has. The
 // review would close each as a duplicate, or merge the default branch into it.
-describe('review.defaultBranchOnly leaves PRs into another branch alone', () => {
+describe('review.ignoreBranches leaves PRs into a matching branch alone', () => {
   const copy = (n: number, over: Partial<ReviewPr> = {}) => pr(n, { baseRefName: 'release/0.6.x', ...over });
 
   it('none is reviewed, answered, or merged', () => {
@@ -409,14 +409,14 @@ describe('review.defaultBranchOnly leaves PRs into another branch alone', () => 
     expect(off.reopen.map((x) => x.number)).toEqual([4]);
     expect(off.merge.map((x) => x.number)).toEqual([5]);
 
-    const on = reviewQueue(prs, FACTORY, undefined, 'main');
+    const on = reviewQueue(prs, FACTORY, undefined, ['release/*']);
     expect(on.open.map((x) => x.number)).toEqual([1]);
     expect(on.reopen).toEqual([]);
     expect(on.merge).toEqual([]);
   });
 
-  it('goes by the default branch\'s name, whatever it is', () => {
-    const queue = reviewQueue([pr(1), pr(2, { baseRefName: 'trunk' })], FACTORY, undefined, 'trunk');
-    expect(queue.open.map((x) => x.number)).toEqual([2]);
+  it('still reviews PRs into any other branch', () => {
+    const queue = reviewQueue([pr(1), pr(2, { baseRefName: 'feat/pulse' }), copy(3)], FACTORY, undefined, ['release/*']);
+    expect(queue.open.map((x) => x.number)).toEqual([1, 2]);
   });
 });

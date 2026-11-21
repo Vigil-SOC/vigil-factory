@@ -153,10 +153,11 @@ export interface FactoryConfig {
    *  names an entry in `worker.models` to review with, when the one judgment
    *  that merges a stranger's code deserves a stronger model than the one
    *  that builds issues; unset, reviews run `worker.model`.
-   *  `defaultBranchOnly` leaves every PR into another branch alone — not
-   *  reviewed, merged, or answered — for a repo whose release branches take
-   *  copies of changes the default branch already has. Off by default. */
-  review: { enabled: boolean; maxPerTick: number; model?: string; defaultBranchOnly: boolean };
+   *  `ignoreBranches` (globs, such as `release/*`) leaves every PR into a
+   *  matching branch alone — not reviewed, merged, or answered — for a repo
+   *  whose release branches take copies of changes the default branch already
+   *  has. Empty by default. */
+  review: { enabled: boolean; maxPerTick: number; model?: string; ignoreBranches: string[] };
   /** The dependency phase: Dependabot's open PRs carried onto one branch by one
    *  agent, the lockfile regenerated, and the batch merged on green CI under
    *  the review phase's rules. Off by default: it merges. */
@@ -320,9 +321,12 @@ export function loadConfig(root: string = projectRoot): FactoryConfig {
   config.security.minSeverity = parseSeverity(config.security.minSeverity ?? 'high');
   config.simplify ??= { enabled: false };
   // The one phase that merges is the one a deployment has to ask for.
-  config.review ??= { enabled: false, maxPerTick: 3, defaultBranchOnly: false };
+  config.review ??= { enabled: false, maxPerTick: 3, ignoreBranches: [] };
   config.review.enabled ??= false;
-  config.review.defaultBranchOnly ??= false;
+  config.review.ignoreBranches ??= [];
+  if (!Array.isArray(config.review.ignoreBranches) || !config.review.ignoreBranches.every((b) => typeof b === 'string' && b.trim())) {
+    throw new Error(`review.ignoreBranches needs a list of branch globs, got ${JSON.stringify(config.review.ignoreBranches)}`);
+  }
   config.deps ??= { enabled: false };
   config.deps.enabled ??= false;
   config.merge ??= { bypassApproval: false };

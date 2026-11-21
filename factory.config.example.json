@@ -46,7 +46,7 @@
   "review": {
     "enabled": false,
     "maxPerTick": 3,
-    "defaultBranchOnly": false
+    "ignoreBranches": []
   },
   "deps": {
     "enabled": false

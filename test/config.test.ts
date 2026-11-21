@@ -206,14 +206,14 @@ describe('usage pause', () => {
 describe('release line and refile settings', () => {
   it('all three are off unless a deployment asks', () => {
     const config = loadConfig(configDir({}));
-    expect(config.review.defaultBranchOnly).toBe(false);
+    expect(config.review.ignoreBranches).toEqual([]);
     expect(config.groom.backport).toBeUndefined();
     expect(config.groom.refileRepos).toEqual([]);
   });
 
   it('are read as written', () => {
-    const config = loadConfig(configDir({}, { backport: { label: 'backport', branch: 'release/*' }, refileRepos: ['o/private'] }, { review: { enabled: true, defaultBranchOnly: true } }));
-    expect(config.review.defaultBranchOnly).toBe(true);
+    const config = loadConfig(configDir({}, { backport: { label: 'backport', branch: 'release/*' }, refileRepos: ['o/private'] }, { review: { enabled: true, ignoreBranches: ['release/*'] } }));
+    expect(config.review.ignoreBranches).toEqual(['release/*']);
     expect(config.groom.backport).toEqual({ label: 'backport', branch: 'release/*' });
     expect(config.groom.refileRepos).toEqual(['o/private']);
   });
