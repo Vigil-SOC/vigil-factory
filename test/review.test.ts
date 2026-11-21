@@ -15,6 +15,7 @@ function pr(number: number, over: Partial<ReviewPr> = {}): ReviewPr {
     body: 'Fixes the thing.',
     author: { login: 'contributor', is_bot: false },
     headRefOid: 'a'.repeat(40),
+    baseRefName: 'main',
     isCrossRepository: true,
     labels: [],
     comments: [],
@@ -388,5 +389,34 @@ describe('reviewClaimed', () => {
   it('frees an unclaimed PR, and one whose claim outlived the run that took it', () => {
     expect(reviewClaimed({ labels: [], labelledAt: {} }, 'factory:reviewing', 7.5 * 3_600_000, now)).toBe(false);
     expect(reviewClaimed({ labels: ['factory:reviewing'], labelledAt: { 'factory:reviewing': hours(8) } }, 'factory:reviewing', 7.5 * 3_600_000, now)).toBe(false);
+  });
+});
+
+// A release branch takes copies of changes the default branch already has. The
+// review would close each as a duplicate, or merge the default branch into it.
+describe('review.ignoreBranches leaves PRs into a matching branch alone', () => {
+  const copy = (n: number, over: Partial<ReviewPr> = {}) => pr(n, { baseRefName: 'release/0.6.x', ...over });
+
+  it('none is reviewed, answered, or merged', () => {
+    const replied = copy(4, { state: 'CLOSED' });
+    const closed = { ...reviewed(replied, 'closed'), comments: [...reviewed(replied, 'closed').comments, comment('contributor', 'You misread it.')] };
+    const p = copy(5);
+    const pending = { ...p, comments: [comment('maintainer', factoryComment(`${reviewStamp(p, 'left', { mergePending: true })}\nwhy`))] };
+    const prs = [pr(1), copy(2), closed, pending];
+
+    const off = reviewQueue(prs, FACTORY);
+    expect(off.open.map((x) => x.number)).toEqual([1, 2]);
+    expect(off.reopen.map((x) => x.number)).toEqual([4]);
+    expect(off.merge.map((x) => x.number)).toEqual([5]);
+
+    const on = reviewQueue(prs, FACTORY, undefined, ['release/*']);
+    expect(on.open.map((x) => x.number)).toEqual([1]);
+    expect(on.reopen).toEqual([]);
+    expect(on.merge).toEqual([]);
+  });
+
+  it('still reviews PRs into any other branch', () => {
+    const queue = reviewQueue([pr(1), pr(2, { baseRefName: 'feat/pulse' }), copy(3)], FACTORY, undefined, ['release/*']);
+    expect(queue.open.map((x) => x.number)).toEqual([1, 2]);
   });
 });

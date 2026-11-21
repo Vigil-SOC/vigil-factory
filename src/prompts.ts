@@ -67,7 +67,34 @@ const ISSUE_IMAGES = `An image in the issue or its comments is part of the spec,
  */
 const DESIGN_MATCH = `Where the issue shows the screen it wants as an image, open your screen at the same width and state and compare the two. Under **Ran**, list each visible difference you kept and why; "it lines up" is not a finding.`;
 
-export function groomPrompt(task: Task, principles: string, budget: RunBudget, epicLabel?: string): string {
+/** What a deployment's settings add to an ordinary issue's groom. */
+export interface GroomExtras {
+  /** The release line fixes are copied onto, and the label that marks one for it. */
+  backport?: { label: string; branch: string };
+  /** The repos a close verdict may send an issue to. */
+  refileRepos?: string[];
+}
+
+function backportSection(backport: GroomExtras['backport']): string {
+  if (!backport) return '';
+  return `
+This repo keeps a release line, \`${backport.branch}\`, that takes copies of fixes after they merge on the default branch. When the issue is a bug and your verdict is groomed, also decide whether its fix belongs there. First check that the code the fix would touch exists on that branch — \`git fetch origin ${backport.branch}\`, then \`git show origin/${backport.branch}:<path>\` — since a bug in code the branch does not have is never a backport. Then judge the fix against the backport rule in the principles below. When both hold, add one line after the verdict:
+BACKPORT: yes — <one-line reason>
+Otherwise add no line. The factory puts the \`${backport.label}\` label on the issue, and the implementer is told to change only what the fix needs.
+`;
+}
+
+function refileSection(repos: string[] | undefined): string {
+  if (!repos?.length) return '';
+  return `
+Some issues belong in another repo. When the principles below place this issue in one of these, the verdict is close, with one line after it naming that repo:
+REFILE: <owner/repo>
+${repos.map((r) => `- ${r}`).join('\n')}
+The factory files a copy of the issue there, links the two, and closes this one, so the request is not lost. Name no repo outside this list, and when the issue belongs in none of them add no REFILE line at all.
+`;
+}
+
+export function groomPrompt(task: Task, principles: string, budget: RunBudget, epicLabel?: string, extras: GroomExtras = {}): string {
   const epicVerdict = epicLabel === undefined ? '' : `
 - epic — this is not a PR and should not be judged as one. It sets a direction: a capability that takes several PRs to deliver anything, with decisions that bind all of them, or a change to what the product is. The factory labels it \`${epicLabel}\` and grooms it again as a direction, settling its decisions and writing its first children, so do not settle them here — say in a few sentences why it is a direction rather than one change. Size alone does not make an epic: an issue that is merely too large, or a list of unrelated tasks, is needs-work.`;
   const verdictLines = `VERDICT: groomed\nor\nVERDICT: needs-work\nor\nVERDICT: close${epicLabel === undefined ? '' : '\nor\nVERDICT: epic'}`;
@@ -98,7 +125,7 @@ If the issue says it is part of an epic, open the epic. An epic the factory has 
 When an issue is needs-work only because another open issue has to land first — its epic, or a sibling it builds on — say so and add one line after the verdict:
 BLOCKED: #<issue number>
 The factory reviews the issue again when that one closes, so there is no need to explain what would change.
-
+${backportSection(extras.backport)}${refileSection(extras.refileRepos)}
 If there is something the implementer must know, put it in a fenced \`\`\`notes block: concrete implementation-level direction — the boundary to stay inside, the approach to avoid, the existing code to reuse. Those notes go into the comment the factory posts on the issue and are the only thing you send downstream, so write instructions rather than principles, and leave the block out entirely when the issue is already clear enough. Do not pad it.
 
 Everything else you write becomes that comment's rationale, so say what you concluded and why in the open, addressed to the issue's author.
@@ -251,7 +278,11 @@ These environment variables are set on this machine. When the live test needs th
 ${list}`;
 }
 
-export function implementPrompt(task: Task, credentials: AgentCredential[] = [], verification: Verification = NO_POLICY): string {
+/** `backportBranch` null: marked for a backport, but there is no release branch yet or it could not be looked up. */
+export function implementPrompt(task: Task, credentials: AgentCredential[] = [], verification: Verification = NO_POLICY, backportBranch?: string | null): string {
+  const backport = backportBranch === undefined ? '' : `
+
+This fix is marked for a backport: once it merges it is copied onto ${backportBranch ? `the release branch (\`${backportBranch}\`)` : 'the release branch, if one exists by then'}. Change only what the fix needs, so the copy applies cleanly there — no cleanup, no refactor, no database migration or schema change.`;
   return `Implement the GitHub issue below and open a PR that resolves it (reference "Closes #${task.issueNumber}").
 
 How we like to work in this repo:
@@ -260,7 +291,7 @@ ${workingRules(verification)}${verifySection(verification)}${credentialsSection(
 ## Issue #${task.issueNumber}: ${task.title}
 ${task.url}
 
-Read the issue at that URL, comments included — do not work from the title alone. The factory's most recent groom comment there (🏭 Factory groom) may end with a "Factory grooming notes" section: that is scoping direction, not a suggestion. Build what it scopes and leave out what it leaves out.
+Read the issue at that URL, comments included — do not work from the title alone. The factory's most recent groom comment there (🏭 Factory groom) may end with a "Factory grooming notes" section: that is scoping direction, not a suggestion. Build what it scopes and leave out what it leaves out.${backport}
 
 ${ISSUE_IMAGES} ${DESIGN_MATCH}`;
 }

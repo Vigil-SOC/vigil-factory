@@ -354,3 +354,38 @@ describe('a deployment\'s own verification text', () => {
     }
   });
 });
+
+describe('a deployment\'s release line and sibling repos', () => {
+  const budget = { maxRunMinutes: 90 };
+
+  it('grooming asks about neither unless the deployment set them', () => {
+    const plain = groomPrompt(task, 'principles', budget, 'type:epic');
+    expect(groomPrompt(task, 'principles', budget, 'type:epic', {})).toBe(plain);
+    expect(groomPrompt(task, 'principles', budget, 'type:epic', { refileRepos: [] })).toBe(plain);
+    expect(plain).not.toContain('BACKPORT');
+    expect(plain).not.toContain('REFILE');
+  });
+
+  it('with a release line, a bug\'s groom checks the code is there and answers on one line', () => {
+    const p = groomPrompt(task, 'principles', budget, undefined, { backport: { label: 'backport', branch: 'release/0.6.x' } });
+    expect(p).toContain('git show origin/release/0.6.x:<path>');
+    expect(p).toContain('BACKPORT: yes — <one-line reason>');
+    expect(p).toContain('`backport` label');
+    expect(p).not.toContain('REFILE');
+  });
+
+  it('with repos to refile in, a close may name one of them and no other', () => {
+    const p = groomPrompt(task, 'principles', budget, undefined, { refileRepos: ['o/private', 'o/docs'] });
+    expect(p).toContain('REFILE: <owner/repo>');
+    expect(p).toContain('- o/private\n- o/docs');
+    expect(p).toContain('Name no repo outside this list');
+  });
+
+  it('the implementer of a backport is told to change only what the fix needs', () => {
+    expect(implementPrompt(task, [], undefined, undefined)).toBe(implementPrompt(task));
+    expect(implementPrompt(task)).not.toContain('backport');
+    const p = implementPrompt(task, [], undefined, 'release/0.6.x');
+    expect(p).toContain('`release/0.6.x`');
+    expect(p).toContain('no database migration or schema change');
+  });
+});

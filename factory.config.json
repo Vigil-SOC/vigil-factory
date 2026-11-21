@@ -73,7 +73,14 @@
   },
   "groom": {
     "maxPerTick": 5,
-    "principlesFile": "principles.md"
+    "principlesFile": "principles.md",
+    "backport": {
+      "label": "backport",
+      "branch": "release/*"
+    },
+    "refileRepos": [
+      "Vigil-SOC/vigil-assured"
+    ]
   },
   "selector": {
     "enabled": false,
@@ -89,7 +96,10 @@
   "review": {
     "enabled": true,
     "model": "opus",
-    "maxPerTick": 5
+    "maxPerTick": 5,
+    "ignoreBranches": [
+      "release/*"
+    ]
   },
   "deps": {
     "enabled": true

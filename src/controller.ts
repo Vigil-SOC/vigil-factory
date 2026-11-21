@@ -30,7 +30,7 @@
 
 import { resolve } from 'node:path';
 import type { CodingWorker, CurrentRun, DepsRecord, EnvRecord, GroomRecord, ReviewRecord, RunHandle, RunRecord, RunResult, SecurityRecord, SimplifyRecord, Task, TokenUsage } from './types.ts';
-import { agentCredentials, claudeBin, epicGroomModel, githubTokenForAgents, reviewModel, loadConfig, loadDotEnv, loadPrinciples, loadVerification, projectRoot, repoSlug, requireCursorApiKey, type FactoryConfig } from './config.ts';
+import { agentCredentials, backportLabelOn, claudeBin, epicGroomModel, githubTokenForAgents, reviewModel, loadConfig, loadDotEnv, loadPrinciples, loadVerification, projectRoot, repoSlug, requireCursorApiKey, type FactoryConfig } from './config.ts';
 import { RunBudgetExceeded } from './types.ts';
 import { CursorWorker } from './worker.ts';
 import { ClaudeCodeWorker } from './claudeCodeWorker.ts';
@@ -38,14 +38,14 @@ import { GitHubIssueSource } from './workSource.ts';
 import { FactoryState, ownPrs } from './state.ts';
 import { Telemetry } from './telemetry.ts';
 import { filterAssigned, filterClaimed, filterDrafts, filterEpics, parseSelection, type Selection } from './selector.ts';
-import { BOOT_CHECK_PROMPT, depsPrompt, environmentPrompt, fixChecksPrompt, forkFixChecksPrompt, missingChecksPrompt, resolveConflictsPrompt, groomEpicPrompt, groomPrompt, implementPrompt, trackEpicPrompt, reviewPrompt, securityPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
-import { factoryComment, isFactoryComment, groomState, isBlocker, isEpic, isGroomed, needsGroom, queueOrder, openChildren, openIssues, parseGroomReply, settlesDirection, stampExtrasFor, unaccountedBlockers, verdict, type GroomLabels, type OpenIssues } from './groom.ts';
-import { type LabelHistory, type PrCheck, addPrLabels, labelHistory, removeIssueLabels, approveHeldRuns, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, annotateAdvisory, dismissCodeScanningAlert, listAcceptedReports, listAdvisoryReports, listAllIssuesByLabel, listCodeScanningAlerts, listDependabotAlerts, listDependabotPrs, listPrsByLabel, listPrsForReview, markPrReady, mergePr, prChecks, prMergeable, reopenPr, requiredChecks, userId, viewPr, viewPrForReview, collaboratorPermission } from './github.ts';
+import { BOOT_CHECK_PROMPT, depsPrompt, environmentPrompt, fixChecksPrompt, forkFixChecksPrompt, missingChecksPrompt, resolveConflictsPrompt, groomEpicPrompt, groomPrompt, implementPrompt, type GroomExtras, trackEpicPrompt, reviewPrompt, securityPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
+import { factoryComment, isFactoryComment, groomState, isBlocker, isEpic, isGroomed, needsGroom, queueOrder, openChildren, openIssues, listedRepoIn, parseGroomReply, readRefiled, lastBackportMark, settlesDirection, stampExtrasFor, unaccountedBlockers, verdict, type GroomLabels, type GroomReply, type OpenIssues, type StampExtras } from './groom.ts';
+import { type LabelHistory, type PrCheck, addPrLabels, labelHistory, removeIssueLabels, approveHeldRuns, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, annotateAdvisory, dismissCodeScanningAlert, listAcceptedReports, listAdvisoryReports, listAllIssuesByLabel, listCodeScanningAlerts, listDependabotAlerts, listDependabotPrs, listPrsByLabel, listPrsForReview, markPrReady, matchingBranch, mergePr, prChecks, prMergeable, reopenPr, requiredChecks, userId, viewPr, viewPrForReview, collaboratorPermission } from './github.ts';
 import { ENV_AGENT_MARK, environmentChangedAt, filedIssueBody, parseEnvReport, recentVerdicts, skipReason, unreadFactoryPrs, withOpenedThisTick, workerSkipReason, type UnreadPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
 import { carried, depsQueue, depsStamp, droppedReasons, skipReason as depsSkipReason, upgradeIssue, upgradeKey, upgradeKeyOf, type DepsPr } from './deps.ts';
 import { alertKey, fixedReports, keysIn, offeredLine, openReports, parseFixReply, securityQueue, securityStamp, skipReason as securitySkipReason, type FixReply, type OfferedAlert, type SecurityAlert } from './security.ts';
-import { closingRefs, coAuthorTrailer, isBot, latestReview, mayMergeGithub, parseReviewReply, reviewComment, failedReviews, reviewClaimed, reviewFailedMarker, reviewQueue, reviewStamp, sameCommit, skipReason as reviewSkipReason, supersedesBody, touchesGithub, type ReviewOutcome, type ReviewPr, type ReviewReply } from './review.ts';
+import { closingRefs, coAuthorTrailer, intoIgnoredBranch, isBot, latestReview, mayMergeGithub, parseReviewReply, reviewComment, failedReviews, reviewClaimed, reviewFailedMarker, reviewQueue, reviewStamp, sameCommit, skipReason as reviewSkipReason, supersedesBody, touchesGithub, type ReviewOutcome, type ReviewPr, type ReviewReply } from './review.ts';
 
 export function log(msg: string): void {
   console.log(`[${new Date().toISOString()}] ${msg}`);
@@ -172,13 +172,22 @@ export async function runGroomPhase(
   if (pending.length === 0) return [];
 
   const principles = loadPrinciples(ctx.config);
+  // A groom recorded without the backport question is never asked it again,
+  // since nothing a person did makes it stale; so no groom runs until it can be.
+  let releaseBranch: string | null;
+  try {
+    releaseBranch = await backportBranch(ctx.config);
+  } catch (err) {
+    log(`not grooming this tick: ${(err as Error).message}`);
+    return [];
+  }
   log(`grooming ${pending.length} issue(s): ${pending.map((t) => `#${t.issueNumber}${isEpic(t, ctx.config.labels) ? ' (epic)' : ''}`).join(' ')}`);
 
   const records = await Promise.all(
     pending.map(async (task) => {
       try {
         await ctx.source.markGrooming(task);
-        return await groomOne(ctx, worker, task, principles, opts.open);
+        return await groomOne(ctx, worker, task, principles, opts.open, releaseBranch);
       } catch (err) {
         log(`groom #${task.issueNumber} failed: ${(err as Error).message}`);
         return null;
@@ -205,9 +214,100 @@ export function reviewClaimMs(config: FactoryConfig): number {
   return 3 * Math.max(config.worker.maxRunMinutes, config.worker.localMaxRunMinutes ?? 0) * 60_000;
 }
 
+/**
+ * The release line a backport would go to: the target's newest branch matching
+ * `groom.backport.branch`. Null with the setting off or with no such branch
+ * yet, and grooming asks nothing about it. Throws when GitHub could not say.
+ */
+export async function backportBranch(config: FactoryConfig): Promise<string | null> {
+  const backport = config.groom.backport;
+  if (!backport) return null;
+  return matchingBranch(repoSlug(config), backport.branch).catch((err: Error) => {
+    throw new Error(`could not list branches matching ${backport.branch}: ${err.message}`);
+  });
+}
+
+/**
+ * Where a close verdict's REFILE line sends the issue, and the copy filed
+ * there. Only a listed repo: the list is the deployment's, the line is an
+ * agent's. A line the parser could not read is searched for a listed repo,
+ * since a note after the name or a link around it still names it.
+ *
+ * A line naming a repo off the list, or nothing readable, or a copy that
+ * cannot be filed, leaves the issue open as needs-work with a comment saying
+ * it was not moved. Not a plain close, which would lose the request, and not a
+ * failed groom, which is paid for again every tick: needs-work holds until
+ * someone replies. A copy an earlier groom filed is reused, never made twice.
+ */
+async function settleRefile(ctx: FactoryContext, task: Task, reply: GroomReply, epic: boolean): Promise<{ refiled?: string; notMoved?: StampExtras['notMoved'] }> {
+  const { refileRepos } = ctx.config.groom;
+  if (epic || refileRepos.length === 0) return {};
+  const repo = reply.refile !== undefined ? refileRepos.find((r) => r.toLowerCase() === reply.refile!.toLowerCase())
+    : reply.refileUnread !== undefined ? listedRepoIn(reply.refileUnread, refileRepos) : undefined;
+  if (!repo && reply.refile !== undefined) {
+    log(`#${task.issueNumber}: REFILE names ${reply.refile}, which groom.refileRepos does not list; left open as needs-work`);
+    return { notMoved: { why: 'unlisted', repo: reply.refile } };
+  }
+  if (!repo && reply.refileUnread !== undefined) {
+    log(`#${task.issueNumber}: could not read where to refile; left open as needs-work: ${reply.refileUnread.slice(0, 120)}`);
+    return { notMoved: { why: 'unclear' } };
+  }
+  if (!repo) return {};
+  const earlier = readRefiled(task, repo);
+  if (earlier) return { refiled: earlier };
+  try {
+    return { refiled: await ctx.source.refile(task, repo) };
+  } catch (err) {
+    log(`#${task.issueNumber}: could not file a copy in ${repo}; left open as needs-work: ${(err as Error).message}`);
+    return { notMoved: { why: 'failed', repo } };
+  }
+}
+
+/**
+ * The backport label, settled before the comment that says what became of it.
+ * A yes adds it, unless a person took off the one an earlier groom added: that
+ * stays their call. A label already on is not stamped as the factory's, since
+ * it may be a person's. A no takes off only a label the factory added, since a
+ * stale one still holds the implementer to a backport's limits and copies the PR.
+ */
+async function settleBackport(ctx: FactoryContext, task: Task, reply: GroomReply, groomed: boolean, releaseBranch: string | null | undefined): Promise<{ backport?: StampExtras['backport']; unbackported?: StampExtras['unbackported'] }> {
+  const rule = ctx.config.groom.backport;
+  if (!rule || !releaseBranch || !groomed) return {};
+  const at = { label: rule.label, branch: releaseBranch };
+  const on = task.labels.includes(rule.label);
+  const mark = lastBackportMark(task);
+  if (reply.backport !== undefined) {
+    if (on) return { backport: { ...at, how: 'already' } };
+    if (mark === 'added' || mark === 'declined') return { backport: { ...at, how: 'declined' } };
+    try {
+      await ctx.source.markBackport(task, rule.label);
+      return { backport: { ...at, how: 'added' } };
+    } catch (err) {
+      log(`#${task.issueNumber}: could not add the ${rule.label} label: ${(err as Error).message}`);
+      return { backport: { ...at, how: 'unlabelled' } };
+    }
+  }
+  if (!on || mark !== 'added') return {};
+  try {
+    await ctx.source.unmarkBackport(task, rule.label);
+    return { unbackported: at };
+  } catch (err) {
+    log(`#${task.issueNumber}: could not take off the ${rule.label} label: ${(err as Error).message}`);
+    return { unbackported: { ...at, failed: true } };
+  }
+}
+
+function groomExtras(config: FactoryConfig, releaseBranch: string | null | undefined): GroomExtras {
+  const backport = config.groom.backport;
+  return {
+    ...(backport && releaseBranch ? { backport: { label: backport.label, branch: releaseBranch } } : {}),
+    refileRepos: config.groom.refileRepos,
+  };
+}
+
 /** The groom prompt for this issue: direction for an epic, one PR for anything else. */
-export function groomPromptFor(ctx: FactoryContext, task: Task, principles: string): string {
-  if (!isEpic(task, ctx.config.labels)) return groomPrompt(task, principles, ctx.config.worker, ctx.config.labels.epic);
+export function groomPromptFor(ctx: FactoryContext, task: Task, principles: string, releaseBranch?: string | null): string {
+  if (!isEpic(task, ctx.config.labels)) return groomPrompt(task, principles, ctx.config.worker, ctx.config.labels.epic, groomExtras(ctx.config, releaseBranch));
   return settlesDirection(task, ctx.config.labels)
     ? groomEpicPrompt(task, principles, ctx.config.worker)
     : trackEpicPrompt(task, principles, ctx.config.worker);
@@ -219,6 +319,7 @@ async function groomOne(
   task: Task,
   principles: string,
   open?: OpenIssues,
+  releaseBranch?: string | null,
 ): Promise<GroomRecord> {
   const epic = isEpic(task, ctx.config.labels);
   // Settling a direction is the judgment every child inherits, so that groom
@@ -227,7 +328,7 @@ async function groomOne(
   const settle = epic && settlesDirection(task, ctx.config.labels);
   const model = settle ? epicGroomModel(ctx.config) : undefined;
   const startedAt = new Date().toISOString();
-  const handle = await worker.start(groomPromptFor(ctx, task, principles), {
+  const handle = await worker.start(groomPromptFor(ctx, task, principles, releaseBranch), {
     autoCreatePR: false,
     name: `factory-groom: #${task.issueNumber}`.slice(0, 100),
     ...(model ? { model } : {}),
@@ -256,13 +357,16 @@ async function groomOne(
     await ctx.source.markEpic(task, reply.reasoning);
     log(`#${task.issueNumber} is an epic, not a PR: labelled ${epicLabel}; grooming it as a direction`);
     const promoted: Task = { ...task, labels: [...task.labels, epicLabel] };
-    return groomOne(ctx, worker, promoted, principles, open);
+    return groomOne(ctx, worker, promoted, principles, open, releaseBranch);
   }
 
   // A child's verdict names the epic record it was judged against; an epic's
   // names its children. Either way the verdict says what would make it stale.
-  await ctx.source.recordGroom(task, reply, stampExtrasFor(task, ctx.config.labels, open));
-  log(`groomed #${task.issueNumber}${epic ? ' (epic)' : ''} → ${reply.verdict}${reply.notes ? ' (+notes)' : ''}${reply.blocked !== undefined ? ` (blocked on #${reply.blocked})` : ''}${epic && reply.waiting ? ` (waiting on ${reply.waiting.map((n) => `#${n}`).join(' ')})` : ''}`);
+  const { refiled, notMoved } = await settleRefile(ctx, task, reply, epic);
+  const outcome = notMoved ? 'needs-work' as const : reply.verdict;
+  const { backport, unbackported } = await settleBackport(ctx, task, reply, !epic && outcome === 'groomed', releaseBranch);
+  await ctx.source.recordGroom(task, { ...reply, verdict: outcome }, { ...stampExtrasFor(task, ctx.config.labels, open), ...(backport ? { backport } : {}), ...(unbackported ? { unbackported } : {}), ...(refiled ? { refiled } : {}), ...(notMoved ? { notMoved } : {}) });
+  log(`groomed #${task.issueNumber}${epic ? ' (epic)' : ''} → ${outcome}${reply.notes ? ' (+notes)' : ''}${backport ? ` (backport to ${backport.branch}; label ${backport.how})` : ''}${unbackported ? ` (no longer a backport${unbackported.failed ? '; label not removed' : ''})` : ''}${refiled ? ` (refiled as ${refiled})` : ''}${reply.blocked !== undefined ? ` (blocked on #${reply.blocked})` : ''}${epic && reply.waiting ? ` (waiting on ${reply.waiting.map((n) => `#${n}`).join(' ')})` : ''}`);
 
   // A groomed epic's children are the work; the verdict alone builds nothing.
   // Filed after the verdict is on record so a child always points at an epic
@@ -283,7 +387,7 @@ async function groomOne(
     await ctx.source.closeEpic(task);
     log(`epic #${task.issueNumber} is done: closed`);
   }
-  if (reply.verdict === 'close') {
+  if (outcome === 'close') {
     await ctx.source.closeTask(task);
     log(`#${task.issueNumber} has nothing to build: closed as not planned`);
   }
@@ -304,7 +408,7 @@ async function groomOne(
     taskId: task.id,
     issueNumber: task.issueNumber,
     issueTitle: task.title,
-    verdict: reply.verdict,
+    verdict: outcome,
     // Any prior verdict counts, whether it went stale on an edit or was
     // revisited via --force. Keying on 'stale' alone under-counts re-grooms.
     regroom: groomState(task, ctx.config.labels) !== 'ungroomed',
@@ -661,7 +765,7 @@ export async function reviewInputs(config: FactoryConfig): Promise<{ skip: strin
     listPrsForReview(repo, 'closed', 50),
     defaultBranchHead(repo),
   ]);
-  const queue = reviewQueue([...open, ...closed], factoryPrLabels(config), main.sha);
+  const queue = reviewQueue([...open, ...closed], factoryPrLabels(config), main.sha, config.review.ignoreBranches);
   const skip = queue.open.length + queue.reopen.length + queue.merge.length === 0 ? 'no PR from outside the factory is new or changed since the factory last reviewed it, or waiting on a merge it decided' : null;
   return { skip, ...queue };
 }
@@ -684,6 +788,10 @@ export async function runReviewPhase(ctx: FactoryContext, worker: CodingWorker, 
     const pr = await viewPrForReview(repoSlug(config), String(opts.only));
     if (pr.state !== 'OPEN' || isBot(pr) || pr.labels.some((l) => factoryPrLabels(config).includes(l.name))) {
       log(`review: #${opts.only} is not an open PR from outside the factory; nothing to review.`);
+      return [];
+    }
+    if (intoIgnoredBranch(pr, config.review.ignoreBranches)) {
+      log(`review: #${opts.only} targets ${pr.baseRefName}, which review.ignoreBranches leaves alone.`);
       return [];
     }
     picks = [{ pr, reopened: false }];
@@ -1805,7 +1913,7 @@ async function dryRun(ctx: FactoryContext, allCandidates: Task[]): Promise<void>
   const next = pending.slice(0, ctx.config.groom.maxPerTick);
   if (next.length > 0) {
     log(`would groom: ${next.map((t) => `#${t.issueNumber}${isEpic(t, labels) ? ' (epic)' : isBlocker(t, labels) ? ' (blocker)' : ''}`).join(' ')}. Groom prompt for #${next[0]!.issueNumber}:`);
-    console.log(`\n${groomPromptFor(ctx, next[0]!, loadPrinciples(ctx.config))}\n`);
+    console.log(`\n${groomPromptFor(ctx, next[0]!, loadPrinciples(ctx.config), await backportBranch(ctx.config).catch(() => null))}\n`);
   }
   if (groomed.length > 0 && ctx.config.selector.enabled) {
     log('selector prompt would be:');
@@ -1874,7 +1982,11 @@ async function runPipeline(
   const { config, state } = ctx;
   const startedAt = new Date().toISOString();
 
-  const handle = await worker.start(implementPrompt(task, agentCredentials(config).present, loadVerification(config)), {
+  // An issue carrying the backport label gets a fix small enough to copy, and
+  // a PR carrying the label too: the target repo's copy runs on merge.
+  const backport = config.groom.backport && task.labels.includes(config.groom.backport.label) ? config.groom.backport : undefined;
+  const releaseBranch = backport ? await backportBranch(config).catch(() => null) : undefined;
+  const handle = await worker.start(implementPrompt(task, agentCredentials(config).present, loadVerification(config), releaseBranch), {
     autoCreatePR: true,
     name: `factory: #${task.issueNumber} ${task.title}`.slice(0, 100),
   });
@@ -1900,7 +2012,7 @@ async function runPipeline(
   if (prUrl) {
     current.prUrl = prUrl;
     state.writeRun(current);
-    await addPrLabels(repoSlug(config), prUrl, [config.labels.factoryPr]);
+    await addPrLabels(repoSlug(config), prUrl, [config.labels.factoryPr, ...backportLabelOn(config, task.labels)]);
   }
   const ci = prUrl ? await greenChecks(config, worker, handle, prUrl) : null;
   const usage = (await worker.usage(handle.agentId)) ?? null;

@@ -116,6 +116,18 @@ export interface FactoryConfig {
      *  re-reviews that only track the work run `worker.model`, as does every
      *  groom when this is unset. */
     epicModel?: string;
+    /** A release line that takes copies of fixes after they merge. With this
+     *  set and a branch matching `branch` (a glob, such as `release/*`) in the
+     *  target repo, grooming a bug also asks whether the bug is in that
+     *  branch's code and meets the principles' backport rule; if so the
+     *  factory puts `label` on the issue and on the PR that fixes it. The
+     *  copy itself is the target repo's own automation. Absent by default. */
+    backport?: { label: string; branch: string };
+    /** Repos (`owner/repo`) the principles send some issues to. A close
+     *  verdict naming one files a copy of the issue there before the original
+     *  closes; any other repo is ignored. Empty by default: a close only
+     *  closes. */
+    refileRepos: string[];
   };
   /** How a free slot gets its issue. Off (the default), the oldest groomed
    *  issue by number is handed straight to the implementer: grooming already
@@ -140,8 +152,12 @@ export interface FactoryConfig {
    *  caught up by the review agent, not handed back to its author. `model`
    *  names an entry in `worker.models` to review with, when the one judgment
    *  that merges a stranger's code deserves a stronger model than the one
-   *  that builds issues; unset, reviews run `worker.model`. */
-  review: { enabled: boolean; maxPerTick: number; model?: string };
+   *  that builds issues; unset, reviews run `worker.model`.
+   *  `ignoreBranches` (globs, such as `release/*`) leaves every PR into a
+   *  matching branch alone — not reviewed, merged, or answered — for a repo
+   *  whose release branches take copies of changes the default branch already
+   *  has. Empty by default. */
+  review: { enabled: boolean; maxPerTick: number; model?: string; ignoreBranches: string[] };
   /** The dependency phase: Dependabot's open PRs carried onto one branch by one
    *  agent, the lockfile regenerated, and the batch merged on green CI under
    *  the review phase's rules. Off by default: it merges. */
@@ -290,13 +306,30 @@ export function loadConfig(root: string = projectRoot): FactoryConfig {
   if (config.groom.epicModel !== undefined && !config.worker.models[config.groom.epicModel]) {
     throw new Error(`groom.epicModel=${config.groom.epicModel} names no model in worker.models (has: ${Object.keys(config.worker.models).join(', ') || 'none'})`);
   }
+  const backport = config.groom.backport;
+  if (backport !== undefined && !(typeof backport?.label === 'string' && backport.label.trim() && typeof backport.branch === 'string' && backport.branch.trim())) {
+    throw new Error(`groom.backport needs a label and a branch glob, got ${JSON.stringify(backport)}`);
+  }
+  config.groom.refileRepos ??= [];
+  if (!Array.isArray(config.groom.refileRepos)) {
+    throw new Error(`groom.refileRepos needs a list of owner/repo, got ${JSON.stringify(config.groom.refileRepos)}`);
+  }
+  for (const r of config.groom.refileRepos) {
+    if (typeof r !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(r)) {
+      throw new Error(`groom.refileRepos: not an owner/repo: ${JSON.stringify(r)}`);
+    }
+  }
   config.security ??= { enabled: true, minSeverity: 'high' };
   config.security.enabled ??= true;
   config.security.minSeverity = parseSeverity(config.security.minSeverity ?? 'high');
   config.simplify ??= { enabled: false };
   // The one phase that merges is the one a deployment has to ask for.
-  config.review ??= { enabled: false, maxPerTick: 3 };
+  config.review ??= { enabled: false, maxPerTick: 3, ignoreBranches: [] };
   config.review.enabled ??= false;
+  config.review.ignoreBranches ??= [];
+  if (!Array.isArray(config.review.ignoreBranches) || !config.review.ignoreBranches.every((b) => typeof b === 'string' && b.trim())) {
+    throw new Error(`review.ignoreBranches needs a list of branch globs, got ${JSON.stringify(config.review.ignoreBranches)}`);
+  }
   config.deps ??= { enabled: false };
   config.deps.enabled ??= false;
   config.merge ??= { bypassApproval: false };
@@ -361,6 +394,12 @@ export function loadVerification(config: FactoryConfig, root: string = projectRo
 
 export function repoSlug(config: FactoryConfig): string {
   return `${config.repo.owner}/${config.repo.name}`;
+}
+
+/** The backport label for a PR, when its issue carries it: the target repo's copy runs on a labelled merge. */
+export function backportLabelOn(config: FactoryConfig, issueLabels: string[]): string[] {
+  const label = config.groom.backport?.label;
+  return label !== undefined && issueLabels.includes(label) ? [label] : [];
 }
 
 const WORKER_KINDS: readonly WorkerKind[] = ['cursor', 'claude-code'];

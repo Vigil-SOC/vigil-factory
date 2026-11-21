@@ -232,6 +232,34 @@ change. They are deliberately factory-local: they never reach the implementer, w
 only coding-level direction. That separation is the point — product direction is decided
 at grooming time, not at coding time.
 
+**A bug may also belong on a release line.** With `groom.backport` set (`{ label, branch }`,
+where `branch` is a glob such as `release/*`) and a matching branch in the target repo — the
+newest, when several match — the groom of a bug also asks whether the code the fix would
+touch exists on that branch and whether the fix meets the backport rule in `principles.md`.
+A yes is one line, `BACKPORT: yes — <reason>`: the factory says why in the groom comment and
+adds the label to the issue, and a person removes it if it is wrong; a later groom that finds
+the backport again leaves it off. A later groom that finds no backport takes off a label an
+earlier groom added, and leaves one a person added. When the branch cannot be looked up, no
+groom runs that tick, since a verdict recorded without the question is never asked it again. The implementer of a
+labelled issue is told to change only what the fix needs, and its PR carries the label
+before CI runs. Copying the fix after it merges is the target repo's own automation, not
+the factory's. Absent by default.
+
+**A close can send the request somewhere it belongs.** With `groom.refileRepos` listing
+repos, a close verdict may end with `REFILE: <owner/repo>` when the principles place the
+issue in one of them. The factory files a copy there — the title, and the body under a line
+saying where it came from and who filed it — then posts the close verdict with a link to
+the copy, then closes the original. A copy rather than a transfer, so an author who cannot
+see the other repo keeps their own issue. If the copy fails the issue is not closed: the
+verdict on record is needs-work, with a comment naming the repo it belongs in and saying it
+was not moved, and a reply there has it groomed again. A `REFILE` line the factory cannot
+match to a listed repo, or one naming a repo not on the list, ends the same way, rather
+than as a close that loses the request.
+The verdict's stamp records a copy that was filed, and before filing the factory looks in
+the other repo for one it already made, so an issue is never copied twice. `factory check` confirms each listed
+repo is reachable and takes issues. A `REFILE` line may name the repo alone (`vigil-assured`)
+when only one listed repo has that name. Empty by default.
+
 **State lives in the issue, not in a local file.** The verdict is the
 `factory:groomed` / `factory:needs-work` label — the thing you already read when
 browsing the issue list, and can already change. Nothing parses prose to find it.
@@ -685,7 +713,12 @@ branch: the agent merges the default branch in and resolves it, never rebasing o
 force-pushing the author's branch, and closes the PR only when the conflicts resolve
 by rewriting its change. Reviews do not count
 against `maxConcurrentJobs`; `review.maxPerTick` bounds how many run in one tick. The phase
-is off unless `review.enabled` is set, since it is the one that merges.
+is off unless `review.enabled` is set, since it is the one that merges. With
+`review.ignoreBranches` listing branch globs (such as `release/*`), a PR into a matching
+branch is left alone entirely — not reviewed, merged, or answered, and `review --pr N` on
+one says so and stops — for a repo whose release branches take copies of changes the
+default branch already has, which a review would close as duplicates. PRs into any other
+branch are reviewed as before. Empty by default.
 
 ## Dependabot
 
@@ -861,6 +894,8 @@ The engine reads everything from the directory it is run in (`FACTORY_ROOT` over
 `npx factory <command>` there is `npm run factory -- <command>` here.
 
 A deployment's CI is one job named `check` that runs `npm install && npx factory check`.
+With repos in `groom.refileRepos`, or with `groom.backport` set, that job needs a token that
+can read each of those repos, and the target's labels; with neither it needs no token.
 `contrib/update.sh` moves a host's checkout only to a commit that job passed on, the
 same rule this repo's hosts follow, so a config that does not parse stays off the fleet.
 A deployment without that job never updates its own checkout.
@@ -1048,6 +1083,13 @@ committed.
 - `factory.config.json` → `groom.epicModel` — a name from `worker.models` for the epic
   grooms that settle a direction (unset = `worker.model`). The one place a stronger model
   buys the most: the direction every child is built against. See "Epics" above.
+- `factory.config.json` → `groom.backport` — `{ label, branch }` for a repo with a release
+  line: grooming labels the bugs whose fix belongs there too. Absent = never asked. See
+  "Grooming" above.
+- `factory.config.json` → `groom.refileRepos` — repos a close verdict may refile an issue
+  in instead of only closing it (default none).
+- `factory.config.json` → `review.ignoreBranches` — branch globs (default none) whose PRs
+  the review phase leaves alone, such as `release/*`.
 - `factory.config.json` → `security` — `enabled` (default true) and `minSeverity` (default
   `high`; `low`, `medium` — or `moderate` — `high`, `critical`): the phase that fixes the
   repo's open Dependabot and code scanning alerts, and its privately reported advisories, a

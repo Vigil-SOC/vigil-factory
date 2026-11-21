@@ -2,10 +2,10 @@ import type { Task, WorkSource } from './types.ts';
 import type { FactoryConfig } from './config.ts';
 import { repoSlug } from './config.ts';
 import {
-  addIssueLabels, closeIssue, commentOnIssue, createIssue, editIssueBody, ensureLabel, labelHistory, listOpenIssues, referenceState, removeIssueLabels,
+  addIssueLabels, closeIssue, commentOnIssue, createIssue, editIssueBody, ensureLabel, findFiledCopy, labelHistory, listOpenIssues, referenceState, removeIssueLabels,
 } from './github.ts';
 import {
-  childDroppedComment, childrenFiledComment, epicRecognizedComment, failedAttemptComment, groomComment, hasLegacyBlock, isEpic, stripLegacyBlock,
+  childDroppedComment, childrenFiledComment, epicRecognizedComment, failedAttemptComment, groomComment, hasLegacyBlock, isEpic, refiledBody, refiledOpening, stripLegacyBlock,
   type ChildDraft, type GroomReply, type StampExtras,
 } from './groom.ts';
 
@@ -26,6 +26,7 @@ export class GitHubIssueSource implements WorkSource {
       comments: (i.comments ?? []).map((c) => ({ body: c.body ?? '' })),
       labels: i.labels.map((l) => l.name),
       assignees: (i.assignees ?? []).map((a) => a.login),
+      ...(i.author?.login ? { author: i.author.login } : {}),
       url: i.url,
     }));
   }
@@ -161,6 +162,27 @@ export class GitHubIssueSource implements WorkSource {
   /** The epic's closing comment is its done verdict, already posted. */
   async closeEpic(epic: Task): Promise<void> {
     await closeIssue(this.repo, epic.issueNumber, 'completed');
+  }
+
+  /** The target repo's own label, so it is added and never created or recoloured here. */
+  async markBackport(task: Task, label: string): Promise<void> {
+    await addIssueLabels(this.repo, task.issueNumber, [label]);
+  }
+
+  async unmarkBackport(task: Task, label: string): Promise<void> {
+    await removeIssueLabels(this.repo, task.issueNumber, [label]);
+  }
+
+  /** A copy, not a transfer: the original stays readable where its author
+   *  filed it. Unlabelled, since the other repo's labels are its own. */
+  async refile(task: Task, repo: string): Promise<string> {
+    // The groom comment is the record of a copy, and it is posted after the
+    // copy is filed: one that never got posted leaves a copy nothing records.
+    // A search that fails is a refile that fails, not a licence to file again.
+    const earlier = await findFiledCopy(this.repo, repo, refiledOpening(task));
+    if (earlier) return earlier;
+    const { url } = await createIssue(repo, task.title, refiledBody(task), []);
+    return url;
   }
 
   /** The closing comment is the close verdict, already posted. */

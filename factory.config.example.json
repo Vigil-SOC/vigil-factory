@@ -29,7 +29,8 @@
   },
   "groom": {
     "maxPerTick": 5,
-    "principlesFile": "principles.example.md"
+    "principlesFile": "principles.example.md",
+    "refileRepos": []
   },
   "selector": {
     "enabled": false,
@@ -44,7 +45,8 @@
   },
   "review": {
     "enabled": false,
-    "maxPerTick": 3
+    "maxPerTick": 3,
+    "ignoreBranches": []
   },
   "deps": {
     "enabled": false

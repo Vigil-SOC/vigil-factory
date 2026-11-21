@@ -14,7 +14,7 @@ vi.mock('node:child_process', () => ({
   },
 }));
 
-const { mergePr } = await import('../src/github.ts');
+const { matchingBranch, mergePr, newestMatch } = await import('../src/github.ts');
 
 const REFUSED = 'X Pull request o/r#7 is not mergeable: the base branch policy prohibits the merge.';
 const verbs = () => calls.map((a) => a.slice(0, 2).join(' '));
@@ -117,3 +117,24 @@ describe('merge.bypassApproval', () => {
   });
 });
 
+
+describe('the release line a backport goes to', () => {
+  beforeEach(() => { calls.length = 0; });
+
+  it('is the newest branch the glob matches, by version rather than by spelling', () => {
+    expect(newestMatch(['main', 'release/0.9.x', 'release/0.10.x', 'release/0.6.x'], 'release/*')).toBe('release/0.10.x');
+  });
+
+  it('a star stays inside one path segment, and the rest is literal', () => {
+    expect(newestMatch(['release/0.6.x/hotfix', 'prerelease/0.6.x', 'releasex0.6.x'], 'release/*')).toBeNull();
+    expect(newestMatch(['release/0.6.x', 'release/0x6xx'], 'release/0.6.x')).toBe('release/0.6.x');
+  });
+
+  it('is read from the repo\'s branches, and is nothing when none matches', async () => {
+    answer = () => 'main\nrelease/0.6.x\nfeature/x\n';
+    expect(await matchingBranch('o/r', 'release/*')).toBe('release/0.6.x');
+    expect(calls[0]).toEqual(expect.arrayContaining(['api', 'repos/o/r/git/matching-refs/heads/release/']));
+    answer = () => 'main\n';
+    expect(await matchingBranch('o/r', 'release/*')).toBeNull();
+  });
+});
