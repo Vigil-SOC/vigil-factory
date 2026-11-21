@@ -573,7 +573,7 @@ export function groomComment(task: Task, reply: GroomReply, epic = false, extras
       ? `**Backport.** This fix no longer belongs on \`${u.branch}\`, but the factory could not take off the \`${u.label}\` label an earlier groom added; remove it by hand, or the fix is copied there once it merges.`
       : `**Backport.** This fix no longer belongs on \`${u.branch}\`, so the factory took off the \`${u.label}\` label an earlier groom added; add it back if that is wrong.`);
   }
-  if (extras.refiled && reply.verdict === 'close') parts.push(`**Refiled.** This request continues at ${copyLink(extras.refiled)}.`);
+  if (extras.refiled && reply.verdict === 'close') parts.push(`**Refiled.** This request continues at ${copyLink(extras.refiled)}. That repo may not be visible to everyone who can read this one; this issue stays as the record of the request.`);
   if (extras.notMoved) {
     const { why, repo } = extras.notMoved;
     parts.push(why === 'failed'

@@ -278,11 +278,11 @@ These environment variables are set on this machine. When the live test needs th
 ${list}`;
 }
 
-/** `backportBranch` null: marked for a backport, but the branch could not be looked up. */
+/** `backportBranch` null: marked for a backport, but there is no release branch yet or it could not be looked up. */
 export function implementPrompt(task: Task, credentials: AgentCredential[] = [], verification: Verification = NO_POLICY, backportBranch?: string | null): string {
   const backport = backportBranch === undefined ? '' : `
 
-This fix is marked for a backport: once it merges it is copied onto the release branch${backportBranch ? ` (\`${backportBranch}\`)` : ''}. Change only what the fix needs, so the copy applies cleanly there — no cleanup, no refactor, no database migration or schema change.`;
+This fix is marked for a backport: once it merges it is copied onto ${backportBranch ? `the release branch (\`${backportBranch}\`)` : 'the release branch, if one exists by then'}. Change only what the fix needs, so the copy applies cleanly there — no cleanup, no refactor, no database migration or schema change.`;
   return `Implement the GitHub issue below and open a PR that resolves it (reference "Closes #${task.issueNumber}").
 
 How we like to work in this repo:

@@ -311,6 +311,9 @@ export function loadConfig(root: string = projectRoot): FactoryConfig {
     throw new Error(`groom.backport needs a label and a branch glob, got ${JSON.stringify(backport)}`);
   }
   config.groom.refileRepos ??= [];
+  if (!Array.isArray(config.groom.refileRepos)) {
+    throw new Error(`groom.refileRepos needs a list of owner/repo, got ${JSON.stringify(config.groom.refileRepos)}`);
+  }
   for (const r of config.groom.refileRepos) {
     if (typeof r !== 'string' || !/^[\w.-]+\/[\w.-]+$/.test(r)) {
       throw new Error(`groom.refileRepos: not an owner/repo: ${JSON.stringify(r)}`);
