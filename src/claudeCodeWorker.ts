@@ -83,7 +83,7 @@ const LOGIN_RESUME_NOTE = 'Your previous turn could not start because the login 
  *  mode the turn is the whole session, and on Oct 13 one ended "waiting for
  *  the live stack test" with a finished fix that was never pushed. */
 const MAX_NO_PR_RESUMES = 1;
-const NO_PR_RESUME_NOTE = 'Your turn ended without a pull request. This session ends when your turn does, so nothing you were waiting for (a background command, a test run, a server) is still going, and nobody will answer a question. If the work is done or nearly so, finish it now: verify in the foreground, commit, push, open the PR, and end with its URL. If you concluded the issue should not be built as scoped, say so again in a few lines and stop.';
+const NO_PR_RESUME_NOTE = 'Your turn ended without a pull request. This session ends when your turn does, so nothing you were waiting for (a background command, a test run, a server) is still going, and nobody will answer a question. If the work is done or nearly so, finish it now: verify in the foreground, commit, push, open the PR, and end with its URL. If you concluded that no pull request should be opened (the issue should not be built as scoped, or your task says when to open none), give that answer again, complete, with the closing line your task asks for if it asks for one, and stop.';
 /** The last turn a run gets when its budget runs out, and what it is told.
  *  On Oct 29 2026 #3405's change was built and checked against the live API
  *  when the budget cut it off retrying screenshots. */
@@ -965,6 +965,7 @@ export class ClaudeCodeWorker implements CodingWorker {
       // taken for its replacement. A push-only branch's PR is found by branch.
       prUrl: session.expectsPr || session.prUrl ? prUrlIn(resultText, this.opts.repoUrl) : undefined,
       durationMs: json?.duration_ms ?? Date.now() - run.startedAt,
+      ...(run.wrappedUp ? { overBudget: true } : {}),
     };
   }
 

@@ -2,7 +2,7 @@
 // factory CLI — the daily trigger runs `factory run`; everything else is
 // for humans operating the factory.
 
-import { admissible, buildContext, buildWorker, candidateTasks, depsInputs, environmentInputs, implementIssues, log, openSet, reviewInputs, runEnvironmentPhase, runDepsPhase, runGroomPhase, runReviewPhase, runSecurityPhase, runSelector, runSimplifyPhase, selectorCandidates, securityInputs, simplifySkip, tick } from './controller.ts';
+import { admissible, buildContext, buildWorker, candidateTasks, depsInputs, environmentInputs, goalInputs, implementIssues, log, openSet, reviewInputs, runEnvironmentPhase, runDepsPhase, runGoalPhase, runGroomPhase, runReviewPhase, runSecurityPhase, runSelector, runSimplifyPhase, selectorCandidates, securityInputs, simplifySkip, tick } from './controller.ts';
 import { loadConfig, loadPrinciples, loadVerification, projectRoot, repoSlug } from './config.ts';
 import { isEpic, isGroomed, needsGroom, verdict } from './groom.ts';
 import { defaultBranchHead } from './github.ts';
@@ -36,6 +36,10 @@ Usage:
                                        code scanning alerts (at security.minSeverity or above) and privately reported advisories
                                        in triage that no factory PR claims and one PR can fix, and opens that PR; a report it
                                        shows is not a vulnerability is closed, one it rates differently is re-rated.
+  npm run factory -- goals             Run just the goal phase: for each open issue carrying the goal label that is due, one agent
+                                       reads what earlier passes landed and opens one PR that carries as much of what is still
+                                       missing as one run can build and verify. A goal with a PR still open, or whose last pass
+                                       found it blocked or reached with no reply since, is not due.
   npm run factory -- implement --issue N[,M...] [--parallel K]
                                        Implement the named issues in the order given, K at a time (default 1), outside
                                        the capacity gate and without a groom: naming an issue is the verdict that it is
@@ -153,6 +157,14 @@ async function status(): Promise<void> {
   const lastSecurity = ctx.telemetry.securityPasses().at(-1);
   if (lastSecurity) log(`  last pass: ${lastSecurity.startedAt} → ${lastSecurity.outcome}${lastSecurity.prUrl ? ` ${lastSecurity.prUrl}` : ''} (fixed ${lastSecurity.fixed.length} of ${lastSecurity.offered.length} alert(s), dismissed ${lastSecurity.dismissed.length}${lastSecurity.rerated?.length ? `, re-rated ${lastSecurity.rerated.length}` : ''})`);
 
+  const goals = await goalInputs(ctx.config, allCandidates);
+  log(`goals: ${goals.skip ?? `${goals.due.length} due; next tick takes a pass at ${goals.due.slice(0, ctx.config.goals.maxPerTick).map((t) => `#${t.issueNumber}`).join(' ')}`}.`);
+  for (const { goal, reason } of goals.held) log(`  #${goal.issueNumber} waits — ${reason}`);
+  for (const r of ctx.telemetry.goalPasses().slice(-5)) {
+    const lines = r.additions !== undefined ? ` (+${r.additions} −${r.deletions})` : '';
+    log(`  ${r.startedAt} #${r.issueNumber} → ${r.outcome}${r.prUrl ? ` ${r.prUrl}` : ''}${lines}`);
+  }
+
   const { sha } = await defaultBranchHead(repoSlug(ctx.config));
   const simplifySkipped = await simplifySkip(ctx, sha);
   log(`simplify: ${simplifySkipped ?? `next tick looks for one simplification at ${sha.slice(0, 8)}`}.`);
@@ -169,6 +181,15 @@ async function simplify(): Promise<void> {
   if (!record) return;
   const lines = record.additions !== undefined ? ` (−${record.deletions} +${record.additions})` : '';
   log(`simplification pass → ${record.outcome}${record.prUrl ? ` ${record.prUrl}` : ''}${lines}${record.failureReason ? ` (${record.failureReason})` : ''}`);
+}
+
+async function goals(): Promise<void> {
+  const ctx = buildContext();
+  const records = await runGoalPhase(ctx, await buildWorker(ctx.config), await candidateTasks(ctx));
+  for (const r of records) {
+    const lines = r.additions !== undefined ? ` (+${r.additions} −${r.deletions})` : '';
+    log(`  #${r.issueNumber} → ${r.outcome}${r.prUrl ? ` ${r.prUrl}` : ''}${lines}${r.failureReason ? ` (${r.failureReason})` : ''}`);
+  }
 }
 
 async function review(opts: { only?: number }): Promise<void> {
@@ -326,6 +347,9 @@ async function main(): Promise<void> {
       break;
     case 'security':
       await security();
+      break;
+    case 'goals':
+      await goals();
       break;
     case 'review':
       await review({ ...(only !== undefined ? { only } : {}) });

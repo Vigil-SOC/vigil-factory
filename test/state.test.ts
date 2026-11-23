@@ -50,7 +50,7 @@ function config(maxConcurrentJobs: number): FactoryConfig {
   return {
     repo: { owner: 'o', name: 'r', url: 'https://github.com/o/r' },
     worker: { kind: 'cursor', model: null, models: {}, pollIntervalSeconds: 30, maxRunMinutes: 90, agentEnv: [] },
-    labels: { factoryPr: 'factory', issueInProgress: 'factory:wip', groomed: 'factory:groomed', needsWork: 'factory:needs-work', environmentPr: 'factory:env', simplifyPr: 'factory:simplify', reviewPr: 'factory:review', depsPr: 'factory:deps', epic: 'type:epic', blocker: 'factory:blocker', securityPr: 'factory:security', draft: 'factory:draft', grooming: 'factory:grooming', reviewing: 'factory:reviewing' },
+    labels: { factoryPr: 'factory', issueInProgress: 'factory:wip', groomed: 'factory:groomed', needsWork: 'factory:needs-work', environmentPr: 'factory:env', simplifyPr: 'factory:simplify', reviewPr: 'factory:review', depsPr: 'factory:deps', epic: 'type:epic', blocker: 'factory:blocker', securityPr: 'factory:security', draft: 'factory:draft', grooming: 'factory:grooming', reviewing: 'factory:reviewing', goal: 'factory:goal' },
     groom: { maxPerTick: 5, principlesFile: 'principles.example.md' },
     selector: { enabled: false, maxCandidates: 100 },
     environment: { enabled: true, maxPrsPerPass: 3 },
@@ -59,6 +59,7 @@ function config(maxConcurrentJobs: number): FactoryConfig {
     deps: { enabled: false },
     merge: { bypassApproval: false },
     security: { enabled: false, minSeverity: 'high' },
+    goals: { enabled: false, maxPerTick: 1 },
     assignedIssues: { groom: true, implement: false },
     tests: { keep: false },
     verify: {},

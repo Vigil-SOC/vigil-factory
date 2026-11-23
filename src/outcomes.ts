@@ -70,8 +70,8 @@ export function orphanedPrs<P extends PrData & { labels: { name: string }[] }>(
   return orphans;
 }
 
-/** The phases that open PRs on their own agent's branch, as Cursor names it after the agent (`factory-security` → `cursor/factory-security-…`). */
-export type OrphanPhase = 'security' | 'env' | 'simplify' | 'deps' | 'review';
+/** The phases that open PRs on their own agent's branch, as Cursor names it after the agent (`factory-security` → `cursor/factory-security-…`, `factory-goal-12` → `cursor/factory-goal-12-…`). */
+export type OrphanPhase = 'security' | 'env' | 'simplify' | 'deps' | 'review' | 'goal';
 
 /**
  * PRs the other phases' dead pipelines left behind — the same death as
@@ -87,7 +87,9 @@ export function phaseOrphans<P extends PrData & { labels: { name: string }[] }>(
   const orphans: { pr: P; phase: OrphanPhase }[] = [];
   for (const pr of open) {
     if (pr.labels.some((l) => factoryLabels.includes(l.name))) continue;
-    const m = pr.headRefName.match(/^cursor\/factory-(security|env|simplify|deps|review)-/);
+    // A goal's is adopted from the local worker's branch too (`factory/goal-12-…`):
+    // unlabelled, it would drop out of its goal's history once it closed.
+    const m = pr.headRefName.match(/^cursor\/factory-(security|env|simplify|deps|review|goal)-/) ?? pr.headRefName.match(/^factory\/(goal)-\d+-/);
     if (m) orphans.push({ pr, phase: m[1] as OrphanPhase });
   }
   return orphans;

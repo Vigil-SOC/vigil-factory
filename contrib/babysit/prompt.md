@@ -30,7 +30,7 @@ polling noise:
 
 The structured record of every groom, run, and outcome is `telemetry/runs.jsonl` in this
 checkout (one JSON row per line, `type` = groom | run | review | env | deps | simplify |
-outcome). Use it when you need to see a pattern across ticks.
+security | goal | outcome). Use it when you need to see a pattern across ticks.
 
 A healthy tick: reconciles outcomes of PRs that closed, grooms up to 5 issues (epics
 first, and epics file children), fills every free implementer slot (that many at most) with the
@@ -57,6 +57,9 @@ checklist:
   batched tick after tick; the environment pass opening a PR or filing a blocker
   every tick.
 - The same issue implemented, retracted to needs-work, and picked up again in a loop.
+- A goal (an issue labelled `factory:goal`) given a pass tick after tick while nothing of
+  its merges. The factory parks a goal itself after two passes in a row land nothing, so
+  more than that with no reply on the goal in between is a bug.
 - Free slots and groomed issues waiting, but fewer picks than slots. (Free slots with
   no groomed issue left is fine — the factory idles by design.)
 - Grooming stalled while ungroomed issues remain.
@@ -77,6 +80,13 @@ all of them without review. PRs from people are the tick's review phase's, excep
 ones it decided to merge and could not (below). Dependabot's are the deps phase's,
 GitHub Actions bumps included; release-please's are the operator's call on releasing.
 Leave all of those alone.
+
+A PR labelled `factory:goal` is the factory's too, and the exception: never merge it on
+the label. It is a pass at a goal, built with no groom behind it, so the tick's review
+phase reviews it like a PR from a person and merges or closes it, and the rule for
+outside PRs the factory already decided to merge (below) covers it. Where
+`factory.config.json` has `review.enabled` off, it awaits the operator. It holds no slot
+either way; a goal simply gets no further pass while its PR is open.
 
 Oldest first, for each:
 - A draft: `gh pr ready` it first. This happens now and then; it is not an alert unless
@@ -143,6 +153,8 @@ still unlabelled after a tick has run is yours to finish, the way the tick would
   another factory PR fixed the same thing): close it with a one-line comment saying why.
 - Otherwise: add its phase's label (`factory`, `factory:security`, `factory:env`,
   `factory:simplify`, `factory:deps`), ready it, and merge it under the rules above.
+- `cursor/factory-goal-<N>-…` or `factory/goal-<N>-…` (a pass at goal #N): add
+  `factory:goal` and ready it, and do not merge it. The review phase takes it from there.
 
 ### Outside PRs the factory already decided to merge
 
