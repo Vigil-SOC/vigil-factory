@@ -118,11 +118,12 @@ export class FactoryState {
   async reconcileOutcomes(log: (msg: string) => void): Promise<number> {
     const { labels } = this.config;
     const unadopted = await this.adoptOrphans(log);
-    const [implementer, environment, simplify, security, claimed] = await Promise.all([
+    const [implementer, environment, simplify, security, goal, claimed] = await Promise.all([
       listPrsByLabel(this.repo, labels.factoryPr, 'all'),
       listPrsByLabel(this.repo, labels.environmentPr, 'all'),
       listPrsByLabel(this.repo, labels.simplifyPr, 'all'),
       listPrsByLabel(this.repo, labels.securityPr, 'all'),
+      listPrsByLabel(this.repo, labels.goal, 'all'),
       listIssuesByLabel(this.repo, labels.issueInProgress),
     ]);
     const prs = [
@@ -130,6 +131,7 @@ export class FactoryState {
       ...withSource(environment, 'environment'),
       ...withSource(simplify, 'simplify'),
       ...withSource(security, 'security'),
+      ...withSource(goal, 'goal'),
     ];
 
     const recorded = new Set(this.telemetry.outcomes().map((o) => o.prUrl));
@@ -194,7 +196,7 @@ export class FactoryState {
    */
   private async adoptOrphans(log: (msg: string) => void): Promise<PrData[]> {
     const { labels } = this.config;
-    const factoryLabels = [labels.factoryPr, labels.environmentPr, labels.simplifyPr, labels.reviewPr, labels.depsPr, labels.securityPr];
+    const factoryLabels = [labels.factoryPr, labels.environmentPr, labels.simplifyPr, labels.reviewPr, labels.depsPr, labels.securityPr, labels.goal];
     const graceMs = (this.config.worker.maxRunMinutes + 30) * 60_000;
     const all = await listOpenPrs(this.repo);
     const open = all.filter((pr) => pr.labels.some((l) => factoryLabels.includes(l.name)) || pastGrace(pr, graceMs));
@@ -233,13 +235,14 @@ export class FactoryState {
    * that conflicts is closed too — its phase works from what is open now, and
    * a security PR closed without a stamp claims no alert, so they are offered
    * again. The rest are labelled and readied as their pipeline would have
-   * done, and the babysitter merges them like any factory PR. A security PR's
-   * claim is taken from the alerts its own description names.
+   * done, and the babysitter merges them like any factory PR — but for a goal
+   * pass's, which is reviewed first (goals.ts). A security PR's claim is taken
+   * from the alerts its own description names.
    */
   private async adoptPhaseOrphans(open: Awaited<ReturnType<typeof listOpenPrs>>, factoryLabels: string[], log: (msg: string) => void): Promise<void> {
     const { labels } = this.config;
     const label: Record<Exclude<OrphanPhase, 'review'>, string> = {
-      security: labels.securityPr, env: labels.environmentPr, simplify: labels.simplifyPr, deps: labels.depsPr,
+      security: labels.securityPr, env: labels.environmentPr, simplify: labels.simplifyPr, deps: labels.depsPr, goal: labels.goal,
     };
     for (const { pr, phase } of phaseOrphans(open, factoryLabels)) {
       try {
@@ -252,7 +255,8 @@ export class FactoryState {
           log(`closed orphaned ${pr.url}: ${why}`);
           continue;
         }
-        await ensureLabel(this.repo, label[phase], 'D93F0B', `Opened by the software factory's ${phase} phase`);
+        // The goal label is a person's, on the goal itself, and is not rewritten here.
+        if (phase !== 'goal') await ensureLabel(this.repo, label[phase], 'D93F0B', `Opened by the software factory's ${phase} phase`);
         await addPrLabels(this.repo, pr.url, [label[phase]]);
         await markPrReady(this.repo, pr.url);
         const alerts = phase === 'security' ? [...new Set(keysIn(pr.body))] : [];

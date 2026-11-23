@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { agentCredentials, epicGroomModel, loadConfig, loadVerification, reviewModel } from '../src/config.ts';
+import { agentCredentials, epicGroomModel, goalModel, loadConfig, loadVerification, reviewModel } from '../src/config.ts';
 
 function configDir(worker: Record<string, unknown>, groom: Record<string, unknown> = {}, rest: Record<string, unknown> = {}): string {
   const dir = mkdtempSync(resolve(tmpdir(), 'factory-config-'));
@@ -172,6 +172,18 @@ describe('epic groom model', () => {
     expect(reviewModel(config)).toEqual(models.fable);
     expect(reviewModel(loadConfig(configDir({ model: models.sonnet, models })))).toBeUndefined();
     expect(() => loadConfig(configDir({ model: models.sonnet, models }, {}, { review: { enabled: true, model: 'opus' } }))).toThrow(/review.model=opus names no model/);
+  });
+
+  it('goals are off, one a tick, and under their own label unless a deployment says otherwise', () => {
+    const config = loadConfig(configDir({ model: models.sonnet, models }));
+    expect(config.goals).toEqual({ enabled: false, maxPerTick: 1 });
+    expect(config.labels.goal).toBe('factory:goal');
+    expect(goalModel(config)).toBeUndefined();
+    const asked = loadConfig(configDir({ model: models.sonnet, models }, {}, { goals: { enabled: true, model: 'fable' } }));
+    expect(asked.goals).toEqual({ enabled: true, maxPerTick: 1, model: 'fable' });
+    expect(goalModel(asked)).toEqual(models.fable);
+    expect(() => loadConfig(configDir({ model: models.sonnet, models }, {}, { goals: { enabled: true, model: 'opus' } }))).toThrow(/goals.model=opus names no model/);
+    expect(() => loadConfig(configDir({}, {}, { goals: { enabled: true, maxPerTick: 0 } }))).toThrow(/goals.maxPerTick must be a positive integer/);
   });
 
   it('defaults the draft label', () => {

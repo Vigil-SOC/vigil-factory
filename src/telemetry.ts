@@ -1,6 +1,6 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { DepsRecord, EnvRecord, GroomRecord, OutcomeRecord, ReviewRecord, RunRecord, SecurityRecord, SimplifyRecord, TelemetryRecord } from './types.ts';
+import type { DepsRecord, EnvRecord, GoalRecord, GroomRecord, OutcomeRecord, ReviewRecord, RunRecord, SecurityRecord, SimplifyRecord, TelemetryRecord } from './types.ts';
 
 export class Telemetry {
   private readonly file: string;
@@ -52,5 +52,9 @@ export class Telemetry {
 
   securityPasses(): SecurityRecord[] {
     return this.readAll().filter((r): r is SecurityRecord => r.type === 'security');
+  }
+
+  goalPasses(): GoalRecord[] {
+    return this.readAll().filter((r): r is GoalRecord => r.type === 'goal');
   }
 }

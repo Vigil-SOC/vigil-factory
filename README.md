@@ -25,6 +25,10 @@ files: `factory.config.json`, which points it at `Vigil-SOC/vigil`, and
   Claude Code session) takes the issue, builds it without unit or integration tests,
   tests the change live, and opens a PR that lists what it verified and what it did not. When CI
   fails, the failing checks go back to the same agent to fix.
+- **Works toward a goal.** Optionally, an issue labelled `factory:goal` is a direction in
+  one line, with no breakdown. Each tick one agent reads what earlier passes landed and
+  opens one PR carrying as much of what is still missing as one run can build and verify.
+  The review phase judges it like any PR, and the next pass starts from what merged.
 - **Finishes outside PRs.** A contributor's PR is reviewed against the same
   principles, verified the same way, fixed on its own branch (any unit or integration
   tests it carries are deleted there), and then merged or closed with a reason.
