@@ -29,8 +29,8 @@
 // the handoffs and keeps the capacity gate.
 
 import { resolve } from 'node:path';
-import type { CodingWorker, CurrentRun, DepsRecord, EnvRecord, GroomRecord, ReviewRecord, RunHandle, RunRecord, RunResult, SecurityRecord, SimplifyRecord, Task, TokenUsage } from './types.ts';
-import { agentCredentials, backportLabelOn, claudeBin, epicGroomModel, githubTokenForAgents, reviewModel, loadConfig, loadDotEnv, loadPrinciples, loadVerification, projectRoot, repoSlug, requireCursorApiKey, type FactoryConfig } from './config.ts';
+import type { CodingWorker, CurrentRun, DepsRecord, EnvRecord, GoalRecord, GroomRecord, ReviewRecord, RunHandle, RunRecord, RunResult, SecurityRecord, SimplifyRecord, Task, TokenUsage } from './types.ts';
+import { agentCredentials, backportLabelOn, claudeBin, epicGroomModel, githubTokenForAgents, goalModel, reviewModel, loadConfig, loadDotEnv, loadPrinciples, loadVerification, projectRoot, repoSlug, requireCursorApiKey, type FactoryConfig } from './config.ts';
 import { RunBudgetExceeded } from './types.ts';
 import { CursorWorker } from './worker.ts';
 import { ClaudeCodeWorker } from './claudeCodeWorker.ts';
@@ -38,14 +38,15 @@ import { GitHubIssueSource } from './workSource.ts';
 import { FactoryState, ownPrs } from './state.ts';
 import { Telemetry } from './telemetry.ts';
 import { filterAssigned, filterClaimed, filterDrafts, filterEpics, parseSelection, type Selection } from './selector.ts';
-import { BOOT_CHECK_PROMPT, depsPrompt, environmentPrompt, fixChecksPrompt, forkFixChecksPrompt, missingChecksPrompt, resolveConflictsPrompt, groomEpicPrompt, groomPrompt, implementPrompt, type GroomExtras, trackEpicPrompt, reviewPrompt, securityPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
+import { BOOT_CHECK_PROMPT, depsPrompt, environmentPrompt, fixChecksPrompt, forkFixChecksPrompt, missingChecksPrompt, resolveConflictsPrompt, goalPrompt, groomEpicPrompt, groomPrompt, implementPrompt, type GroomExtras, trackEpicPrompt, reviewPrompt, securityPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
 import { factoryComment, isFactoryComment, groomState, isBlocker, isEpic, isGroomed, needsGroom, queueOrder, openChildren, openIssues, listedRepoIn, parseGroomReply, readRefiled, lastBackportMark, settlesDirection, stampExtrasFor, unaccountedBlockers, verdict, type GroomLabels, type GroomReply, type OpenIssues, type StampExtras } from './groom.ts';
-import { type LabelHistory, type PrCheck, addPrLabels, issueLabels,labelHistory, removeIssueLabels, approveHeldRuns, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, annotateAdvisory, dismissCodeScanningAlert, listAcceptedReports, listAdvisoryReports, listAllIssuesByLabel, listCodeScanningAlerts, listDependabotAlerts, listDependabotPrs, listPrsByLabel, listPrsForReview, markPrReady, matchingBranch, mergePr, prChecks, prMergeable, reopenPr, requiredChecks, userId, viewPr, viewPrForReview, collaboratorPermission } from './github.ts';
+import { type LabelHistory, type PrCheck, addPrLabels, issueLabels, labelHistory, removeIssueLabels, approveHeldRuns, awaitPrChecks, closeIssue, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, ghLogin, annotateAdvisory, dismissCodeScanningAlert, listAcceptedReports, listAdvisoryReports, listAllIssuesByLabel, listCodeScanningAlerts, listDependabotAlerts, listDependabotPrs, listOpenPrs, listPrsByLabel, listPrsForReview, markPrReady, matchingBranch, mergePr, prChecks, prMergeable, reopenPr, requiredChecks, userId, viewPr, viewPrForReview, collaboratorPermission, type PrData } from './github.ts';
 import { ENV_AGENT_MARK, environmentChangedAt, filedIssueBody, parseEnvReport, recentVerdicts, skipReason, unreadFactoryPrs, withOpenedThisTick, workerSkipReason, type UnreadPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
+import { goalAgentName, goalComment, goalHistory, goalOfBranch, goalQueue, isGoal, parseGoalReply, type GoalOutcome } from './goals.ts';
 import { carried, depsQueue, depsStamp, droppedReasons, skipReason as depsSkipReason, upgradeIssue, upgradeKey, upgradeKeyOf, type DepsPr } from './deps.ts';
 import { alertKey, fixedReports, keysIn, offeredLine, openReports, parseFixReply, securityQueue, securityStamp, skipReason as securitySkipReason, type FixReply, type OfferedAlert, type SecurityAlert } from './security.ts';
-import { closedIssues, closingRefs, coAuthorTrailer,intoIgnoredBranch, isBot, latestReview, mayMergeGithub, parseReviewReply, reviewComment, failedReviews, reviewClaimed, reviewFailedMarker, reviewQueue, reviewStamp, sameCommit, skipReason as reviewSkipReason, supersedesBody, touchesGithub, type ReviewOutcome, type ReviewPr, type ReviewReply } from './review.ts';
+import { closedIssues, closingRefs, coAuthorTrailer, intoIgnoredBranch, isBot, latestReview, mayMergeGithub, parseReviewReply, reviewComment, failedReviews, reviewClaimed, reviewFailedMarker, reviewQueue, reviewStamp, sameCommit, skipReason as reviewSkipReason, supersedesBody, touchesGithub, type ReviewOutcome, type ReviewPr, type ReviewReply } from './review.ts';
 
 export function log(msg: string): void {
   console.log(`[${new Date().toISOString()}] ${msg}`);
@@ -139,10 +140,13 @@ export async function openSet(ctx: FactoryContext, tasks: Task[]): Promise<OpenI
  * has claimed, nor one a human has marked as a draft: still being written, so
  * not yet the factory's to judge. They differ in whether a human's assignment
  * excludes it, and in that epics are groomed — that is where their direction
- * gets settled — but never implemented: their children are.
+ * gets settled — but never implemented: their children are. A goal is neither
+ * groomed nor implemented: it is no PR and settles nothing, and the goal phase
+ * alone works on it (goals.ts).
  */
 export function admissible(ctx: FactoryContext, tasks: Task[], phase: 'groom' | 'implement'): Task[] {
-  const unclaimed = filterDrafts(filterClaimed(tasks, ctx.config.labels.issueInProgress), ctx.config.labels.draft);
+  const issues = tasks.filter((t) => !isGoal(t, ctx.config.labels));
+  const unclaimed = filterDrafts(filterClaimed(issues, ctx.config.labels.issueInProgress), ctx.config.labels.draft);
   const admitted = ctx.config.assignedIssues[phase] ? unclaimed : filterAssigned(unclaimed);
   return phase === 'implement' ? filterEpics(admitted, ctx.config.labels.epic) : admitted;
 }
@@ -743,9 +747,229 @@ export async function runSimplifyPhase(ctx: FactoryContext, worker: CodingWorker
   return record({ outcome: 'pr-opened', prUrl, additions, deletions });
 }
 
+/** How far back a goal's PRs are read: every pass it has had, for any goal a deployment will run. */
+const GOAL_PRS_READ = 300;
+
+/**
+ * What the goal phase would take a pass at, read from GitHub in one place so
+ * the tick, the dry run, and `factory status` agree. `tasks` is the open
+ * issues as the caller already holds them; the goals are the ones that carry
+ * the goal label.
+ */
+export async function goalInputs(config: FactoryConfig, tasks: Task[]): Promise<{ skip: string | null; due: Task[]; held: { goal: Task; reason: string }[]; prs: PrData[] }> {
+  const none = (skip: string) => ({ skip, due: [], held: [], prs: [] });
+  if (!config.goals.enabled) return none('goal phase is disabled in factory.config.json');
+  const goals = tasks.filter((t) => isGoal(t, config.labels));
+  if (goals.length === 0) return none(`no open issue carries ${config.labels.goal}`);
+  const repo = repoSlug(config);
+  // An open PR on a goal's branch holds its goal whether or not it got its
+  // label: a pass that died before labelling it still opened it, and a second
+  // pass beside it would build the same step twice.
+  const [labelled, open] = await Promise.all([listPrsByLabel(repo, config.labels.goal, 'all', GOAL_PRS_READ), listOpenPrs(repo)]);
+  const prs = [...labelled, ...open.filter((p) => goalOfBranch(p.headRefName) !== null && !labelled.some((l) => l.number === p.number))];
+  const queue = goalQueue(goals, prs, { labels: config.labels, assigned: config.assignedIssues.implement });
+  return { skip: queue.due.length === 0 ? `none of the ${goals.length} goal(s) is due a pass` : null, ...queue, prs };
+}
+
+function goalPromptFor(config: FactoryConfig, goal: Task, prs: PrData[], principles: string): string {
+  const { merged, declined } = goalHistory(goal.issueNumber, prs);
+  return goalPrompt({
+    goal,
+    merged: merged.map((p) => p.url),
+    declined: declined.map((p) => p.url),
+    principles,
+    budget: config.worker,
+    credentials: agentCredentials(config).present,
+    verification: loadVerification(config),
+  });
+}
+
+/**
+ * The goal phase: for each goal that is due, one agent, no groom, one job —
+ * open the PR that moves the code as far toward the goal as one run can. Up to
+ * `goals.maxPerTick` goals a tick, each on its own agent, and never two passes
+ * at one goal: the issue carries the in-progress label while its pass runs, so
+ * a second runner leaves it alone, and the reconcile that releases a dead
+ * pipeline's claim releases a dead pass's.
+ *
+ * Returns the records it wrote.
+ */
+export async function runGoalPhase(ctx: FactoryContext, worker: CodingWorker, tasks: Task[]): Promise<GoalRecord[]> {
+  const { config } = ctx;
+  const repo = repoSlug(config);
+  // The label is a person's to put on an issue, so it has to exist before the first goal does.
+  if (config.goals.enabled) {
+    await ensureLabel(repo, config.labels.goal, '5319E7', 'A goal the software factory works toward one pass at a time, and the PRs its passes open')
+      .catch((err: Error) => log(`could not ensure the ${config.labels.goal} label: ${err.message}`));
+  }
+  const inputs = await goalInputs(config, tasks);
+  for (const { goal, reason } of inputs.held) log(`goals: #${goal.issueNumber} waits — ${reason}.`);
+  if (inputs.skip) {
+    log(`goals: skipped — ${inputs.skip}.`);
+    return [];
+  }
+  // Read fresh, as a groom's claim is: the snapshot is from the start of the
+  // tick, and hand-backs may have run for an hour since.
+  const now = await labelHistory(repo, inputs.due.map((t) => t.issueNumber));
+  const free = inputs.due.filter((t) => {
+    const h = now.get(t.issueNumber);
+    return h?.open === true && !h.labels.includes(config.labels.issueInProgress);
+  });
+  const picks = free.slice(0, config.goals.maxPerTick);
+  if (picks.length === 0) return [];
+  log(`goals: a pass at ${picks.map((t) => `#${t.issueNumber}`).join(' ')}${free.length > picks.length ? `; ${free.length - picks.length} more due wait for a later tick` : ''}`);
+  const principles = loadPrinciples(config);
+  const records = await Promise.all(picks.map(async (goal) => {
+    try {
+      await ctx.source.markStarted(goal);
+      return await goalPass(ctx, worker, goal, inputs.prs, principles);
+    } catch (err) {
+      log(`goals: pass at #${goal.issueNumber} failed: ${(err as Error).message}`);
+      return null;
+    } finally {
+      await ctx.source.markFinished(goal);
+    }
+  }));
+  return records.filter((r): r is GoalRecord => r !== null);
+}
+
+/**
+ * The PR a pass opened: open, and on the branch the factory named after the
+ * goal. `openedPr` is not enough here. A pass is handed the earlier passes'
+ * PRs as links, a reply that ends `reached` or `blocked` cites them, and the
+ * local worker reads the last PR link in a reply as the one the agent opened.
+ */
+async function passPr(config: FactoryConfig, result: RunResult, goal: number): Promise<PrData | null> {
+  const repo = repoSlug(config);
+  const named = result.prUrl ? await viewPr(repo, result.prUrl).catch(() => null) : null;
+  const onBranch = result.branch ? await findPrByBranch(repo, result.branch) : null;
+  const pr = [named, onBranch].find((p) => p?.state === 'OPEN' && goalOfBranch(p.headRefName) === goal) ?? null;
+  if (pr) await markPrReady(repo, pr.url).catch((err: Error) => log(`could not mark ${pr.url} ready for review: ${err.message}`));
+  return pr;
+}
+
+async function goalPass(ctx: FactoryContext, worker: CodingWorker, goal: Task, prs: PrData[], principles: string): Promise<GoalRecord> {
+  const { config } = ctx;
+  const repo = repoSlug(config);
+  const n = goal.issueNumber;
+  const startedAt = new Date().toISOString();
+  const model = goalModel(config);
+  // The implementers' credentials and machine: this agent builds the repo's
+  // own code, as they do. Named after the goal, which names its branch.
+  const handle = await worker.start(goalPromptFor(config, goal, prs, principles), {
+    autoCreatePR: true,
+    name: goalAgentName(n),
+    ...(model ? { model } : {}),
+  });
+
+  const record = async (over: Partial<GoalRecord> & { outcome: GoalRecord['outcome'] }): Promise<GoalRecord> => {
+    const full: GoalRecord = {
+      type: 'goal',
+      issueNumber: n,
+      issueTitle: goal.title,
+      prUrl: null,
+      worker: config.worker.kind,
+      model: model ?? config.worker.model,
+      agentId: handle.agentId,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      usage: (await worker.usage(handle.agentId)) ?? null,
+      durationMs: Date.now() - Date.parse(startedAt),
+      ...over,
+    };
+    ctx.telemetry.append(full);
+    return full;
+  };
+  // What the pass concluded goes on the goal, stamped: it is what the next
+  // tick reads to decide whether another pass is due, and what the next pass
+  // reads to know where this one stopped.
+  const conclude = (outcome: GoalOutcome, what: string, report = '', pr?: number) =>
+    commentOnIssue(repo, n, factoryComment(goalComment(goal, outcome, what, report, pr)));
+
+  const result = await worker.awaitResult(handle).catch((err: Error) => err);
+  if (result instanceof Error || result.status !== 'FINISHED') {
+    const reason = result instanceof Error ? result.message : `run ended with status ${result.status}: ${result.resultText.slice(0, 300) || worker.opaqueRunNote(handle)}`;
+    log(`goals: pass at #${n} failed — ${reason}`);
+    // A blown budget is evidence about the size of the step, not the machine,
+    // and the next pass should know. Any other failure says nothing about the
+    // goal: no stamp, and the next tick tries again.
+    if (!(result instanceof RunBudgetExceeded)) return record({ outcome: 'failed', failureReason: reason });
+    await conclude('overran', overran(result.maxRunMinutes));
+    return record({ outcome: 'overran', failureReason: reason });
+  }
+
+  const reply = parseGoalReply(result.resultText);
+  const pr = await passPr(config, result, n);
+  if (!pr) {
+    // The local worker gives a run that hits its budget one last turn to
+    // publish, so there the overrun arrives as a finished run with no PR.
+    if (result.overBudget) {
+      await conclude('overran', overran(config.worker.maxRunMinutes), reply.report);
+      log(`goals: pass at #${n} ran out of its budget with no PR.`);
+      return record({ outcome: 'overran' });
+    }
+    if (reply.status === 'reached') {
+      await conclude('reached', 'The pass found the goal true in the code as it stands, so the factory is closing it. To take it up again, reopen it with a reply saying what is missing.', reply.report);
+      await closeIssue(repo, n, 'completed');
+      log(`goals: #${n} reached; closed.`);
+      return record({ outcome: 'reached' });
+    }
+    // No PR and no claim that the goal is reached: whatever the agent called
+    // it, nothing was built, and running again unasked would find the same.
+    await conclude('blocked', 'The pass opened no PR. The next one runs when someone replies here.', reply.report || '_(the agent gave no report)_');
+    log(`goals: #${n} blocked; it waits for a reply.`);
+    return record({ outcome: 'blocked' });
+  }
+
+  // Labelled before the CI wait, as every phase's PR is: a crash mid-wait
+  // would otherwise leave it looking like nobody's. Where reviews run it is
+  // also claimed as a review's PR is until its checks settle, so another
+  // runner's review does not start while this agent is still pushing fixes.
+  const { url: prUrl, number, additions, deletions } = pr;
+  const reviewed = await reviewsGoalPasses(config);
+  await addPrLabels(repo, prUrl, [config.labels.goal]);
+  if (reviewed) await addPrLabels(repo, prUrl, [config.labels.reviewing]).catch((err: Error) => log(`goals: could not hold ${prUrl} from review while its checks run — ${err.message}`));
+  try {
+    const next = reviewed
+      ? 'The review phase judges it like any PR; the next pass runs once it is merged or closed.'
+      : 'It awaits a person; the next pass runs once it is merged or closed.';
+    await conclude('pr-opened', `${prUrl} (+${additions} −${deletions}). ${next}`, reply.report, number);
+    const ci = await greenChecks(config, worker, handle, prUrl);
+    log(`goals: pass at #${n} opened ${prUrl} (+${additions} −${deletions}, checks ${ci.checks}).`);
+    return await record({ outcome: 'pr-opened', prUrl, additions, deletions, ...ci });
+  } finally {
+    if (reviewed) await removeIssueLabels(repo, number, [config.labels.reviewing]).catch(() => {});
+  }
+}
+
+function overran(minutes: number): string {
+  return `It used its whole ${minutes}-minute budget without opening a PR, so it took on more than one run can build and verify. The next pass takes a step it can finish.`;
+}
+
 /** The labels that mark a PR as the factory's own, whoever GitHub says opened it. */
 function factoryPrLabels(config: FactoryConfig): string[] {
-  return [config.labels.factoryPr, config.labels.environmentPr, config.labels.simplifyPr, config.labels.reviewPr, config.labels.depsPr, config.labels.securityPr];
+  return [config.labels.factoryPr, config.labels.environmentPr, config.labels.simplifyPr, config.labels.reviewPr, config.labels.depsPr, config.labels.securityPr, config.labels.goal];
+}
+
+/**
+ * The factory's own PRs that the review phase leaves alone, which is all of
+ * them but a goal pass's. Every other one has a judgment behind it already —
+ * a groom, an alert, a line count — and a goal pass has none: its agent chose
+ * what to build. So it is reviewed like a PR from outside.
+ */
+function unreviewedLabels(config: FactoryConfig): string[] {
+  return factoryPrLabels(config).filter((l) => l !== config.labels.goal);
+}
+
+/**
+ * Whether a goal pass's PR goes to the review phase here, or awaits a person.
+ * The review phase skips a bot's PRs, so a runner that is one gets no review
+ * of its own passes, and they are handed back and left to a person instead.
+ */
+async function reviewsGoalPasses(config: FactoryConfig): Promise<boolean> {
+  if (reviewSkipReason(config.review.enabled, config.worker.kind, config.worker.containers) !== null) return false;
+  const me = await ghLogin().catch(() => null);
+  return me === null || !isBot({ author: { login: me } });
 }
 
 /**
@@ -765,7 +989,12 @@ export async function reviewInputs(config: FactoryConfig): Promise<{ skip: strin
     listPrsForReview(repo, 'closed', 50),
     defaultBranchHead(repo),
   ]);
-  const queue = reviewQueue([...open, ...closed], factoryPrLabels(config), main.sha, config.review.ignoreBranches);
+  const queue = reviewQueue([...open, ...closed], unreviewedLabels(config), main.sha, config.review.ignoreBranches);
+  // A reply reopens a PR the factory closed because its author is a person
+  // waiting on an answer. A goal pass's author is the factory, whose account
+  // the operator may share: a comment there reopens nothing, and the goal is
+  // steered on the goal.
+  queue.reopen = queue.reopen.filter((p) => !p.labels.some((l) => l.name === config.labels.goal));
   const skip = queue.open.length + queue.reopen.length + queue.merge.length === 0 ? 'no PR from outside the factory is new or changed since the factory last reviewed it, or waiting on a merge it decided' : null;
   return { skip, ...queue };
 }
@@ -786,7 +1015,7 @@ export async function runReviewPhase(ctx: FactoryContext, worker: CodingWorker, 
       return [];
     }
     const pr = await viewPrForReview(repoSlug(config), String(opts.only));
-    if (pr.state !== 'OPEN' || isBot(pr) || pr.labels.some((l) => factoryPrLabels(config).includes(l.name))) {
+    if (pr.state !== 'OPEN' || isBot(pr) || pr.labels.some((l) => unreviewedLabels(config).includes(l.name))) {
       log(`review: #${opts.only} is not an open PR from outside the factory; nothing to review.`);
       return [];
     }
@@ -977,7 +1206,8 @@ async function reviewOne(ctx: FactoryContext, worker: CodingWorker, pr: ReviewPr
   // checked out by Cursor or pushed to, so its agent starts on the default
   // branch, and a session branch it commits to becomes the replacement PR.
   // It verifies against a fresh instance of the app, on a machine of its own.
-  const handle = await worker.start(reviewPrompt({ ...pr, authorMayChangeGithub }, principles, loadVerification(config)), {
+  const goalPass = pr.labels.some((l) => l.name === config.labels.goal);
+  const handle = await worker.start(reviewPrompt({ ...pr, authorMayChangeGithub, goalPass }, principles, loadVerification(config)), {
     ...(pr.isCrossRepository ? { autoCreatePR: true, pushOnly: true } : { prUrl: pr.url }),
     withholdCredentials: true,
     container: true,
@@ -1705,7 +1935,9 @@ export async function tick(opts: { dryRun: boolean }): Promise<void> {
   //    Reviews of PRs from outside the factory run alongside too: they take
   //    no slot and touch no issue, and their PRs are not the factory's. So
   //    does the dependency batch, for the same reasons, and the security
-  //    fix, whose PR is its own queue as theirs are.
+  //    fix, whose PR is its own queue as theirs are. And a pass at each goal
+  //    that is due: a goal is no groomed issue, so it takes no slot either,
+  //    and its one open PR is its queue.
   const [, openedThisTick] = await Promise.all([
     runSimplifyPhase(ctx, worker).catch((err: Error) => {
       log(`simplify phase error: ${err.message}`);
@@ -1723,6 +1955,10 @@ export async function tick(opts: { dryRun: boolean }): Promise<void> {
     runSecurityPhase(ctx, worker).catch((err: Error) => {
       log(`security phase error: ${err.message}`);
       return null;
+    }),
+    runGoalPhase(ctx, worker, candidates).catch((err: Error) => {
+      log(`goal phase error: ${err.message}`);
+      return [];
     }),
   ]);
 
@@ -1987,6 +2223,16 @@ async function dryRun(ctx: FactoryContext, allCandidates: Task[]): Promise<void>
     console.log(`\n${securityPromptFor(config, security)}\n`);
   }
 
+  const goals = await goalInputs(config, allCandidates);
+  for (const { goal, reason } of goals.held) log(`goals: #${goal.issueNumber} would wait — ${reason}.`);
+  if (goals.skip) {
+    log(`goals: would skip — ${goals.skip}.`);
+  } else {
+    const picks = goals.due.slice(0, config.goals.maxPerTick);
+    log(`goals: would take a pass at ${picks.map((t) => `#${t.issueNumber}`).join(' ')} of ${goals.due.length} due. Prompt for #${picks[0]!.issueNumber}:`);
+    console.log(`\n${goalPromptFor(config, picks[0]!, goals.prs, '<principles.md>')}\n`);
+  }
+
   const { sha } = await defaultBranchHead(repoSlug(config));
   const simplifySkipped = await simplifySkip(ctx, sha);
   if (simplifySkipped) {
@@ -2154,7 +2400,9 @@ async function handBackStuckPrs(ctx: FactoryContext, worker: CodingWorker): Prom
   // and the dependency batches included. A replacement that conflicted sat for
   // a day (#1997) because no phase owned it once its first merge was refused.
   // Only this runner's: another runner's PR is its own agents' to fix.
-  const labels = factoryPrLabels(config);
+  // But a goal pass's where reviews run: the review catches it up and fixes
+  // it, and two agents pushing to one branch is a collision.
+  const labels = (await reviewsGoalPasses(config)) ? unreviewedLabels(config) : factoryPrLabels(config);
   const byLabel = await Promise.all(labels.map((label) => listPrsByLabel(repo, label, 'open')));
   const open = await ownPrs(byLabel.flat(), log);
   // These carry code nobody here wrote — an outside PR's, new package

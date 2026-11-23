@@ -62,6 +62,9 @@ export interface RunResult {
   branch: string | undefined;
   prUrl: string | undefined;
   durationMs: number | undefined;
+  /** The run used its whole budget, and this is what its last, wrap-up turn
+   *  left: where a worker grants one instead of throwing RunBudgetExceeded. */
+  overBudget?: boolean;
 }
 
 export interface TokenUsage {
@@ -247,7 +250,7 @@ export interface OutcomeRecord {
   prUrl: string;
   /** Which pipeline opened it. Absent on records written before env passes
    *  existed, which were all implementer PRs. */
-  source?: 'implementer' | 'environment' | 'simplify' | 'security';
+  source?: 'implementer' | 'environment' | 'simplify' | 'security' | 'goal';
   issueNumber: number | null;
   merged: boolean;
   closedAt: string;
@@ -351,7 +354,28 @@ export interface SecurityRecord extends AgentPass {
   failureReason?: string;
 }
 
-export type TelemetryRecord = RunRecord | GroomRecord | OutcomeRecord | EnvRecord | SimplifyRecord | ReviewRecord | DepsRecord | SecurityRecord;
+/**
+ * One pass at a goal. `pr-opened`: it took a step. `reached`: it found the goal
+ * true in the code, and the factory closed the goal. `blocked`: nothing could be
+ * built until a person decides something, and the goal waits for a reply.
+ * `overran`: the run ended at its budget with no PR, which says the pass took
+ * on too much. `failed`: the machine, which says nothing about the goal.
+ */
+export interface GoalRecord extends AgentPass {
+  type: 'goal';
+  issueNumber: number;
+  issueTitle: string;
+  outcome: 'pr-opened' | 'reached' | 'blocked' | 'overran' | 'failed';
+  prUrl: string | null;
+  /** GitHub's count for the PR, when one was opened: a pass is meant to be large. */
+  additions?: number;
+  deletions?: number;
+  fixRounds?: number;
+  checks?: RunRecord['checks'];
+  failureReason?: string;
+}
+
+export type TelemetryRecord = RunRecord | GroomRecord | OutcomeRecord | EnvRecord | SimplifyRecord | ReviewRecord | DepsRecord | SecurityRecord | GoalRecord;
 
 // --- Pipeline state for crash detection ---
 

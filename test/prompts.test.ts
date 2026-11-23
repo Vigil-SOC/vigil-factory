@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { environmentPrompt, fixChecksPrompt, forkFixChecksPrompt, groomEpicPrompt, groomPrompt, implementPrompt, reviewPrompt, securityPrompt, selectPrompt, simplifyPrompt, trackEpicPrompt } from '../src/prompts.ts';
+import { environmentPrompt, fixChecksPrompt, forkFixChecksPrompt, goalPrompt, groomEpicPrompt, groomPrompt, implementPrompt, reviewPrompt, securityPrompt, selectPrompt, simplifyPrompt, trackEpicPrompt } from '../src/prompts.ts';
 import type { Task } from '../src/types.ts';
 
 const task: Task = {
@@ -225,6 +225,59 @@ describe('simplification', () => {
     expect(p).toContain(merged);
     expect(p).not.toContain('already declined');
     expect(simplifyPrompt({ recentPrs: [], declinedPrs: [declined], budget: { maxRunMinutes: 90 } })).toContain(declined);
+  });
+});
+
+// A goal's pass plans itself, so its prompt carries what the groomer's and the
+// implementer's do between them, and the one opinion of its own: go large.
+describe('a pass at a goal', () => {
+  const goal = { issueNumber: 40, title: 'The CLI covers everything the API does', url: 'https://github.com/o/r/issues/40', body: 'A paragraph of context that must not be excerpted.' };
+  const landed = 'https://github.com/o/r/pull/820';
+  const closed = 'https://github.com/o/r/pull/821';
+  const p = goalPrompt({ goal, merged: [landed], declined: [], principles: 'PRINCIPLES', budget: { maxRunMinutes: 90 } });
+
+  it('hands over the goal and the earlier passes as links, with the principles it is bound by', () => {
+    expect(p).toContain('## Goal #40: The CLI covers everything the API does');
+    expect(p).toContain(goal.url);
+    expect(p).not.toContain('A paragraph of context');
+    expect(p).toContain(landed);
+    expect(p).toContain('## Principles\n\nPRINCIPLES');
+    expect(p).toContain('bind you as they bind the factory\'s groomer');
+  });
+
+  it('asks for as much as one run can build and verify, and names what does not count', () => {
+    expect(p).toContain('Make the pass large');
+    expect(p).toContain('about 90 minutes');
+    expect(p).toContain('no scaffolding with nothing behind it');
+  });
+
+  it('never closes the goal from a PR, and states the closing line the controller reads', () => {
+    expect(p).toContain('`Part of #40`, never a closing keyword');
+    expect(p).not.toMatch(/Closes #40/);
+    for (const line of ['GOAL: advanced', 'GOAL: reached', 'GOAL: blocked']) expect(p).toContain(line);
+  });
+
+  it('shares the working rules with the implementer, and is told what the implementers are about credentials', () => {
+    for (const rule of ['agent-browser', '**Verification** section', 'gets fixed now']) expect(p).toContain(rule);
+    const withKey = goalPrompt({ goal, merged: [], declined: [], principles: 'P', budget: { maxRunMinutes: 90 }, credentials: [{ name: 'MODEL_API_KEY', description: 'the model provider' }], verification: { keepTests: true } });
+    expect(withKey).toContain('`MODEL_API_KEY`: the model provider');
+    expect(withKey).toContain('This repo keeps its tests and CI runs them');
+  });
+
+  it('says so on a first pass, and lists what was closed unmerged only when something was', () => {
+    const first = goalPrompt({ goal, merged: [], declined: [], principles: 'P', budget: { maxRunMinutes: 90 } });
+    expect(first).toContain('this is the first pass to land anything');
+    expect(p).not.toContain('Passes closed unmerged');
+    const after = goalPrompt({ goal, merged: [], declined: [closed], principles: 'P', budget: { maxRunMinutes: 90 } });
+    expect(after).toContain(closed);
+    expect(after).toContain('Do not propose the same change again');
+  });
+
+  it('its PR is reviewed as the factory\'s own unjudged work, not as a stranger\'s', () => {
+    const pr = { number: 820, url: landed, isCrossRepository: false, authorMayChangeGithub: true };
+    expect(reviewPrompt({ ...pr, goalPass: true }, 'PRINCIPLES')).toContain('as a pass toward the goal its description names');
+    expect(reviewPrompt({ ...pr, goalPass: true }, 'PRINCIPLES')).not.toContain('Someone outside the factory opened it');
+    expect(reviewPrompt(pr, 'PRINCIPLES')).toContain('Someone outside the factory opened it');
   });
 });
 

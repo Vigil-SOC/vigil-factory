@@ -120,6 +120,14 @@ reconcile with GitHub: record the verdict on every factory PR that has closed, r
    draft naming the PR, and closed by the factory once that PR merges. The factory claims the
    alerts on the PR, hands a red check back, and leaves it for a human. Nothing due, or three
    security PRs already awaiting a merge, no agent
+→ GOAL agents, alongside too (goals.enabled; up to goals.maxPerTick, in parallel, fewest
+   passes first): each open issue labelled factory:goal that is due a pass. One agent reads
+   the goal, the PRs its earlier passes landed, and the code, and opens ONE PR carrying as
+   much of what is still missing as one run can build and verify — no groom, no children,
+   labelled factory:goal. Not due: a goal whose last pass's PR is still open, whose last
+   pass found it blocked or reached with no reply since, or whose last two passes landed
+   nothing. The review phase takes the PR up like any outside PR; with reviews off it
+   awaits a human
 count the jobs already in flight (open factory PRs + running pipelines)
    → no free slot under maxConcurrentJobs? stop here
 for each free slot:
@@ -428,6 +436,87 @@ agents never see it. A document that is a plan, a schedule, an org chart and a p
 proposal at once yields several epics, and the plan and the schedule are not among them.
 Run the tick; the design review is the groom. When the document is revised, reply on the
 epics it changes with the change stated in full; do not file a new one.
+
+## Goals: a direction, one pass at a time
+
+An epic pays for its direction up front: a groom settles the decisions, writes the
+children, each child is groomed, and only then is anything built. That is the right cost
+when the decisions bind many PRs. It is a lot of ceremony for a direction that fits in a
+line — "the CLI covers everything the API does", "every screen works on a phone" —
+and whose next step is easier to see from the code than to plan in advance.
+
+A goal is that line, as an issue carrying `factory:goal`. Nothing is broken down. Each
+tick, for each goal that is due, one fresh agent reads the goal, the PRs earlier passes
+landed, and the code as it stands, works out what still separates the code from the goal,
+and opens one PR. The next pass starts from wherever that one left the code. Nobody plans
+the passes; each is planned by the agent that makes it, against what is true by then.
+
+**Passes are large on purpose.** Most of a run goes to reading the code and verifying the
+change, every pass pays for that again with a fresh agent, and here no groomer joins
+slices that share the reading. So the agent is told to carry everything toward the goal it
+can build and verify in one run — a capability working end to end, not its first layer —
+within two limits: the PR is one change a reviewer can judge whole, and it leaves the
+default branch working and worth having if no pass ever follows. No scaffolding with
+nothing behind it, no plan document in place of the work.
+
+**No groom stands behind a pass, so two things replace it.** The agent is handed
+`principles.md`, because it is choosing what to build; a decision the principles leave to
+a person is not the agent's to make by building it. And where the review phase runs, the
+pass's PR is reviewed like a PR from outside: it carries `factory:goal`, which is the one
+factory label the review phase does not skip, and the reviewer is told what it is — the
+factory's own work, large on purpose, that nobody has yet judged worth having. A merge is
+the review's merge, under the review phase's rules; a close comes with a reason, and the
+next pass is handed the closed PR and told to read why. The babysitter merges every other
+factory PR without review and leaves these alone. With reviews off, or a runner that is a
+bot account (the review phase skips a bot's PRs), a pass's PR awaits a person, and the
+tick hands its red checks and conflicts back as it does any factory PR's. Where the
+default branch requires an approving review, the runner cannot approve a PR it opened, so
+a merge the review decides on waits for `merge.bypassApproval` or a person's approval.
+
+**One PR per goal is open at a time**, so a goal never runs ahead of the verdict on its
+last pass, and a goal's passes take no implementer slot. Everything a pass decides from
+is on GitHub:
+
+- The goal is the issue. Reply on it to steer it: what a person writes there outranks the
+  agent's own reading of the title. `factory:draft` pauses it, as does an assignee unless
+  `assignedIssues.implement` is on, and closing it ends it. The groomer and the
+  implementers never see an issue carrying `factory:goal`, so do not write one as an
+  epic's child: the epic would wait on a child nothing grooms.
+- A pass's PR is known for its goal's by the branch its agent was started on, which the
+  factory names after the goal (`cursor/factory-goal-<N>-…`, or `factory/goal-<N>-…` on
+  the local worker). Its description opens `Part of #N` and never closes the goal.
+- What each pass concluded is a stamped comment on the goal, headed 🏭 Factory goal, and
+  that is the whole memory. The stamp carries the goal's fingerprint — its description and
+  every comment the factory did not write — so a conclusion stands until a person says
+  something new there.
+
+A pass ends one of four ways. It **opened a PR**, and the next pass waits for that PR to
+merge or close. It found the goal **reached** — true in the code as it stands — and the
+factory closes the goal with the agent's account of why; reopening it with a reply saying
+what is missing takes it up again. It found the goal **blocked**: nothing worth a PR can
+be built until a person decides or provides something, which the comment names, and the
+goal waits for a reply. A pass that opened no PR and claimed neither is treated as
+blocked, since running again unasked would find the same. Or the run **overran** its
+budget with no PR — on the local worker, after the last turn it is given to publish what
+it has — which says the pass took on more than a run can carry; the comment says so, and
+the next pass reads it.
+
+The brake is one rule. A pass whose PR was closed unmerged, or that overran, landed
+nothing; two of those in a row since anyone last replied, and the goal waits for a reply
+rather than spending a run every tick to find the same thing out again. A pass that died of the machine concluded
+nothing, leaves no stamp, and is retried. While a pass runs the goal carries `factory:wip`,
+so a second runner leaves it alone, and the reconcile that releases a dead pipeline's
+claim releases a dead pass's.
+
+The phase is off by default: set `goals.enabled` to `true`, and label an issue
+`factory:goal`. `goals.maxPerTick` (default 1) bounds how many goals one tick takes a pass
+at, fewest passes first; `goals.model` names a model from `worker.models` to run passes
+with, when choosing what to build and building a large change deserve a stronger one than
+the model that builds groomed issues.
+
+Use an epic instead when the direction has decisions that should be settled once and
+written down before anything is built, or when its pieces can be built in parallel: an
+epic's children run side by side, and a goal's passes run one after another.
 
 ## The environment
 
@@ -1012,6 +1101,7 @@ npm run factory -- simplify        # run just the simplification phase: one PR t
 npm run factory -- review          # run just the review phase over the outside PRs that are due
 npm run factory -- review --pr 42  # ...or review PR #42 now, due or not
 npm run factory -- security        # run just the security phase: one PR fixing the most severe group of open alerts and reports
+npm run factory -- goals           # run just the goal phase: one large PR toward each goal that is due a pass
 npm run factory -- status          # grooming progress, capacity, in-flight jobs, recent telemetry
 npm run factory -- abort           # abandon every stuck pipeline (cancels the runs where the worker can)
 npm run factory -- abort --issue 42  # ...or just the one working issue #42
@@ -1142,13 +1232,19 @@ committed.
   reviews PRs the factory did not open and merges or closes them. It is the one judgment that
   merges a stranger's code, so it is the other place a stronger model earns its cost. Cursor
   worker only. See [Reviewing outside PRs](#reviewing-outside-prs).
+- `factory.config.json` → `labels.goal` — (default `factory:goal`) on an issue, a goal: a
+  human applies it, and the goal phase alone works on the issue. On a PR, a goal pass's:
+  the factory applies it, and the review phase reviews those. See [Goals](#goals-a-direction-one-pass-at-a-time).
+- `factory.config.json` → `goals` — `enabled` (default false), `maxPerTick` (default 1),
+  and `model` (a name from `worker.models`; unset = `worker.model`): the phase that works
+  toward a labelled goal one large PR at a time, with no groom and no breakdown.
 - `factory.config.json` → `selector` — `enabled` (default false): whether an agent ranks
   the groomed issues before each implementer run. Off, the oldest groomed issue is
   implemented next; see [One judge of size](#one-judge-of-size) for why that is the
   default. `maxCandidates` (default 100) bounds how many groomed issues one selector prompt
   is offered, oldest first; the factory fetches and grooms every open issue regardless.
-- `src/prompts.ts` — all eight prompts (groom / selector / implementer / environment /
-  simplify / review / deps / security), each a few lines. The implementer and simplifier share one block of working
+- `src/prompts.ts` — all nine prompts (groom / selector / implementer / environment /
+  simplify / review / deps / security / goal), each a few lines. The implementer and simplifier share one block of working
   rules so a simplification is held to exactly the standard the code it removes was built to. Add lines only for specific opinions where the model's default behavior isn't
   what you want. **Widening autonomy later = widening this policy, not adding
   machinery.**
@@ -1163,6 +1259,8 @@ committed.
 - `src/simplify.ts` — only the mechanical bits: which merged PRs to point the agent at,
   which declined ones to warn it off, whether a PR shrank the code, and why a pass is not
   running.
+- `src/goals.ts` — only the mechanical bits: which goals are due a pass and why the rest
+  wait, which PRs are a goal's, the stamp a pass leaves, and `GOAL`-line parsing.
 - `src/review.ts` — only the mechanical bits: which PRs are due a review, the stamp that
   dates one, `VERDICT`-line parsing, and the `.github/` rule (who may change it).
 
@@ -1211,9 +1309,12 @@ Its rows:
   duration.
 - `security` records: the alerts the fixer was handed, the ones its PR claims, the false
   positives it dismissed, the PR, fix rounds, checks, agent id, token usage, duration.
+- `goal` records: the goal, how the pass ended (`pr-opened` / `reached` / `blocked` /
+  `overran` / `failed`), the PR and its additions and deletions, fix rounds, checks, agent
+  id, token usage, duration.
 - `outcome` records: per PR — merged or rejected, human change requests, human
   comment count, time to close, and which pipeline opened it (`implementer`,
-  `environment`, `simplify`, or `security`).
+  `environment`, `simplify`, `security`, or `goal`).
 
 Joining `groom` to `outcome` is the question worth measuring: do issues that carried
 grooming notes get merged with fewer human change requests than ones that passed clean?
@@ -1240,13 +1341,14 @@ src/simplify.ts    the shrink rule, what to point the simplifier at, when not to
 src/review.ts      which outside PRs are due, the review stamp, VERDICT parsing, merge rules
 src/deps.ts        which Dependabot PRs a batch is offered, its stamp, what it carried
 src/security.ts    which alerts are due, the claim stamp, ALERTS / FALSE POSITIVE parsing
+src/goals.ts       which goals are due a pass, a goal's PRs, the pass stamp, GOAL parsing
 src/selector.ts    wip + assignee filters, SELECTED-line parsing (mechanical only)
-src/prompts.ts     groom + selector + implementer + environment + simplify + review prompts  ← factory policy
+src/prompts.ts     groom + selector + implementer + environment + simplify + review + goal prompts  ← factory policy
 src/state.ts       capacity gate (open PRs + in-flight runs), outcome reconciliation
 src/controller.ts  the tick
 src/github.ts      thin `gh` CLI wrapper
 src/telemetry.ts   JSONL groom/run/outcome log
-src/cli.ts         run / groom / select / env / simplify / review / deps / security / status / abort
+src/cli.ts         run / groom / select / env / simplify / review / deps / security / goals / status / abort
 ```
 
 Non-goals (V1, on purpose): custom agent runtime, custom sandboxes, multi-agent

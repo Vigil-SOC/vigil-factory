@@ -106,6 +106,12 @@ export interface FactoryConfig {
      *  `grooming`: a review leaves its stamp only when it ends, and until then
      *  a tick that starts beside it would review the PR again. */
     reviewing: string;
+    /** On an issue, a goal: a direction the goal phase works toward one pass
+     *  at a time (goals.ts). A human applies it, and the groomer and the
+     *  implementers never see an issue that carries it. On a PR, the pass that
+     *  opened it: the review phase takes those up, where it runs, as it does a
+     *  PR from outside. */
+    goal: string;
   };
   groom: {
     maxPerTick: number;
@@ -175,6 +181,16 @@ export interface FactoryConfig {
    *  groom. On by default: with no alerts it never starts, and it merges
    *  nothing itself. */
   security: { enabled: boolean; minSeverity: Severity };
+  /** The goal phase: each tick, one agent per goal — an open issue carrying
+   *  `labels.goal` — reads what earlier passes landed and opens one PR that
+   *  carries as much of what is still missing as one run can build and verify.
+   *  No groom, no children: the pass plans itself. Off by default.
+   *  `maxPerTick` bounds how many goals one tick takes a pass at; a goal has
+   *  one PR open at a time whatever it says. `model` names an entry in
+   *  `worker.models` to run a pass with, when choosing what to build and
+   *  building a large change deserve a stronger model than the one that
+   *  builds groomed issues; unset, passes run `worker.model`. */
+  goals: { enabled: boolean; maxPerTick: number; model?: string };
   /**
    * Whether a phase may act on an issue a human has assigned to themselves.
    * Grooming defaults to true — vetting costs the assignee nothing and the
@@ -303,6 +319,7 @@ export function loadConfig(root: string = projectRoot): FactoryConfig {
   config.labels.draft ??= 'factory:draft';
   config.labels.grooming ??= 'factory:grooming';
   config.labels.reviewing ??= 'factory:reviewing';
+  config.labels.goal ??= 'factory:goal';
   if (config.groom.epicModel !== undefined && !config.worker.models[config.groom.epicModel]) {
     throw new Error(`groom.epicModel=${config.groom.epicModel} names no model in worker.models (has: ${Object.keys(config.worker.models).join(', ') || 'none'})`);
   }
@@ -341,6 +358,15 @@ export function loadConfig(root: string = projectRoot): FactoryConfig {
   if (config.review.model !== undefined && !config.worker.models[config.review.model]) {
     throw new Error(`review.model=${config.review.model} names no model in worker.models (has: ${Object.keys(config.worker.models).join(', ') || 'none'})`);
   }
+  config.goals ??= { enabled: false, maxPerTick: 1 };
+  config.goals.enabled ??= false;
+  config.goals.maxPerTick ??= 1;
+  if (!Number.isInteger(config.goals.maxPerTick) || config.goals.maxPerTick < 1) {
+    throw new Error(`goals.maxPerTick must be a positive integer, got ${JSON.stringify(config.goals.maxPerTick)}`);
+  }
+  if (config.goals.model !== undefined && !config.worker.models[config.goals.model]) {
+    throw new Error(`goals.model=${config.goals.model} names no model in worker.models (has: ${Object.keys(config.worker.models).join(', ') || 'none'})`);
+  }
   config.selector ??= { enabled: false, maxCandidates: 100 };
   config.selector.enabled ??= false;
   config.selector.maxCandidates ??= 100;
@@ -369,6 +395,11 @@ export function epicGroomModel(config: FactoryConfig): ModelSpec | undefined {
 /** The model an outside PR's review runs, when the config names one. */
 export function reviewModel(config: FactoryConfig): ModelSpec | undefined {
   return config.review.model === undefined ? undefined : config.worker.models[config.review.model];
+}
+
+/** The model a goal's pass runs, when the config names one. */
+export function goalModel(config: FactoryConfig): ModelSpec | undefined {
+  return config.goals.model === undefined ? undefined : config.worker.models[config.goals.model];
 }
 
 /** The product-direction principles grooming judges against. Factory-local by

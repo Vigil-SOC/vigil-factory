@@ -367,6 +367,62 @@ ${opts.recentPrs.join('\n') || '(none yet)'}${declined}`;
 }
 
 /**
+ * A pass at a goal: the one agent here that is handed a direction and no scope.
+ * It decides what to build, so it gets what the groomer gets — the principles,
+ * and the same meaning of "one PR" — and it builds, so it gets what the
+ * implementer gets. The size paragraph is the phase's one opinion: a pass that
+ * takes a thin slice pays the whole cost of reading the code for it, and
+ * nothing downstream joins slices back together. The `GOAL:` line is stated
+ * because the controller reads it: `reached` closes the goal and `blocked`
+ * parks it until a person replies.
+ */
+export function goalPrompt(opts: {
+  goal: { issueNumber: number; title: string; url: string };
+  /** Earlier passes' PRs, newest first: what landed, and what was closed unmerged. */
+  merged: string[];
+  declined: string[];
+  principles: string;
+  budget: RunBudget;
+  credentials?: AgentCredential[];
+  verification?: Verification;
+}): string {
+  const verification = opts.verification ?? NO_POLICY;
+  const n = opts.goal.issueNumber;
+  const merged = `\n\n## What earlier passes landed\n\nNewest first. Read them before the code: each says what it made true and what it judged still missing, and the latest is where you start.\n\n${opts.merged.join('\n') || '(nothing yet: this is the first pass to land anything)'}`;
+  const declined = opts.declined.length > 0
+    ? `\n\n## Passes closed unmerged\n\nA review or a person closed these and said why on the PR. Read why. Do not propose the same change again, and do not route around the reason.\n\n${opts.declined.join('\n')}`
+    : '';
+
+  return `Take the next pass at a goal for this repo: one pull request that moves the code as far toward it as one run can, for the software factory.
+
+## Goal #${n}: ${opts.goal.title}
+${opts.goal.url}
+
+Read the goal there, comments included. ${ISSUE_IMAGES} A goal is a line of direction, not a spec. Nobody has broken it into issues and nobody will: each pass, a fresh agent — this time you — reads the goal, what earlier passes landed, and the code as it stands, works out what still separates the code from the goal, builds as much of that as one pull request can carry, and stops. The next pass starts from what you leave. What a person has written on the goal steers it and outranks your own reading of it; the factory's comments there (🏭 Factory goal) are the record of the passes before yours.
+
+Make the pass large. You have about ${opts.budget.maxRunMinutes} minutes to read the code, build, verify, and open the PR, and that budget is room to use, not only a limit. Most of a run goes to reading the code and verifying the change rather than writing it, and every pass pays for that again with a fresh agent, so a thin slice wastes the reading it took to find it. Take everything toward the goal that you can build and verify in this one run — a capability working end to end rather than its first layer, the next thing it needs rather than a note that it is needed — and stop where the time stops you, not where caution does. Parts that can be built side by side are what subagents are for. Two limits hold. The PR is one change a reviewer can judge whole: everything in it serves the goal, and none of it is there to make it bigger. And it leaves the default branch working and is worth having if no pass ever follows it: no scaffolding with nothing behind it, no plan or design document in place of the work.
+
+Where the next step turns on something you do not know — what a platform supports, how a format or a vendor's tool behaves, what the code does today — find out before you build on a guess: the code, the documentation, a request you can make with the credentials in your environment. Write what you learned into the PR description. The next pass reads it there instead of finding it out again.
+
+Nobody groomed this, so you are also the judge of what is worth building. The product-direction principles below bind you as they bind the factory's groomer, and they outrank how the goal is worded. A decision they leave to a person is not yours to make by building it: build what does not depend on that decision, and say what is waiting on it.
+
+How we like to work in this repo:
+${workingRules(verification)}
+- Open the PR description with \`Part of #${n}\`, never a closing keyword: the goal closes when it is reached, not when one pass merges. Then say what this pass makes true, and under **Still missing** what you judge still separates the code from the goal, most valuable first. That list is where the next pass starts.
+
+End your reply with exactly one line:
+GOAL: advanced — you opened a PR.
+GOAL: reached — the goal is already true in the code as it stands and nothing left is worth a PR. Open none, and say what makes it true, citing the code. The factory closes the goal; a reply there takes it up again.
+GOAL: blocked — nothing worth a PR can be built until a person decides or provides something. Open no PR, and name that one thing and what it unblocks; do not send back a list of questions a reasonable default would settle. The factory waits for a reply on the goal.
+
+Everything else in your reply becomes the factory's comment on the goal, so write it to the people steering it.${verifySection(verification)}${credentialsSection(opts.credentials ?? [])}${merged}${declined}
+
+## Principles
+
+${opts.principles}`;
+}
+
+/**
  * The environment agent. It is handed PR *links*, not a report extracted from
  * the implementer's reply: an agent that could not verify its work says so in
  * its PR, and reading that is a judgment call, so it belongs in an agent rather
@@ -429,7 +485,8 @@ ${prUrls.join('\n')}`;
 }
 
 /**
- * The review agent: a pull request the factory did not open. Same principles as
+ * The review agent: a pull request the factory did not open, or one a goal
+ * pass opened, which nothing has judged yet either. Same principles as
  * grooming, the implementer's live test but not CI's checks — the controller
  * merges only on green CI, so they run there — and one opinion of its own —
  * a PR worth having is finished here, conflicts included, not handed back to its
@@ -438,7 +495,12 @@ ${prUrls.join('\n')}`;
  * commit it verified; the `.github/` rule is stated because the controller
  * enforces it. No credentials are handed over: this agent runs a stranger's code.
  */
-export function reviewPrompt(pr: { number: number; url: string; isCrossRepository: boolean; authorMayChangeGithub: boolean }, principles: string, verification: Verification = NO_POLICY): string {
+export function reviewPrompt(pr: { number: number; url: string; isCrossRepository: boolean; authorMayChangeGithub: boolean; goalPass?: boolean }, principles: string, verification: Verification = NO_POLICY): string {
+  // A goal pass's PR is the factory's own and reviewed all the same: the pass
+  // chose its scope with no groom behind it, and this is where that is judged.
+  const from = pr.goalPass
+    ? 'The factory opened it itself, as a pass toward the goal its description names (`Part of #…`). One agent chose what to build, with no groom behind it, and was told to carry as much toward the goal as one run can build and verify, so it is large on purpose and nobody has yet judged whether it is worth having. That judgment is this review, and when you close one, the next pass reads your reason before it builds.'
+    : 'Someone outside the factory opened it — a contributor, a teammate, or somebody\'s coding agent.';
   // The agents' machine can push to a branch of this repo but not to a fork.
   const where = pr.isCrossRepository
     ? `It comes from a fork, which this machine cannot push to, so you start on your own session branch off the default branch. Review the PR's code detached: \`git fetch origin pull/${pr.number}/head && git checkout FETCH_HEAD\`. If it needs fixes, put its commits on your session branch — \`git checkout -B <the branch you started on> FETCH_HEAD\` — commit the fixes on top, and push it: \`git push -u origin HEAD\`. Nothing pushes it for you, and fixes left unpushed are lost with this machine. That branch becomes a replacement PR carrying the author's commits and yours, which the factory merges in place of this one, crediting the author. Do not open a PR yourself, and commit and push nothing to your session branch unless the PR needs fixes: any push there opens a PR.`
@@ -449,7 +511,7 @@ export function reviewPrompt(pr: { number: number; url: string; isCrossRepositor
   return `Review pull request #${pr.number} for the software factory, and decide what happens to it.
 ${pr.url}
 
-Someone outside the factory opened it — a contributor, a teammate, or somebody's coding agent. The factory does not hand PRs back over the fence: a PR worth having is finished here and merged, and one that is not is closed with the reason. ${where}
+${from} The factory does not hand PRs back over the fence: a PR worth having is finished here and merged, and one that is not is closed with the reason. ${where}
 
 Read the PR at its link — description, diff, comments, and any issue it links — then the code it touches. Judge it against the product-direction principles below; they outrank how the PR frames itself. A PR needs no issue or epic behind it: whatever direction it brings, you judge here, with its code, in this one pass. Never close one for linking none, or send it to an epic. An earlier 🏭 Factory review comment on it is a past verdict, not a premise: the principles below may have changed since it was written, so judge the PR afresh, and read that comment only to see what the author has done in reply.
 

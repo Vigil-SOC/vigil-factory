@@ -25,7 +25,8 @@
     "securityPr": "factory:security",
     "draft": "factory:draft",
     "grooming": "factory:grooming",
-    "reviewing": "factory:reviewing"
+    "reviewing": "factory:reviewing",
+    "goal": "factory:goal"
   },
   "groom": {
     "maxPerTick": 5,
@@ -57,6 +58,10 @@
   "security": {
     "enabled": true,
     "minSeverity": "high"
+  },
+  "goals": {
+    "enabled": false,
+    "maxPerTick": 1
   },
   "assignedIssues": {
     "groom": true,
