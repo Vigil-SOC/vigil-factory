@@ -718,9 +718,10 @@ const REFILE_RE = /^\s*\**REFILE:\**[ \t]*[`<]?(?:https?:\/\/github\.com\/)?([\w
 // "Refile:" in any case is the line; "Refile this by hand" is prose.
 const REFILE_LINE_RE = /^[ \t]*[*_`>#-]*[ \t]*(?:REFILE\b|[Rr]efile\**:).*$/m;
 // "REFILE: none", with or without a note after it, answers the question rather
-// than leaving the line out, unless it still names something like a repo.
+// than leaving the line out, unless what it names first is shaped like a repo
+// ("REFILE: no-org/repo"). A repo in a note after the "none" is not the answer.
 const REFILE_NONE_RE = /^[ \t]*[*_`>#-]*[ \t]*refile\W*(?:is\s+)?(?:none|no|not|nothing|n\/a|nowhere)\b/i;
-const REPO_SHAPED_RE = /[\w.-]+\/[\w.-]{2,}/;
+const REPO_SHAPED_RE = /^[ \t]*[*_`>#-]*[ \t]*refile\W*[\w.-]+\/[\w.-]{2,}/i;
 
 /**
  * The one listed repo a line names, however the line is dressed: a note after

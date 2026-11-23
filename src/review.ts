@@ -184,6 +184,17 @@ export function closingRefs(body: string): string[] {
   return [...new Set([...body.matchAll(re)].map((m) => `Closes ${m[1]}`))];
 }
 
+/** The issues in `repo` a body closes, by number: another repo's `Closes o/r#3` is not one of them. */
+export const closedIssues = (body: string, repo: string): number[] => [...new Set(
+  closingRefs(body).flatMap((ref) => {
+    const m = ref.match(/^Closes (?:#(\d+)|([\w.-]+\/[\w.-]+)#(\d+)|https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/issues\/(\d+))$/);
+    if (!m) return [];
+    const [, bare, r1, n1, r2, n2] = m;
+    if (bare) return [Number(bare)];
+    return (r1 ?? r2)!.toLowerCase() === repo.toLowerCase() ? [Number(n1 ?? n2)] : [];
+  }),
+)];
+
 /** The squash commit body that lands an outside PR's work as a replacement: who wrote it, what it closes, the author's credit. */
 export function supersedesBody(pr: Pick<ReviewPr, 'number' | 'body' | 'author'>, trailer: string): string {
   const refs = closingRefs(pr.body);

@@ -242,7 +242,9 @@ the backport again leaves it off. A later groom that finds no backport takes off
 earlier groom added, and leaves one a person added. When the branch cannot be looked up, no
 groom runs that tick, since a verdict recorded without the question is never asked it again. The implementer of a
 labelled issue is told to change only what the fix needs, and its PR carries the label
-before CI runs. Copying the fix after it merges is the target repo's own automation, not
+before CI runs. A PR the review phase merges, or its replacement, gets the label just
+before it merges when an issue it closes carries it. A PR a person merges themselves is
+theirs to label. Copying the fix after it merges is the target repo's own automation, not
 the factory's. Absent by default.
 
 **A close can send the request somewhere it belongs.** With `groom.refileRepos` listing

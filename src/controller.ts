@@ -40,12 +40,12 @@ import { Telemetry } from './telemetry.ts';
 import { filterAssigned, filterClaimed, filterDrafts, filterEpics, parseSelection, type Selection } from './selector.ts';
 import { BOOT_CHECK_PROMPT, depsPrompt, environmentPrompt, fixChecksPrompt, forkFixChecksPrompt, missingChecksPrompt, resolveConflictsPrompt, groomEpicPrompt, groomPrompt, implementPrompt, type GroomExtras, trackEpicPrompt, reviewPrompt, securityPrompt, selectPrompt, simplifyPrompt } from './prompts.ts';
 import { factoryComment, isFactoryComment, groomState, isBlocker, isEpic, isGroomed, needsGroom, queueOrder, openChildren, openIssues, listedRepoIn, parseGroomReply, readRefiled, lastBackportMark, settlesDirection, stampExtrasFor, unaccountedBlockers, verdict, type GroomLabels, type GroomReply, type OpenIssues, type StampExtras } from './groom.ts';
-import { type LabelHistory, type PrCheck, addPrLabels, labelHistory, removeIssueLabels, approveHeldRuns, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, annotateAdvisory, dismissCodeScanningAlert, listAcceptedReports, listAdvisoryReports, listAllIssuesByLabel, listCodeScanningAlerts, listDependabotAlerts, listDependabotPrs, listPrsByLabel, listPrsForReview, markPrReady, matchingBranch, mergePr, prChecks, prMergeable, reopenPr, requiredChecks, userId, viewPr, viewPrForReview, collaboratorPermission } from './github.ts';
+import { type LabelHistory, type PrCheck, addPrLabels, issueLabels,labelHistory, removeIssueLabels, approveHeldRuns, awaitPrChecks, closePr, closePrQuietly, commentOnIssue, commentOnPr, createIssue, createPr, defaultBranchHead, ensureLabel, findPrByBranch, annotateAdvisory, dismissCodeScanningAlert, listAcceptedReports, listAdvisoryReports, listAllIssuesByLabel, listCodeScanningAlerts, listDependabotAlerts, listDependabotPrs, listPrsByLabel, listPrsForReview, markPrReady, matchingBranch, mergePr, prChecks, prMergeable, reopenPr, requiredChecks, userId, viewPr, viewPrForReview, collaboratorPermission } from './github.ts';
 import { ENV_AGENT_MARK, environmentChangedAt, filedIssueBody, parseEnvReport, recentVerdicts, skipReason, unreadFactoryPrs, withOpenedThisTick, workerSkipReason, type UnreadPrs } from './environment.ts';
 import { declinedSimplifications, recentlyMergedFactoryPrs, shrinks, skipReason as simplifySkipReason } from './simplify.ts';
 import { carried, depsQueue, depsStamp, droppedReasons, skipReason as depsSkipReason, upgradeIssue, upgradeKey, upgradeKeyOf, type DepsPr } from './deps.ts';
 import { alertKey, fixedReports, keysIn, offeredLine, openReports, parseFixReply, securityQueue, securityStamp, skipReason as securitySkipReason, type FixReply, type OfferedAlert, type SecurityAlert } from './security.ts';
-import { closingRefs, coAuthorTrailer, intoIgnoredBranch, isBot, latestReview, mayMergeGithub, parseReviewReply, reviewComment, failedReviews, reviewClaimed, reviewFailedMarker, reviewQueue, reviewStamp, sameCommit, skipReason as reviewSkipReason, supersedesBody, touchesGithub, type ReviewOutcome, type ReviewPr, type ReviewReply } from './review.ts';
+import { closedIssues, closingRefs, coAuthorTrailer,intoIgnoredBranch, isBot, latestReview, mayMergeGithub, parseReviewReply, reviewComment, failedReviews, reviewClaimed, reviewFailedMarker, reviewQueue, reviewStamp, sameCommit, skipReason as reviewSkipReason, supersedesBody, touchesGithub, type ReviewOutcome, type ReviewPr, type ReviewReply } from './review.ts';
 
 export function log(msg: string): void {
   console.log(`[${new Date().toISOString()}] ${msg}`);
@@ -864,6 +864,29 @@ export async function runReviewPhase(ctx: FactoryContext, worker: CodingWorker, 
  * (`handBackStuckPrs`), and what lands is what that agent pushed, green. Once
  * its hand-backs run out, the replacement is closed and this PR reviewed afresh.
  */
+/**
+ * An outside PR, or its replacement, that closes an issue marked for a backport
+ * carries the label when it merges, as the factory's own PR does: the target
+ * repo's copy runs on a labelled merge. `body` is every description whose
+ * closing refs count. Never holds up the merge: a label added by hand after
+ * it still starts the copy, and the log says to.
+ */
+const labelBackport = async (config: FactoryConfig, target: string, body: string): Promise<void> => {
+  const rule = config.groom.backport;
+  if (!rule) return;
+  const repo = repoSlug(config);
+  for (const n of closedIssues(body, repo)) {
+    const labels = await issueLabels(repo, n).catch((err: Error): string[] => {
+      log(`could not read #${n}'s labels, so ${target} may be missing the ${rule.label} label; add it by hand if #${n} has it: ${err.message}`);
+      return [];
+    });
+    if (!labels.includes(rule.label)) continue;
+    await addPrLabels(repo, target, [rule.label]).catch((err: Error) =>
+      log(`could not add the ${rule.label} label to ${target}, which closes #${n}; add it by hand and the copy still runs: ${err.message}`));
+    return;
+  }
+};
+
 async function retryMerge(config: FactoryConfig, pr: ReviewPr): Promise<void> {
   const repo = repoSlug(config);
   const replacement = latestReview(pr)?.replacement;
@@ -916,6 +939,7 @@ async function retryMerge(config: FactoryConfig, pr: ReviewPr): Promise<void> {
     log(`review: #${pr.number} is pending a merge${replacement ? ` of #${replacement}` : ''}, but ${wait}; the next tick tries again`);
     return;
   }
+  await labelBackport(config, target, `${pr.body}\n${view.body}`);
   try {
     const body = replacement ? supersedesBody(pr, coAuthorTrailer(pr.author, await userId(pr.author.login))) : undefined;
     await mergePr(repo, target, view.headRefOid, body, config.merge);
@@ -1235,6 +1259,7 @@ async function mergeVerified(
   if (ci.checks === 'none') return { outcome: 'left', stamped: true, mergePending: true, reason: 'no checks', note: 'The factory will merge it, but no CI has reported on it yet, and the factory merges only on green checks.', ci };
   if (ci.checks === 'unsettled') return { outcome: 'left', stamped: true, mergePending: true, reason: 'checks unsettled', note: `The factory will merge it, but CI had not finished within ${CHECKS_WAIT_MS / 60_000} minutes.`, ci };
 
+  await labelBackport(config, target, `${after.body}\n${opts.body ?? ''}`);
   try {
     await mergePr(repo, target, after.headRefOid, opts.body, config.merge);
   } catch (err) {
