@@ -1,5 +1,5 @@
 node_modules
-telemetry/
+telemetry
 .env
 *.tsbuildinfo
 .DS_Store

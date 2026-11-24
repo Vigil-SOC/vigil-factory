@@ -961,7 +961,7 @@ principles.md         what is worth building in that repo             (from prin
 verify.md             how a change is shown to work there, if the built-in live test does not fit
 package.json          names the engine
 .npmrc                package-lock=false
-.gitignore            node_modules/  telemetry/  .env
+.gitignore            node_modules  telemetry  .env   (no trailing slash: a slash would let a symlink of that name be committed)
 .github/workflows/ci.yml   one job, `check`
 ```
 
