@@ -272,7 +272,8 @@ async function settleRefile(ctx: FactoryContext, task: Task, reply: GroomReply, 
  * A yes adds it, unless a person took off the one an earlier groom added: that
  * stays their call. A label already on is not stamped as the factory's, since
  * it may be a person's. A no takes off only a label the factory added, since a
- * stale one still holds the implementer to a backport's limits and copies the PR.
+ * stale one still copies the PR. What a backport holds the fix to reaches the
+ * implementer in the groom's notes, not here.
  */
 async function settleBackport(ctx: FactoryContext, task: Task, reply: GroomReply, groomed: boolean, releaseBranch: string | null | undefined): Promise<{ backport?: StampExtras['backport']; unbackported?: StampExtras['unbackported'] }> {
   const rule = ctx.config.groom.backport;
@@ -2253,11 +2254,7 @@ async function runPipeline(
   const { config, state } = ctx;
   const startedAt = new Date().toISOString();
 
-  // An issue carrying the backport label gets a fix small enough to copy, and
-  // a PR carrying the label too: the target repo's copy runs on merge.
-  const backport = config.groom.backport && task.labels.includes(config.groom.backport.label) ? config.groom.backport : undefined;
-  const releaseBranch = backport ? await backportBranch(config).catch(() => null) : undefined;
-  const handle = await worker.start(implementPrompt(task, agentCredentials(config).present, loadVerification(config), releaseBranch), {
+  const handle = await worker.start(implementPrompt(task, agentCredentials(config).present, loadVerification(config)), {
     autoCreatePR: true,
     name: `factory: #${task.issueNumber} ${task.title}`.slice(0, 100),
   });
@@ -2283,6 +2280,7 @@ async function runPipeline(
   if (prUrl) {
     current.prUrl = prUrl;
     state.writeRun(current);
+    // An issue marked for a backport gets a PR marked for one: the target repo's copy runs on a labelled merge.
     await addPrLabels(repoSlug(config), prUrl, [config.labels.factoryPr, ...backportLabelOn(config, task.labels)]);
   }
   const ci = prUrl ? await greenChecks(config, worker, handle, prUrl) : null;

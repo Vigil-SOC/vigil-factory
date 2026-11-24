@@ -248,9 +248,10 @@ A yes is one line, `BACKPORT: yes — <reason>`: the factory says why in the gro
 adds the label to the issue, and a person removes it if it is wrong; a later groom that finds
 the backport again leaves it off. A later groom that finds no backport takes off a label an
 earlier groom added, and leaves one a person added. When the branch cannot be looked up, no
-groom runs that tick, since a verdict recorded without the question is never asked it again. The implementer of a
-labelled issue is told to change only what the fix needs, and its PR carries the label
-before CI runs. A PR the review phase merges, or its replacement, gets the label just
+groom runs that tick, since a verdict recorded without the question is never asked it again. What a backport holds the fix to is
+the deployment's rule, and the implementer never sees the principles, so the groom's notes
+carry it; the engine's implement prompt says nothing about backports. The factory's PR for
+a labelled issue carries the label before CI runs. A PR the review phase merges, or its replacement, gets the label just
 before it merges when an issue it closes carries it. A PR a person merges themselves is
 theirs to label. Copying the fix after it merges is the target repo's own automation, not
 the factory's. Absent by default.

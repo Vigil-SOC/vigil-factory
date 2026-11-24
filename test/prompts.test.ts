@@ -434,11 +434,12 @@ describe('a deployment\'s release line and sibling repos', () => {
     expect(p).toContain('Name no repo outside this list');
   });
 
-  it('the implementer of a backport is told to change only what the fix needs', () => {
-    expect(implementPrompt(task, [], undefined, undefined)).toBe(implementPrompt(task));
-    expect(implementPrompt(task)).not.toContain('backport');
-    const p = implementPrompt(task, [], undefined, 'release/0.6.x');
-    expect(p).toContain('`release/0.6.x`');
-    expect(p).toContain('no database migration or schema change');
+  it('what a backport holds the fix to rides the groom notes, and the implement prompt never mentions it', () => {
+    const p = groomPrompt(task, 'principles', budget, undefined, { backport: { label: 'backport', branch: 'release/0.6.x' } });
+    expect(p).toContain('with a yes your notes block must carry the limit');
+    expect(p).toContain('whatever the backport rule keeps off that branch');
+    expect(p).not.toMatch(/migration|schema/);
+    expect(implementPrompt({ ...task, labels: ['backport'] })).toBe(implementPrompt(task));
+    expect(implementPrompt(task)).not.toMatch(/backport/i);
   });
 });

@@ -80,7 +80,7 @@ function backportSection(backport: GroomExtras['backport']): string {
   return `
 This repo keeps a release line, \`${backport.branch}\`, that takes copies of fixes after they merge on the default branch. When the issue is a bug and your verdict is groomed, also decide whether its fix belongs there. First check that the code the fix would touch exists on that branch — \`git fetch origin ${backport.branch}\`, then \`git show origin/${backport.branch}:<path>\` — since a bug in code the branch does not have is never a backport. Then judge the fix against the backport rule in the principles below. When both hold, add one line after the verdict:
 BACKPORT: yes — <one-line reason>
-Otherwise add no line. The factory puts the \`${backport.label}\` label on the issue, and the implementer is told to change only what the fix needs.
+Otherwise add no line. The factory puts the \`${backport.label}\` label on the issue. The implementer never sees the principles, so with a yes your notes block must carry the limit: say there that the fix is copied onto \`${backport.branch}\` once it merges, that it changes only what the fix needs so the copy applies cleanly, and whatever the backport rule keeps off that branch.
 `;
 }
 
@@ -278,11 +278,7 @@ These environment variables are set on this machine. When the live test needs th
 ${list}`;
 }
 
-/** `backportBranch` null: marked for a backport, but there is no release branch yet or it could not be looked up. */
-export function implementPrompt(task: Task, credentials: AgentCredential[] = [], verification: Verification = NO_POLICY, backportBranch?: string | null): string {
-  const backport = backportBranch === undefined ? '' : `
-
-This fix is marked for a backport: once it merges it is copied onto ${backportBranch ? `the release branch (\`${backportBranch}\`)` : 'the release branch, if one exists by then'}. Change only what the fix needs, so the copy applies cleanly there — no cleanup, no refactor, no database migration or schema change.`;
+export function implementPrompt(task: Task, credentials: AgentCredential[] = [], verification: Verification = NO_POLICY): string {
   return `Implement the GitHub issue below and open a PR that resolves it (reference "Closes #${task.issueNumber}").
 
 How we like to work in this repo:
@@ -291,7 +287,7 @@ ${workingRules(verification)}${verifySection(verification)}${credentialsSection(
 ## Issue #${task.issueNumber}: ${task.title}
 ${task.url}
 
-Read the issue at that URL, comments included — do not work from the title alone. The factory's most recent groom comment there (🏭 Factory groom) may end with a "Factory grooming notes" section: that is scoping direction, not a suggestion. Build what it scopes and leave out what it leaves out.${backport}
+Read the issue at that URL, comments included — do not work from the title alone. The factory's most recent groom comment there (🏭 Factory groom) may end with a "Factory grooming notes" section: that is scoping direction, not a suggestion. Build what it scopes and leave out what it leaves out.
 
 ${ISSUE_IMAGES} ${DESIGN_MATCH}`;
 }
