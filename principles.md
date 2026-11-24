@@ -145,6 +145,17 @@ Reach for the shared standard before the custom integration.
   live suites. An issue, epic or PR that asks for unit or integration tests asks
   for something this repo does not keep.
 
+## Security settings are defaults, not locks
+
+- A security control is a sensible default an admin can change. Push back on an
+  issue or epic that makes one tighten-only, locks it, or treats a machine and a
+  person differently, unless it names the concrete threat that needs it; groom the
+  version without the lock.
+- A setting the console shows saves every value it lets a signed-in admin enter.
+  Where the server can still refuse one, the field says why before saving, and
+  the groom's notes ask for a live check of an admin loosening it as well as
+  tightening it.
+
 ## What goes to the release line
 
 Vigil keeps a release branch that takes copies of fixes after they merge on the
