@@ -76,6 +76,7 @@
 
 import { createHash } from 'node:crypto';
 import { isFactoryComment } from './groom.ts';
+import { branchGlob } from './github.ts';
 
 export type ReviewVerdict = 'merge' | 'close' | 'leave';
 export type ReviewOutcome = 'merged' | 'superseded' | 'closed' | 'left';
@@ -90,6 +91,8 @@ export interface ReviewPr {
   body: string;
   author: { login: string; name?: string; is_bot?: boolean };
   headRefOid: string;
+  /** The branch it would merge into. */
+  baseRefName: string;
   /** From a fork: nothing here can push to its branch. */
   isCrossRepository: boolean;
   labels: { name: string }[];
@@ -181,6 +184,17 @@ export function closingRefs(body: string): string[] {
   return [...new Set([...body.matchAll(re)].map((m) => `Closes ${m[1]}`))];
 }
 
+/** The issues in `repo` a body closes, by number: another repo's `Closes o/r#3` is not one of them. */
+export const closedIssues = (body: string, repo: string): number[] => [...new Set(
+  closingRefs(body).flatMap((ref) => {
+    const m = ref.match(/^Closes (?:#(\d+)|([\w.-]+\/[\w.-]+)#(\d+)|https:\/\/github\.com\/([\w.-]+\/[\w.-]+)\/issues\/(\d+))$/);
+    if (!m) return [];
+    const [, bare, r1, n1, r2, n2] = m;
+    if (bare) return [Number(bare)];
+    return (r1 ?? r2)!.toLowerCase() === repo.toLowerCase() ? [Number(n1 ?? n2)] : [];
+  }),
+)];
+
 /** The squash commit body that lands an outside PR's work as a replacement: who wrote it, what it closes, the author's credit. */
 export function supersedesBody(pr: Pick<ReviewPr, 'number' | 'body' | 'author'>, trailer: string): string {
   const refs = closingRefs(pr.body);
@@ -238,11 +252,21 @@ export function mergeDue(pr: ReviewPr, factoryLabels: string[]): boolean {
 }
 
 /**
+ * A PR into a branch `review.ignoreBranches` names is left alone entirely: a
+ * copy onto a release line is on the default branch by definition, which the
+ * review would read as a duplicate to close, or catch up by merging the
+ * default branch into it.
+ */
+export const intoIgnoredBranch = (pr: Pick<ReviewPr, 'baseRefName'>, globs: string[]): boolean =>
+  globs.some((g) => branchGlob(g).test(pr.baseRefName));
+
+/**
  * Oldest first, the same rule both issue queues follow — except that a red PR
  * due again only because main moved waits behind PRs that are new or changed,
  * and a PR whose reviews keep failing waits behind everything.
  */
-export function reviewQueue(prs: ReviewPr[], factoryLabels: string[], mainHead?: string): { open: ReviewPr[]; reopen: ReviewPr[]; merge: ReviewPr[] } {
+export function reviewQueue(all: ReviewPr[], factoryLabels: string[], mainHead?: string, ignoreBranches: string[] = []): { open: ReviewPr[]; reopen: ReviewPr[]; merge: ReviewPr[] } {
+  const prs = all.filter((p) => !intoIgnoredBranch(p, ignoreBranches));
   const byNumber = (a: ReviewPr, b: ReviewPr) => a.number - b.number;
   const rank = (p: ReviewPr) => {
     if (failedReviews(p) >= FAILURES_TO_THE_BACK) return 2;

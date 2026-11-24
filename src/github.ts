@@ -52,6 +52,7 @@ export interface IssueData {
   labels: { name: string }[];
   comments: { author: { login: string } | null; body: string }[];
   assignees: { login: string }[];
+  author?: { login: string } | null;
 }
 
 /**
@@ -101,7 +102,7 @@ async function ghJsonWithComments<T extends { comments: { author?: { login: stri
 export async function listOpenIssues(repo: string): Promise<IssueData[]> {
   return ghJsonWithComments<IssueData>(repo, [
     'issue', 'list', '-R', repo, '--state', 'open',
-    '--limit', String(ALL_OPEN_ISSUES), '--json', 'number,title,body,url,labels,comments,assignees',
+    '--limit', String(ALL_OPEN_ISSUES), '--json', 'number,title,body,url,labels,comments,assignees,author',
   ]);
 }
 
@@ -124,7 +125,7 @@ export async function referenceState(repo: string, number: number): Promise<'ope
 export async function listIssuesByLabel(repo: string, label: string, limit = 100): Promise<IssueData[]> {
   return ghJsonWithComments<IssueData>(repo, [
     'issue', 'list', '-R', repo, '--state', 'open', '--label', label,
-    '--limit', String(limit), '--json', 'number,title,body,url,labels,comments,assignees',
+    '--limit', String(limit), '--json', 'number,title,body,url,labels,comments,assignees,author',
   ]);
 }
 
@@ -260,6 +261,64 @@ export async function defaultBranchHead(repo: string): Promise<{ branch: string;
   const { default_branch: branch } = await ghJson<{ default_branch: string }>(['api', `repos/${repo}`]);
   const { sha } = await ghJson<{ sha: string }>(['api', `repos/${repo}/commits/${branch}`]);
   return { branch, sha };
+}
+
+/** A branch glob as a pattern: `*` is any run of characters within one path segment. */
+export function branchGlob(glob: string): RegExp {
+  return new RegExp(`^${glob.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*')}$`);
+}
+
+/** Of these branch names, the newest that matches the glob: `release/0.10.x` over `release/0.9.x`. */
+export function newestMatch(branches: string[], glob: string): string | null {
+  const re = branchGlob(glob);
+  return branches.filter((b) => re.test(b)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).at(-1) ?? null;
+}
+
+/**
+ * The target's newest branch matching a glob, or null when it has none. Only
+ * the branches under the glob's fixed prefix are listed: one call, where
+ * paging through every branch of a busy repo took nine.
+ */
+export async function matchingBranch(repo: string, glob: string): Promise<string | null> {
+  const prefix = glob.split('*')[0]!;
+  const out = await gh(['api', `repos/${repo}/git/matching-refs/heads/${prefix}`, '--jq', '.[].ref | ltrimstr("refs/heads/")']);
+  return newestMatch(out.split('\n').map((l) => l.trim()).filter(Boolean), glob);
+}
+
+/** Whether issues can be filed in a repo, as far as reading it tells: it is reachable and has issues on. */
+export async function acceptsIssues(repo: string): Promise<boolean> {
+  const { has_issues } = await ghJson<{ has_issues: boolean }>(['api', `repos/${repo}`]);
+  return has_issues;
+}
+
+/** Whether a repo has a label by this name. GitHub matches label names in any case. */
+export async function hasLabel(repo: string, label: string): Promise<boolean> {
+  const found = await ghJson<{ name: string }[]>(['label', 'list', '-R', repo, '--search', label, '--limit', '100', '--json', 'name']);
+  return found.some((l) => l.name.toLowerCase() === label.toLowerCase());
+}
+
+/**
+ * An issue in `repo` whose body opens with the given text, by URL: how a copy
+ * filed on a run that died before recording it is found again. Any trusted
+ * author's, not only this login's: each person's host runs under its own
+ * login, so the copy may be another runner's. Only the trusted, so nobody
+ * else can plant the issue a copy is taken for.
+ */
+export async function findFiledCopy(targetRepo: string, repo: string, opening: string): Promise<string | null> {
+  const [found, who] = await Promise.all([
+    ghJson<{ url: string; body: string; author: { login: string } | null }[]>([
+      'issue', 'list', '-R', repo, '--state', 'all',
+      '--search', `"${opening}" in:body`, '--limit', '20', '--json', 'url,body,author',
+    ]),
+    trustedAuthors(targetRepo),
+  ]);
+  return found.find((i) => i.author && who.has(i.author.login) && i.body.startsWith(opening) && !/^\d/.test(i.body.slice(opening.length)))?.url ?? null;
+}
+
+/** The labels an issue carries now. */
+export async function issueLabels(repo: string, issue: number): Promise<string[]> {
+  const out = await gh(['api', `repos/${repo}/issues/${issue}`, '--jq', '.labels[].name']);
+  return out.split('\n').map((l) => l.trim()).filter(Boolean);
 }
 
 export async function ensureLabel(repo: string, name: string, color: string, description: string): Promise<void> {
@@ -405,7 +464,7 @@ export async function closePr(repo: string, prUrl: string, comment: string): Pro
   await gh(['pr', 'close', prUrl, '-R', repo, '--comment', comment]);
 }
 
-const REVIEW_PR_FIELDS = 'number,url,title,state,isDraft,body,author,headRefOid,isCrossRepository,labels,comments';
+const REVIEW_PR_FIELDS = 'number,url,title,state,isDraft,body,author,headRefOid,baseRefName,isCrossRepository,labels,comments';
 
 /**
  * PRs in one state, whoever opened them: the review phase's candidates. Closed

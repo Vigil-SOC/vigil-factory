@@ -9,8 +9,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { resolve } from 'node:path';
 import type { CurrentRun } from './types.ts';
 import type { FactoryConfig } from './config.ts';
-import { repoSlug } from './config.ts';
-import { addIssueLabels, addPrLabels, closePr, commentOnIssue, commentOnPr, ensureLabel, ghLogin, labelHistory, linkedIssueNumber, listIssuesByLabel, listOpenPrs, listPrsByLabel, markPrReady, prMergeable, referenceState, removeIssueLabels, type PrData } from './github.ts';
+import { backportLabelOn, repoSlug } from './config.ts';
+import { addIssueLabels, addPrLabels, closePr, commentOnIssue, commentOnPr, ensureLabel, ghLogin, issueLabels, labelHistory, linkedIssueNumber, listIssuesByLabel, listOpenPrs, listPrsByLabel, markPrReady, prMergeable, referenceState, removeIssueLabels, type PrData } from './github.ts';
 import { factoryComment } from './groom.ts';
 import { leakedClaims, orphanedPrs, pastGrace, phaseOrphans, spentVerdicts, unclaimedAnswers, unheldClaims, unrecordedOutcomes, withSource, type OrphanPhase } from './outcomes.ts';
 import { keysIn, securityStamp } from './security.ts';
@@ -215,7 +215,13 @@ export class FactoryState {
           continue;
         }
         await markPrReady(this.repo, pr.url);
-        await addPrLabels(this.repo, pr.url, [labels.factoryPr]);
+        const onIssue = this.config.groom.backport
+          ? await issueLabels(this.repo, issue).catch((err: Error) => {
+            log(`could not read #${issue}'s labels, so ${pr.url} gets no ${this.config.groom.backport!.label} label even if #${issue} has one; add it by hand before it merges: ${err.message}`);
+            return [];
+          })
+          : [];
+        await addPrLabels(this.repo, pr.url, [labels.factoryPr, ...backportLabelOn(this.config, onIssue)]);
         await addIssueLabels(this.repo, issue, [labels.issueInProgress]);
         await commentOnIssue(this.repo, issue, factoryComment(
           `🏭 The factory opened ${pr.url} for this issue. The pipeline that started it died before it took the PR up, so nobody watched its CI or handed a red check back; it is awaiting human review as it stands.`));

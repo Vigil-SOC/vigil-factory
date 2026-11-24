@@ -182,7 +182,7 @@ describe('a goal is not an issue to groom, and its pass\'s PR is not one to skip
   });
 
   it('the review phase takes a goal pass\'s PR when the goal label is not among the ones it skips', () => {
-    const reviewPr: ReviewPr = { number: 7, url: url(7), title: 'pass', state: 'OPEN', isDraft: false, body: 'Part of #12', author: { login: 'factory-bot' }, headRefOid: 'a'.repeat(40), isCrossRepository: false, labels: [{ name: 'factory:goal' }], comments: [] };
+    const reviewPr: ReviewPr = { number: 7, url: url(7), title: 'pass', state: 'OPEN', isDraft: false, body: 'Part of #12', author: { login: 'factory-bot' }, headRefOid: 'a'.repeat(40), baseRefName: 'main', isCrossRepository: false, labels: [{ name: 'factory:goal' }], comments: [] };
     expect(needsReview(reviewPr, ['factory', 'factory:security'])).toBe(true);
     expect(needsReview(reviewPr, ['factory', 'factory:security', 'factory:goal'])).toBe(false);
   });

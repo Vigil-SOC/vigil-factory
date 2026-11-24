@@ -5,7 +5,7 @@
 import { admissible, buildContext, buildWorker, candidateTasks, depsInputs, environmentInputs, goalInputs, implementIssues, log, openSet, reviewInputs, runEnvironmentPhase, runDepsPhase, runGoalPhase, runGroomPhase, runReviewPhase, runSecurityPhase, runSelector, runSimplifyPhase, selectorCandidates, securityInputs, simplifySkip, tick } from './controller.ts';
 import { loadConfig, loadPrinciples, loadVerification, projectRoot, repoSlug } from './config.ts';
 import { isEpic, isGroomed, needsGroom, verdict } from './groom.ts';
-import { defaultBranchHead } from './github.ts';
+import { acceptsIssues, defaultBranchHead, hasLabel } from './github.ts';
 import type { CodingWorker, CurrentRun } from './types.ts';
 
 const USAGE = `vigil-factory — thin software-factory control plane around Cursor cloud agents or local Claude Code
@@ -45,8 +45,10 @@ Usage:
                                        the capacity gate and without a groom: naming an issue is the verdict that it is
                                        one PR, and the attempt tests it as it would a groom's. Skips any already claimed,
                                        so re-running resumes.
-  npm run factory -- check             Check this deployment's policy without touching GitHub: factory.config.json parses and
-                                       the principles and verification files it names exist. What a deployment's CI runs.
+  npm run factory -- check             Check this deployment's policy: factory.config.json parses, the principles and
+                                       verification files it names exist, each repo in groom.refileRepos is reachable, and the
+                                       target has groom.backport's label (the only steps that touch GitHub). What a
+                                       deployment's CI runs.
   npm run factory -- status            Show grooming progress, capacity, in-flight jobs, pending PRs, and recent telemetry.
   npm run factory -- abort [--issue N] Abandon stuck local pipelines — all of them, or just issue N's
                                        (cancels the runs if the worker still can).
@@ -56,11 +58,31 @@ Environment: FACTORY_WORKER=cursor|claude-code overrides worker.kind for one inv
              FACTORY_MAX_JOBS=<n> overrides maxConcurrentJobs.
 `;
 
-/** A deployment's own CI: its policy loads. Needs no token and reaches nothing. */
-function check(): void {
+/** A deployment's own CI: its policy loads. Reaches GitHub only for the repos in
+ *  `groom.refileRepos` and for `groom.backport`'s label in the target, and needs
+ *  a login that can read them; with neither set it needs no token and reaches nothing. */
+async function check(): Promise<void> {
   const config = loadConfig();
   loadPrinciples(config);
   loadVerification(config);
+  // Reading the repo is as far as this can tell without filing an issue: a
+  // token that reads it but may not write issues there still passes.
+  for (const repo of config.groom.refileRepos) {
+    const ok = await acceptsIssues(repo).catch((err: Error) => {
+      throw new Error(`groom.refileRepos: cannot reach ${repo} with this GitHub login: ${err.message}`);
+    });
+    if (!ok) throw new Error(`groom.refileRepos: ${repo} has issues turned off`);
+  }
+  // The label is the target's own and never created here, so without it every
+  // backport groom would only ask for it by hand.
+  const backport = config.groom.backport;
+  if (backport) {
+    const target = repoSlug(config);
+    const ok = await hasLabel(target, backport.label).catch((err: Error) => {
+      throw new Error(`groom.backport: cannot read ${target}'s labels with this GitHub login: ${err.message}`);
+    });
+    if (!ok) throw new Error(`groom.backport: ${target} has no ${backport.label} label`);
+  }
   const verify = config.verify.file ? `, verification in ${config.verify.file}` : '';
   console.log(`ok: ${projectRoot} builds ${repoSlug(config)} on the ${config.worker.kind} worker, principles in ${config.groom.principlesFile}${verify}`);
 }
@@ -359,7 +381,7 @@ async function main(): Promise<void> {
       await implementIssues(issueNumbers, parallel);
       break;
     case 'check':
-      check();
+      await check();
       break;
     case 'status':
       await status();
